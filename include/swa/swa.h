@@ -43,6 +43,10 @@ enum swa_image_format {
     swa_image_format_rgb24,
     swa_image_format_argb32,
     swa_image_format_xrgb32,
+    swa_image_format_abgr32,
+    swa_image_format_bgra32,
+    swa_image_format_bgrx32,
+    swa_image_format_bgr24,
 };
 
 // Describes the kind of render surface created for a window.
@@ -257,25 +261,79 @@ struct swa_dnd_event {
     int x, y;
 };
 
+// All callbacks are guaranteed to only be called from inside
+// `swa_display_poll_events` or `swa_display_wait_events`.
 struct swa_window_listener {
+	// Called by the system e.g. when the window contents where invalidated
+	// or emitted in response to a call to `swa_window_refresh`.
+	// For newly created windows, this will usually be called, unless
+	// the window is hidden, minimized or otherwise not shown.
     void (*draw)(struct swa_window*);
+	// Called when the systems signals that this window should be closed.
+	// Can be used to e.g. display a confirmation dialog or just destroy
+	// the window.
     void (*close)(struct swa_window*);
+	// Called when the corresponding `swa_window` was destroyed.
+	// Not further events will be emitted.
     void (*destroyed)(struct swa_window*);
 
+	// Called when the window was resized by the system.
+	// For newly created windows, this will be emitted only when
+	// the initial window size was chosen to be different from the
+	// size passed in the `swa_window_settings`. When the settings
+	// used `SWA_DEFAULT_SIZE`, this event will always be emitted.
     void (*resize)(struct swa_window*, unsigned width, unsigned height);
+	// Called when the window state changes.
+	// For newly created windows, this will be emitted only when
+	// the initial state chosen by the system is different than the
+	// state passed in `swa_window_settings`.
     void (*state)(struct swa_window*, enum swa_window_state state);
 
+	// Called when the window receives or loses focus.
+	// If the backend gives a newly created window immediately focus,
+	// this will be called after window creation.
+	// Note that the keys that are currently pressed while the window
+	// receives focus can't be known. No key events are generated
+	// and `swa_display_key_pressed` doesn't contain those keys.
     void (*focus)(struct swa_window*, bool gained);
+	// Called when a key is pressed or released while the window has focus.
     void (*key)(struct swa_window*, const struct swa_key_event*);
 
+	// Called when the mouse enters or leaves the window.
     void (*mouse_cross)(struct swa_window*, bool entered);
+	// Called when the mouse moves over the window.
     void (*mouse_move)(struct swa_window*, const struct swa_mouse_move_event*);
+	// Called when a mouse button is pressed inside the window.
     void (*mouse_button)(struct swa_window*, const struct swa_mouse_button_event*);
-    void (*mouse_wheel)(struct swa_window*, int dx, int dy);
+	// Called when the mouse wheel is used.
+	// dx describes the delta in horizontal direction (only != 0 for
+	// special horizontal mouse wheels) while dy describes the delta in
+	// vertical direction (this is not 0 for movement on "normal"
+	// mouse wheels).
+	// A delta of 1 or -1 represents one "tick" in positive or negative
+	// direction, respectively.
+    void (*mouse_wheel)(struct swa_window*, float dx, float dy);
 
+	// Called when a new touch point is created.
+	// id: the id of the new touch point. This id will passed to further
+	//   `touch_update` and `touch_end` events and can be used to identify
+	//   this touch points. Touch point ids are unique as long as they
+	//   exist (between `touch_begin` and `touch_end` or `touch_cancel`) but
+	//   might be reused after that.
+	// x,y: the window-local coordinates where the touch started.
     void (*touch_begin)(struct swa_window*, unsigned id, int x, int y);
+	// Updates the position of a touch point.
+	// id: the identification of the touch point as previously introduced
+	//   by `touch_begin`.
+	// x, y: the new touch position in window-local coordinates.
     void (*touch_update)(struct swa_window*, unsigned id, int x, int y);
+	// touch_end: ends a touch point. No further events for this
+	// touch point will be generated.
+	// id: the identification of the touch point as previously introduced
+	//   by `touch_begin`.
     void (*touch_end)(struct swa_window*, unsigned id);
+	// Cancels all currently active touch points.
+	// Should be interpreted as a canceled gesture.
     void (*touch_cancel)(struct swa_window*);
 
     void (*dnd_enter)(struct swa_window*, const struct swa_dnd_event*);
@@ -379,7 +437,8 @@ bool swa_display_mouse_button_pressed(struct swa_display*, enum swa_mouse_button
 
 // Returns the last known mouse position in window-local coordinates.
 // The window the mouse is currently over can be retrieved using
-// `swa_display_get_mouse_over`.
+// `swa_display_get_mouse_over`. The values are not changed if
+// the mouse is currently not over a swa_window.
 // Only valid if the display has the 'mouse' capability.
 void swa_display_mouse_position(struct swa_display*, int* x, int* y);
 
@@ -425,12 +484,6 @@ bool swa_display_start_dnd(struct swa_display*, struct swa_data_source*, void* t
 struct swa_window* swa_display_create_window(struct swa_display*,
 	struct swa_window_settings);
 
-// Initializes the given settings to the default state.
-// Will especially set width, height to SWA_DEFAULT_SIZE and x, y
-// to SWA_DEFAULT_POSITION. Will otherwise memset the settings
-// to 0. Will not specify any surface to create.
-void swa_window_settings_default(struct swa_window_settings*);
-
 // window api
 void swa_window_destroy(struct swa_window*);
 enum swa_window_cap swa_window_get_capabilities(struct swa_window*);
@@ -439,8 +492,13 @@ void swa_window_set_max_size(struct swa_window*, unsigned w, unsigned h);
 void swa_window_show(struct swa_window*, bool show);
 
 // Calling this function will not emit a size event.
+// It will usually emit a draw event though (but might not e.g. if the
+// window is somehow hidden anyways).
 void swa_window_set_size(struct swa_window*, unsigned w, unsigned h);
 void swa_window_set_position(struct swa_window*, int x, int y);
+// If the given cursor is an image cursor, the stored image data
+// will be copied or otherwise used, it must not remain valid after this call.
+// Only valid if the corresponding dislpay has the 'mouse' capability.
 void swa_window_set_cursor(struct swa_window*, struct swa_cursor cursor);
 void swa_window_refresh(struct swa_window*);
 void swa_window_surface_frame(struct swa_window*);
@@ -475,7 +533,7 @@ bool swa_window_get_vk_surface(struct swa_window*, void* vkSurfaceKHR);
 // Only valid if the window was created with surface set to gl.
 bool swa_window_gl_make_current(struct swa_window*);
 bool swa_window_gl_swap_buffers(struct swa_window*);
-bool swa_window_gl_set_swap_interval(struct swa_window*);
+bool swa_window_gl_set_swap_interval(struct swa_window*, int interval);
 
 // Only valid if the window was created with surface set to buffer.
 // Implementations might use multiple buffers to avoid flickering, i.e.
@@ -498,6 +556,28 @@ bool swa_data_offer_data(struct swa_data_offer*, const char* format, swa_data_ha
 void swa_data_offer_set_preferred(struct swa_data_offer*, const char* foramt, enum swa_data_action action);
 enum swa_data_action swa_data_offer_action(struct swa_data_offer*);
 enum swa_data_action swa_data_offer_supported_actions(struct swa_data_offer*);
+
+// utility
+// Initializes the given settings to the default state.
+// Will especially set width, height to SWA_DEFAULT_SIZE and x, y
+// to SWA_DEFAULT_POSITION. Will otherwise memset the settings
+// to 0. Will not specify any surface to create.
+void swa_window_settings_default(struct swa_window_settings*);
+
+// Returns the size of one pixel in the given formats in bytes.
+unsigned swa_image_format_size(enum swa_image_format);
+
+// Converts the format of the given image.
+// Can also be used to create an image with a different stride.
+// If `new_stride` is zero, will tightly pack the image.
+// The data in the returned image must be freed.
+struct swa_image swa_convert_image_new(struct swa_image* source,
+	enum swa_image_format format, unsigned new_stride);
+
+// Expects `dst` to already have enough data allocated and stride
+// and format set.
+void swa_convert_image(struct swa_image* sourc, struct swa_image* dst);
+
 
 #ifdef __cplusplus
 }

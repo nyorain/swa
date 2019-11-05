@@ -4,6 +4,8 @@
 #include <string.h>
 
 struct swa_display* swa_display_autocreate(void) {
+	// TODO
+	return NULL;
 }
 
 void swa_window_settings_default(struct swa_window_settings* settings) {
@@ -119,7 +121,7 @@ bool swa_window_get_vulkan_surface(struct swa_window*, void* vkSurfaceKHR);
 // Only valid if the window was created with surface set to gl.
 bool swa_window_gl_make_current(struct swa_window*);
 bool swa_window_gl_swap_buffers(struct swa_window*);
-bool swa_window_gl_set_swap_interval(struct swa_window*);
+bool swa_window_gl_set_swap_interval(struct swa_window*, int interval);
 
 // Only valid if the window was created with surface set to buffer.
 // Implementations might use multiple buffers to avoid flickering, i.e.
@@ -138,3 +140,18 @@ bool swa_data_offer_data(struct swa_data_offer*, const char* format, swa_data_ha
 void swa_data_offer_set_preferred(struct swa_data_offer*, const char* foramt, enum swa_data_action action);
 enum swa_data_action swa_data_offer_action(struct swa_data_offer*);
 enum swa_data_action swa_data_offer_supported_actions(struct swa_data_offer*);
+
+struct swa_image swa_convert_image(struct swa_image* source,
+		enum swa_image_format format, unsigned new_stride) {
+	dlg_assert(source);
+	dlg_assert(source->data);
+	dlg_assert(source->format != swa_image_format_none);
+	dlg_assert(source->width && source->height);
+
+	dlg_assert(format != swa_image_format_none);
+	dlg_assert(new_stride == 0 ||  new_stride >= swa_image_format_size(format) * source->width);
+
+	if(new_stride == 0) {
+		new_stride = swa_image_format_size(format) * source->width;
+	}
+}

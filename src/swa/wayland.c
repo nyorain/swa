@@ -2,26 +2,468 @@
 #include <dlg/dlg.h>
 #include <mainloop.h>
 #include <wayland-client-core.h>
+#include <wayland-cursor.h>
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
+#include "xdg-decoration-unstable-v1-client-protocol.h"
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_wayland.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <stdio.h>
+#include <sys/mman.h>
 
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
-static const struct swa_data_offer_interface data_offer_impl;
 
 static const struct xdg_toplevel_listener toplevel_listener;
 static const struct xdg_surface_listener xdg_surface_listener;
+static const struct zxdg_toplevel_decoration_v1_listener decoration_listener;
 
+// utility
 static struct swa_display_wl* get_display_wl(struct swa_display* base) {
 	dlg_assert(base->impl == &display_impl);
 	return (struct swa_display_wl*) base;
 }
+
+static struct swa_window_wl* get_window_wl(struct swa_window* base) {
+	dlg_assert(base->impl == &window_impl);
+	return (struct swa_window_wl*) base;
+}
+
+static bool set_cloexec(int fd) {
+	long flags = fcntl(fd, F_GETFD);
+	if(flags == -1) {
+		return false;
+	}
+
+	if(fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
+		return false;
+	}
+
+	return true;
+}
+
+static int create_pool_file(size_t size, char** name) {
+	static const char template[] = "swa-buffer-XXXXXX";
+	const char *path = getenv("XDG_RUNTIME_DIR");
+	if (path == NULL) {
+		fprintf(stderr, "XDG_RUNTIME_DIR is not set\n");
+		return -1;
+	}
+
+	size_t name_size = strlen(template) + 1 + strlen(path) + 1;
+	*name = malloc(name_size);
+	snprintf(*name, name_size, "%s/%s", path, template);
+
+	int fd = mkstemp(*name);
+	if(fd < 0) {
+		dlg_error("mkstemp: %s (%d)", strerror(errno), errno);
+		return -1;
+	}
+
+	if(!set_cloexec(fd)) {
+		dlg_error("set_cloexec: %s (%d)", strerror(errno), errno);
+		close(fd);
+		return -1;
+	}
+
+	if(ftruncate(fd, size) < 0) {
+		dlg_error("ftruncate: %s (%d)", strerror(errno), errno);
+		close(fd);
+		return -1;
+	}
+
+	return fd;
+}
+
+static void buffer_release(void* data, struct wl_buffer* wl_buffer) {
+	struct swa_wl_buffer* buffer = data;
+	dlg_assert(buffer->buffer == wl_buffer);
+	buffer->busy = false;
+}
+
+static const struct wl_buffer_listener buffer_listener = {
+	.release = buffer_release
+};
+
+static bool buffer_init(struct swa_wl_buffer* buf, struct wl_shm *shm,
+		int32_t width, int32_t height, uint32_t format) {
+	uint32_t stride = width * 4;
+	size_t size = stride * height;
+
+	char *name;
+	int fd = create_pool_file(size, &name);
+	if(fd < 0) {
+		return false;
+	}
+
+	void *data = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	struct wl_shm_pool* pool = wl_shm_create_pool(shm, fd, size);
+	buf->buffer = wl_shm_pool_create_buffer(pool, 0,
+		width, height, stride, format);
+	wl_shm_pool_destroy(pool);
+	close(fd);
+	unlink(name);
+	free(name);
+	fd = -1;
+
+	buf->size = size;
+	buf->data = data;
+	buf->width = width;
+	buf->height = height;
+
+	wl_buffer_add_listener(buf->buffer, &buffer_listener, buf);
+	return buf;
+}
+
+static void buffer_finish(struct swa_wl_buffer* buf) {
+	if(buf->buffer) wl_buffer_destroy(buf->buffer);
+	if(buf->data) munmap(buf->data, buf->size);
+	memset(buf, 0, sizeof(*buf));
+}
+
+static void set_cursor_buffer(struct swa_display_wl* dpy,
+		struct wl_buffer* buffer, int hx, int hy) {
+	if(!dpy->pointer) {
+		return;
+	}
+
+	dlg_assert(dpy->mouse_enter_serial);
+
+	wl_pointer_set_cursor(dpy->pointer, dpy->mouse_enter_serial,
+		dpy->cursor_surface, hx, hy);
+	wl_surface_attach(dpy->cursor_surface, buffer, 0, 0);
+	wl_surface_damage(dpy->cursor_surface, 0, 0, INT32_MAX, INT32_MAX);
+	wl_surface_commit(dpy->cursor_surface);
+}
+
+static const struct {
+	enum swa_cursor_type cursor;
+	const char* name;
+} cursor_map[] = {
+	{swa_cursor_left_pointer, "left_ptr"},
+	{swa_cursor_load, "watch"},
+	{swa_cursor_load_pointer, "left_ptr_watch"},
+	{swa_cursor_right_pointer, "right_ptr"},
+	{swa_cursor_hand, "pointer"},
+	{swa_cursor_grab, "grab"},
+	{swa_cursor_crosshair, "cross"},
+	{swa_cursor_help, "question_arrow"},
+	{swa_cursor_beam, "xterm"},
+	{swa_cursor_forbidden, "crossed_circle"},
+	{swa_cursor_size, "bottom_left_corner"},
+	{swa_cursor_size_bottom, "bottom_side"},
+	{swa_cursor_size_bottom_left, "bottom_left_corner"},
+	{swa_cursor_size_bottom_right, "bottom_right_corner"},
+	{swa_cursor_size_top, "top_side"},
+	{swa_cursor_size_top_left, "top_left_corner"},
+	{swa_cursor_size_top_right, "top_right_corner"},
+	{swa_cursor_size_left, "left_side"},
+	{swa_cursor_size_right, "right_side"},
+};
+
+static const char* cursor_name(enum swa_cursor_type type) {
+	const unsigned count = sizeof(cursor_map) / sizeof(cursor_map[0]);
+	for(unsigned i = 0u; i < count; ++i) {
+		if(cursor_map[i].cursor == type) {
+			return cursor_map[i].name;
+		}
+	}
+
+	return NULL;
+}
+
+// window api
+static void win_destroy(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+
+	// unlink from list
+	if(win->next) win->next->prev = win->prev;
+	if(win->prev) win->prev->next = win->next;
+
+	if(win->dpy) {
+		if(win->dpy->focus == win) win->dpy->focus = NULL;
+		if(win->dpy->mouse_over == win) win->dpy->focus = NULL;
+		if(win->dpy->window_list == win) win->dpy->window_list = NULL;
+	}
+
+	if(win->defer_redraw) ml_defer_destroy(win->defer_redraw);
+	if(win->frame_callback) wl_callback_destroy(win->frame_callback);
+	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
+	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
+	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
+	if(win->surface) wl_surface_destroy(win->surface);
+
+	// TODO: destroy render surfaces
+	free(base);
+}
+
+static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
+	enum swa_window_cap caps =
+		swa_window_cap_fullscreen |
+		swa_window_cap_minimize |
+		swa_window_cap_maximize |
+		swa_window_cap_size_limits |
+		swa_window_cap_cursor |
+		swa_window_cap_title |
+		swa_window_cap_begin_move |
+		swa_window_cap_begin_resize;
+	return caps;
+}
+
+static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
+	struct swa_window_wl* win = get_window_wl(base);
+	xdg_toplevel_set_min_size(win->xdg_toplevel, w, h);
+}
+
+static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
+	struct swa_window_wl* win = get_window_wl(base);
+	xdg_toplevel_set_max_size(win->xdg_toplevel, w, h);
+}
+
+static void win_show(struct swa_window* base, bool show) {
+	dlg_warn("window doesn't have visibility capability");
+}
+
+static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
+	// TODO: we might be able to implement it by just chaing width and height
+	// and redrawing, resulting in a larger buffer. Not sure.
+	dlg_warn("window doesn't have resize capability");
+}
+static void win_set_position(struct swa_window* base, int x, int y) {
+	dlg_warn("window doesn't have position capability");
+}
+
+static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
+	struct swa_window_wl* win = get_window_wl(base);
+
+	enum swa_cursor_type type = cursor.type;
+	if(type == swa_cursor_default) {
+		type = swa_cursor_left_pointer;
+	}
+
+	if(cursor.type == swa_cursor_none) {
+		buffer_finish(&win->cursor_buffer);
+		win->cursor_hx = win->cursor_hy = 0;
+	} else if(cursor.type == swa_cursor_image) {
+		win->cursor_hx = cursor.hx;
+		win->cursor_hy = cursor.hy;
+		if(!win->cursor_buffer.data ||
+				win->cursor_buffer.width != cursor.image.width ||
+				win->cursor_buffer.height != cursor.image.height) {
+			buffer_finish(&win->cursor_buffer);
+			buffer_init(&win->cursor_buffer, win->dpy->shm,
+				cursor.image.width, cursor.image.height,
+				WL_SHM_FORMAT_ARGB8888);
+		}
+
+		// TODO: format conversion only little endian atm
+		struct swa_image dst = {
+			.width = win->cursor_buffer.width,
+			.height = win->cursor_buffer.height,
+			.stride = 4 * win->cursor_buffer.width,
+			.format = swa_image_format_bgra32,
+			.data = win->cursor_buffer.data,
+		};
+		swa_convert_image(&cursor.image, &dst);
+	} else {
+		const char* cname = cursor_name(cursor.type);
+		if(!cname) {
+			dlg_warn("failed to convert cursor type %d to xcursor", cursor.type);
+			cname = cursor_name(swa_cursor_left_pointer);
+		}
+
+		struct wl_cursor* wl_cursor = wl_cursor_theme_get_cursor(
+			win->dpy->cursor_theme, cname);
+		if(!wl_cursor) {
+			dlg_warn("failed to retrieve cursor %s", cname);
+			return;
+		}
+
+		buffer_finish(&win->cursor_buffer);
+
+		// TODO: handle mulitple/animated images
+		struct wl_cursor_image* img = wl_cursor->images[0];
+		win->cursor_buffer.buffer = wl_cursor_image_get_buffer(img);
+		win->cursor_buffer.width = img->width;
+		win->cursor_buffer.height = img->height;
+		win->cursor_hx = img->hotspot_y;
+		win->cursor_hy = img->hotspot_x;
+	}
+
+	// update cursor if mouse is currently over window
+	if(win->dpy->mouse_over == win) {
+		set_cursor_buffer(win->dpy, win->cursor_buffer.buffer,
+			win->cursor_hx, win->cursor_hy);
+	}
+}
+
+static void refresh_cb(struct ml_defer* defer) {
+	struct swa_window_wl* win = ml_defer_get_data(defer);
+	win->redraw = false;
+	if(win->base.listener && win->base.listener->draw) {
+		win->base.listener->draw(&win->base);
+	}
+	ml_defer_enable(defer, false);
+}
+
+static void win_refresh(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->configured || win->frame_callback) {
+		win->redraw = true;
+	}
+
+	if(!win->defer_redraw) {
+		win->defer_redraw = ml_defer_new(win->dpy->mainloop, refresh_cb);
+		ml_defer_set_data(win->defer_redraw, win);
+	}
+	ml_defer_enable(win->defer_redraw, true);
+}
+
+static void win_surface_frame(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if(win->frame_callback) {
+		return;
+	}
+
+	win->frame_callback = wl_surface_frame(win->surface);
+}
+
+static void win_set_state(struct swa_window* base, enum swa_window_state state) {
+	struct swa_window_wl* win = get_window_wl(base);
+	switch(state) {
+		case swa_window_state_normal:
+			xdg_toplevel_unset_fullscreen(win->xdg_toplevel);
+			xdg_toplevel_unset_maximized(win->xdg_toplevel);
+			break;
+		case swa_window_state_fullscreen:
+			xdg_toplevel_set_fullscreen(win->xdg_toplevel, NULL);
+			break;
+		case swa_window_state_maximized:
+			xdg_toplevel_set_maximized(win->xdg_toplevel);
+			break;
+		case swa_window_state_minimized:
+			xdg_toplevel_set_minimized(win->xdg_toplevel);
+			break;
+		default:
+			break;
+	}
+}
+
+static void win_begin_move(struct swa_window* base, void* trigger) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->dpy->seat) {
+		dlg_warn("Can't begin moving window without seat");
+		return;
+	}
+
+	if(!trigger) {
+		dlg_warn("Can't begin moving window without valid trigger event");
+		return;
+	}
+
+	uint32_t serial = (uint32_t) trigger;
+	xdg_toplevel_move(win->xdg_toplevel, win->dpy->seat, serial);
+}
+static void win_begin_resize(struct swa_window* base, enum swa_edge edges,
+		void* trigger) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->dpy->seat) {
+		dlg_warn("Can't begin resizing window without seat");
+		return;
+	}
+
+	if(!trigger) {
+		dlg_warn("Can't begin resizing window without valid trigger event");
+		return;
+	}
+
+	uint32_t serial = (uint32_t) trigger;
+
+	// the enumerations map directly onto each other
+	enum xdg_toplevel_resize_edge wl_edges = (enum xdg_toplevel_resize_edge) edges;
+	xdg_toplevel_resize(win->xdg_toplevel, win->dpy->seat, wl_edges, serial);
+}
+static void win_set_title(struct swa_window* base, const char* title) {
+	struct swa_window_wl* win = get_window_wl(base);
+	xdg_toplevel_set_title(win->xdg_toplevel, title);
+}
+
+static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
+	dlg_warn("window doesn't have icon capability");
+}
+static bool win_is_client_decorated(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->decoration) {
+		return true;
+	}
+
+	// we set this special value when creating the window with creation
+	// it means that the server hasn't replied yet, which is weird.
+	if(win->decoration_mode == 0xFFFFFFFFu) {
+		dlg_warn("compositor hasn't informed window about decoration mode yet");
+		return true;
+	}
+
+	return win->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+}
+static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+
+static bool win_gl_make_current(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+static bool win_gl_swap_buffers(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+
+static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+static void win_apply_buffer(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+}
+
+static const struct swa_window_interface window_impl = {
+	.destroy = win_destroy,
+	.get_capabilities = win_get_capabilities,
+	.set_min_size = win_set_min_size,
+	.set_max_size = win_set_max_size,
+	.show = win_show,
+	.set_size = win_set_size,
+	.set_position = win_set_position,
+	.refresh = win_refresh,
+	.surface_frame = win_surface_frame,
+	.set_state = win_set_state,
+	.begin_move = win_begin_move,
+	.begin_resize = win_begin_resize,
+	.set_title = win_set_title,
+	.set_icon = win_set_icon,
+	.is_client_decorated = win_is_client_decorated,
+	.get_vk_surface = win_get_vk_surface,
+	.gl_make_current = win_gl_make_current,
+	.gl_set_swap_interval = win_gl_set_swap_interval,
+	.get_buffer = win_get_buffer,
+	.apply_buffer = win_apply_buffer
+};
+
+// display api
+static void xdg_wm_base_ping(void *data, struct xdg_wm_base* wm_base,
+		uint32_t serial) {
+	xdg_wm_base_pong(wm_base, serial);
+}
+
+static const struct xdg_wm_base_listener wm_base_listener = {
+	.ping = xdg_wm_base_ping
+};
 
 void display_destroy(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
@@ -84,11 +526,11 @@ const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 	};
 	*count = sizeof(names) / sizeof(names[0]);
 	return names;
-};
+}
 
 bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_wl* dpy = get_display_wl(base);
-	unsigned n_bits = 8 * sizeof(dpy->key_states);
+	const unsigned n_bits = 8 * sizeof(dpy->key_states);
 	if(key >= n_bits) {
 		dlg_warn("keycode not tracked (too high)");
 		return false;
@@ -99,15 +541,59 @@ bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	return (dpy->key_states[idx] & (1 << bit));
 }
 
-const char* display_key_name(struct swa_display*, enum swa_key);
-enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display*);
-struct swa_window* display_get_keyboard_focus(struct swa_display*);
-bool display_mouse_button_pressed(struct swa_display*, enum swa_mouse_button);
-void display_mouse_position(struct swa_display*, int* x, int* y);
-struct swa_window* display_get_mouse_over(struct swa_display*);
-struct swa_data_offer* display_get_clipboard(struct swa_display*);
-bool display_set_clipboard(struct swa_display*, struct swa_data_source*, void*);
-bool display_start_dnd(struct swa_display*, struct swa_data_source*, void*);
+const char* display_key_name(struct swa_display* base, enum swa_key key) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return NULL;
+}
+
+enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return swa_keyboard_mod_none;
+}
+
+struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return dpy->focus;
+}
+
+bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	if(button >= 64) {
+		dlg_warn("mouse button code not tracked (too high)");
+		return false;
+	}
+
+	return (dpy->mouse_button_states & (1 << button));
+}
+void display_mouse_position(struct swa_display* base, int* x, int* y) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	if(!dpy->mouse_over) {
+		return;
+	}
+
+	*x = dpy->mouse_x;
+	*y = dpy->mouse_y;
+}
+struct swa_window* display_get_mouse_over(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return dpy->mouse_over;
+}
+
+struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return NULL;
+}
+
+bool display_set_clipboard(struct swa_display* base,
+		struct swa_data_source* source, void* trigger) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return false;
+}
+bool display_start_dnd(struct swa_display* base,
+		struct swa_data_source* source, void* trigger) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return false;
+}
 
 struct swa_window* display_create_window(struct swa_display* base,
 		struct swa_window_settings settings) {
@@ -116,6 +602,9 @@ struct swa_window* display_create_window(struct swa_display* base,
 	win->base.impl = &window_impl;
 	win->dpy = dpy;
 	win->surface = wl_compositor_create_surface(dpy->compositor);
+	wl_surface_set_user_data(win->surface, win);
+	win->width = settings.width;
+	win->height = settings.height;
 
 	win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->surface);
 	xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
@@ -129,30 +618,33 @@ struct swa_window* display_create_window(struct swa_display* base,
 		xdg_toplevel_set_app_id(win->xdg_toplevel, settings.app_name);
 	}
 
-	// commit the role so we get a configure event and can start drawing
-	wl_surface_commit(win->surface);
-
-	// the default of the decoration protocol (and wayland in general)
-	// is client side decorations. We only have to act if the user
-	// explicitly requested server side decorations
-	if(settings.client_decorate == swa_preference_no) {
-		if(dpy->decoration_manager) {
-			win->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-				dpy->decoration_manager, win->xdg_toplevel);
-			zxdg_toplevel_decoration_v1_add_listener(win->decoration,
-				&decoration_listener, win);
-			zxdg_toplevel_decoration_v1_set_mode(xdgDecoration(),
+	// when the decoration protocol is not present, client side decorations
+	// should be assumed on wayland
+	win->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+	if(dpy->decoration_manager) {
+		win->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+			dpy->decoration_manager, win->xdg_toplevel);
+		zxdg_toplevel_decoration_v1_add_listener(win->decoration,
+			&decoration_listener, win);
+		win->decoration_mode = 0xFFFFFFFFu;
+		if(settings.client_decorate == swa_preference_yes) {
+			zxdg_toplevel_decoration_v1_set_mode(win->decoration,
+				ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+		} else if(settings.client_decorate == swa_preference_no) {
+			zxdg_toplevel_decoration_v1_set_mode(win->decoration,
 				ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
-		} else {
-			dlg_info("Can't set up server side decoration since "
-				"the compositor doesn't support the decoration protocol");
 		}
+	} else if(settings.client_decorate == swa_preference_no) {
+		dlg_info("Can't set up server side decoration since "
+			"the compositor doesn't support the decoration protocol");
 	}
 
 	if(settings.state != swa_window_state_normal) {
 		swa_window_set_state(&win->base, settings.state);
 	}
 
+	// commit the role so we get a configure event and can start drawing
+	wl_surface_commit(win->surface);
 	return &win->base;
 }
 
@@ -176,11 +668,93 @@ static const struct swa_display_interface display_impl = {
 	.create_window = display_create_window,
 };
 
+static void decoration_configure(void *data,
+		struct zxdg_toplevel_decoration_v1* deco, uint32_t mode) {
+	struct swa_window_wl* win = data;
+	win->decoration_mode = mode;
+}
+
+static const struct zxdg_toplevel_decoration_v1_listener decoration_listener = {
+	.configure = decoration_configure
+};
+
 static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		  int32_t width, int32_t height, struct wl_array *states) {
+	struct swa_window_wl* win = data;
+	dlg_assert(width >= 0 && height >= 0);
+
+	// width or height being 0 means we should decide them ourselves
+	// (mainly for the first configure event).
+	bool resized = false;
+	if(width) {
+		resized = (int32_t)win->width != width;
+		win->width = width;
+	} else if(win->width == SWA_DEFAULT_SIZE) {
+		resized = true;
+		win->width = SWA_FALLBACK_WIDTH;
+	}
+
+	if(height) {
+		resized = (int32_t)win->height != height;
+		win->height = height;
+	} else if(win->height == SWA_DEFAULT_SIZE) {
+		resized = true;
+		win->height = SWA_FALLBACK_HEIGHT;
+	}
+
+	if(resized && win->base.listener && win->base.listener->resize) {
+		win->base.listener->resize(&win->base, win->width, win->height);
+	}
+
+	// refresh the window if the size changed or if it was never
+	// drawn since this is the first configure event
+	bool draw = win->base.listener && win->base.listener->draw;
+	if(draw && (resized || !win->configured)) {
+		if(win->frame_callback) {
+			dlg_assert(win->configured);
+			win->redraw = true;
+		} else {
+			win->base.listener->draw(&win->base);
+		}
+	}
+
+	win->configured = true;
+
+	// there is no way to know whether the window is minimized.
+	// If a compositor sends fullscreen and maximized in the state list,
+	// we consider the window is fullscreen state.
+	uint32_t* wl_states = (uint32_t*)(states->data);
+	enum swa_window_state state = swa_window_state_normal;
+	for(unsigned i = 0u; i < states->size / sizeof(uint32_t); ++i) {
+		bool finished = false;
+		switch(wl_states[i]) {
+			case XDG_TOPLEVEL_STATE_FULLSCREEN:
+				state = swa_window_state_fullscreen;
+				finished = true;
+				break;
+			case XDG_TOPLEVEL_STATE_MAXIMIZED:
+				state = swa_window_state_maximized;
+				break;
+		}
+
+		if(finished) {
+			break;
+		}
+	}
+
+	if(state != win->state) {
+		win->state = state;
+		if(win->base.listener && win->base.listener->state) {
+			win->base.listener->state(&win->base, state);
+		}
+	}
 }
 
 static void toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel) {
+	struct swa_window_wl* win = data;
+	if(win->base.listener && win->base.listener->close) {
+		win->base.listener->close(&win->base);
+	}
 }
 
 static const struct xdg_toplevel_listener toplevel_listener = {
@@ -190,6 +764,7 @@ static const struct xdg_toplevel_listener toplevel_listener = {
 
 static void xdg_surface_configure(void *data, struct xdg_surface *xdg_surface,
 		  uint32_t serial) {
+	xdg_surface_ack_configure(xdg_surface, serial);
 
 }
 
@@ -386,6 +961,9 @@ static void handle_global(void *data, struct wl_registry *registry,
 	} else if(strcmp(interface, wl_seat_interface.name) == 0) {
 		dpy->seat = wl_registry_bind(registry, name, &wl_seat_interface, 5);
 		wl_seat_add_listener(dpy->seat, &seat_listener, dpy);
+	} else if(strcmp(interface, xdg_wm_base_interface.name) == 0) {
+		dpy->xdg_wm_base = wl_registry_bind(registry, name, &xdg_wm_base_interface, 1);
+		xdg_wm_base_add_listener(dpy->xdg_wm_base, &wm_base_listener, dpy);
 	}
 }
 

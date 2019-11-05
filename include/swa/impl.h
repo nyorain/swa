@@ -50,7 +50,7 @@ struct swa_window_interface {
 
 	bool (*gl_make_current)(struct swa_window*);
 	bool (*gl_swap_buffers)(struct swa_window*);
-	bool (*gl_set_swap_interval)(struct swa_window*);
+	bool (*gl_set_swap_interval)(struct swa_window*, int interval);
 
 	bool (*get_buffer)(struct swa_window*, struct swa_image*);
 	void (*apply_buffer)(struct swa_window*);
