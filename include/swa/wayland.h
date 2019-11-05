@@ -1,8 +1,10 @@
 #pragma once
 
 #include <swa/impl.h>
+#include <swa/xkb.h>
 #include <swa/egl.h>
 #include <stdint.h>
+#include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -12,20 +14,20 @@ struct swa_display_wl {
 	struct swa_display base;
 	struct wl_display* display;
 	struct wl_registry* registry;
+	struct ml_custom* event_source;
 
 	// globals
 	struct wl_compositor* compositor;
 	struct wl_shm* shm;
 	struct wl_seat* seat;
-	struct wl_keyboard* keyboard;
-	struct wl_pointer* pointer;
-	struct wl_touch* touch;
-	struct wl_data_device_manager* dd_manager;
-	struct wl_data_device* dd;
+	struct wl_data_device_manager* data_dev_manager;
 	struct xdg_wm_base* xdg_wm_base;
 	struct zxdg_decoration_manager_v1* decoration_manager;
 
-	struct wl_cursor_theme* cursor_theme;
+	struct wl_keyboard* keyboard;
+	struct wl_pointer* pointer;
+	struct wl_touch* touch;
+	struct wl_data_device* data_dev;
 
 	struct mainloop* mainloop;
 	struct ml_io* display_io;
@@ -33,16 +35,51 @@ struct swa_display_wl {
 	struct ml_timer* keyboard_timer;
 	bool error;
 
+	struct swa_xkb_context xkb;
+
 	int wakeup_pipe_w, wakeup_pipe_r;
-	uint64_t key_states[64]; // bitset
+	uint64_t key_states[16]; // bitset
 	uint64_t mouse_button_states; // bitset
 	int mouse_x, mouse_y;
 	struct swa_window_wl* focus;
 	struct swa_window_wl* mouse_over;
 	uint32_t mouse_enter_serial;
 
-	struct swa_window_wl* window_list;
-	struct wl_surface* cursor_surface;
+	struct {
+		struct ml_timer* timer;
+		struct timespec set;
+		struct wl_cursor_theme* theme;
+		struct wl_surface* surface;
+		struct wl_callback* frame_callback;
+		struct wl_cursor* active;
+		bool redraw;
+	} cursor;
+
+	struct {
+		struct ml_timer* timer;
+		uint32_t key;
+		uint32_t serial;
+		int32_t rate; // in repeats per second
+		int32_t delay; // in ms
+	} key_repeat;
+
+	unsigned capacity_touch_points;
+	unsigned n_touch_points;
+	struct swa_wl_touch_point* touch_points;
+
+	// dummy custom queue that can be used to e.g. force initial
+	// listeners to be triggered (by moving the proxy to this queue
+	// and roundtripping) without dispatching normal events.
+	struct wl_event_queue* wl_queue;
+
+	struct swa_data_offer_wl* selection;
+	struct swa_data_offer_wl* dnd;
+};
+
+struct swa_wl_touch_point {
+	struct swa_window_wl* window;
+	int32_t id;
+	int x, y;
 };
 
 struct swa_wl_buffer {
@@ -55,7 +92,8 @@ struct swa_wl_buffer {
 
 struct swa_wl_buffer_surface {
 	unsigned n_bufs;
-	struct swa_wl_buffer* buffers;
+	struct swa_wl_buffer* buffers; // list of all buffers
+	int active; // index of active
 };
 
 struct swa_wl_gl_surface {
@@ -72,10 +110,6 @@ struct swa_wl_vk_surface {
 struct swa_window_wl {
 	struct swa_window base;
 	struct swa_display_wl* dpy;
-
-	// linked list of all windows in the display
-	struct swa_window_wl* next;
-	struct swa_window_wl* prev;
 
 	struct wl_surface* surface;
 	struct xdg_surface* xdg_surface;
@@ -96,9 +130,18 @@ struct swa_window_wl {
 	enum swa_window_state state;
 	struct ml_defer* defer_redraw;
 
-	struct swa_wl_buffer cursor_buffer;
-	int cursor_hx, cursor_hy;
+	struct {
+		// if this is != NULL, this window has a native cursor that
+		// can be animated, that will be used.
+		struct wl_cursor* native;
+		// Otherwise, will use the wl_buffer in this buffer.
+		// If that is NULL, the window has no cursor.
+		struct swa_wl_buffer buffer;
+		// Cursor hotspot only relevant when using the buffer.
+		int hx, hy;
+	} cursor;
 
+	enum swa_surface_type surface_type;
 	union {
 		struct swa_wl_buffer_surface buffer;
 		struct swa_wl_vk_surface vk;
@@ -106,8 +149,8 @@ struct swa_window_wl {
 	};
 };
 
-struct swa_data_listener_wl {
-	swa_data_handler listener;
+struct swa_data_handler_wl {
+	swa_data_handler handler;
 	const char* format;
 	uint64_t n_bytes;
 	const char* bytes;
@@ -121,10 +164,11 @@ struct swa_data_offer_wl {
 	// formats and actions supported by other side
 	unsigned n_formats;
 	const char** formats;
-	enum swa_data_action actions;
+	enum swa_data_action supported_actions;
+	enum swa_data_action action;
 
-	unsigned n_listener;
-	struct swa_data_listener_wl* listener;
+	unsigned n_handlers;
+	struct swa_data_handler_wl* handlers;
 };
 
 struct swa_display* swa_display_wl_create(void);

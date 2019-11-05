@@ -27,22 +27,28 @@ struct swa_image;
 #define SWA_FALLBACK_HEIGHT 500
 
 // Describes the layout of pixel color values in the data
-// buffer of a swa_image.
+// buffer of a swa_image. The format always describes the ordering
+// of bytes in memory, not in logical words.
 // Example: rgba32 means that a pixel uses 32 bits (4 bytes),
-// where the lowest 8 bit contain the 'red' value and the
-// highest 8 bit contain the 'alpha' value.
-// This means the representation is dependent on the endianess
-// of the system, but the components can (independent
-// from endianess) always be extracted using logical C operations.
-// This definition is consistent with OpenGL, Vulkan and Cairo,
-// but different to SDL or wayland.
+// where the first byte in memory contain the 'red' value.
+// This means the representation is independent from the endianess
+// of the system, but extracting the components from a pixel word using
+// logical C operations requires knowledge about the endianess.
+// This definition is consistent with OpenGL and Vulkan (when not
+// using packed formats) but different to SDL (uses native type),
+// cairo (uses native type) and wayland (uses little endian)
+// format definitions.
+// https://github.com/afrantzis/pixel-format-guide is a useful tool
+// to understand pixel formats, swa is comparable to the non-packed
+// vulkan formats.
 enum swa_image_format {
     swa_image_format_none = 0,
     swa_image_format_a8,
     swa_image_format_rgba32,
-    swa_image_format_rgb24,
     swa_image_format_argb32,
     swa_image_format_xrgb32,
+    swa_image_format_rgb24,
+
     swa_image_format_abgr32,
     swa_image_format_bgra32,
     swa_image_format_bgrx32,
@@ -50,11 +56,11 @@ enum swa_image_format {
 };
 
 // Describes the kind of render surface created for a window.
-enum swa_window_surface {
-    swa_window_surface_none = 0,
-    swa_window_surface_buffer,
-    swa_window_surface_gl,
-    swa_window_surface_vk,
+enum swa_surface_type {
+    swa_surface_none = 0,
+    swa_surface_buffer,
+    swa_surface_gl,
+    swa_surface_vk,
 };
 
 // Describes a 2 dimensional image.
@@ -62,7 +68,7 @@ struct swa_image {
     unsigned width, height;
     unsigned stride; // in bytes
     enum swa_image_format format;
-    const char* data;
+    uint8_t* data;
 };
 
 // Functional capability of a swa_display implementation.
@@ -202,7 +208,6 @@ struct swa_cursor {
 // TODO
 struct swa_gl_surface_settings {
     unsigned major, minor;
-	struct swa_window* reuse_context;
 };
 
 // The instance must remain valid until the window is destroyed.
@@ -217,7 +222,7 @@ struct swa_window_settings {
     const char* title;
     struct swa_cursor cursor;
 
-    enum swa_window_surface surface;
+    enum swa_surface_type surface;
     union {
 		// allow preferred format for buffer surface?
         struct swa_gl_surface_settings gl;
@@ -232,33 +237,102 @@ struct swa_window_settings {
 };
 
 struct swa_size_event {
+	// The new size (width and height) of the window.
     unsigned width;
     unsigned height;
 };
 
 struct swa_key_event {
+	// The text input this key event generated.
+	// May be NULL, usually this is the case for key release events
+	// or special keys such as escape.
     const char* utf8;
+	// Keycode of the pressed or release key.
     enum swa_key keycode;
+	// Currently active keyboard modifiers
     enum swa_keyboard_mod modifiers;
+	// Whether the key was pressed or released.
     bool pressed;
+	// Whether or not this is a repeated event.
+	// Usually only true for press events.
+	// In some cases it may be useful to ignore repeated events.
     bool repeated;
+	// Backend-dependent event data, only guaranteed to be valid
+	// in the called event handler function.
+	// May be passed to functions that require information about
+	// the internal event trigger.
     void* data;
 };
 
 struct swa_mouse_button_event {
+	// The new mouse position in window-local coordinates.
+    int x, y;
+	// The button that was pressed or released.
     enum swa_mouse_button button;
+	// Whether the button was pressed or released.
     bool pressed;
+	// Backend-dependent event data, only guaranteed to be valid
+	// in the called event handler function.
+	// May be passed to functions that require information about
+	// the internal event trigger.
     void *data;
 };
 
 struct swa_mouse_move_event {
+	// The new mouse position in window-local coordinates.
     int x, y;
+	// The delta, i.e. the current mouse position minus the last
+	// known position in window-local cordinates.
     int dx, dy;
 };
 
+struct swa_mouse_cross_event {
+	// Whether the mouse entered or left the window.
+	bool entered;
+	// The position of the mouse in window-local coordinates.
+	int x, y;
+	// Backend-dependent event data, only guaranteed to be valid
+	// in the called event handler function.
+	// May be passed to functions that require information about
+	// the internal event trigger.
+	void* data;
+};
+
 struct swa_dnd_event {
+	// The data offer associated with this dnd session.
+	// Guaranteed to be valid until `dnd_leave` is called.
+	// When `dnd_drop` is called, ownership of this offer is transferred
+	// to the application, i.e. it must free it after being finished
+	// using it.
     struct swa_data_offer* offer;
+	// Position of the dnd item in window-local coorindates.
     int x, y;
+};
+
+struct swa_touch_begin_event {
+	// Identification of the new touch point. This id will passed to further
+	// touch events and can be used to identify this touch point.
+	// Touch point ids are unique as long as they exist (between `touch_begin`
+	// and `touch_end` or `touch_cancel`) but might be reused after that.
+	unsigned id;
+	// Initial position of the new touch point in window-local coordinates.
+	int x, y;
+	// Backend-dependent event data, only guaranteed to be valid
+	// in the called event handler function.
+	// May be passed to functions that require information about
+	// the internal event trigger.
+	void* data;
+};
+
+struct swa_touch_update_event {
+	// The identification of the touch point as previously introduced
+	// by `touch_begin`.
+	unsigned id;
+	// Position of the touch point in window-local coordinates.
+	int x, y;
+	// Difference between the current and last touch positions
+	// in window-local coordinates.
+	int dx, dy;
 };
 
 // All callbacks are guaranteed to only be called from inside
@@ -300,7 +374,7 @@ struct swa_window_listener {
     void (*key)(struct swa_window*, const struct swa_key_event*);
 
 	// Called when the mouse enters or leaves the window.
-    void (*mouse_cross)(struct swa_window*, bool entered);
+    void (*mouse_cross)(struct swa_window*, const struct swa_mouse_cross_event*);
 	// Called when the mouse moves over the window.
     void (*mouse_move)(struct swa_window*, const struct swa_mouse_move_event*);
 	// Called when a mouse button is pressed inside the window.
@@ -315,23 +389,18 @@ struct swa_window_listener {
     void (*mouse_wheel)(struct swa_window*, float dx, float dy);
 
 	// Called when a new touch point is created.
-	// id: the id of the new touch point. This id will passed to further
-	//   `touch_update` and `touch_end` events and can be used to identify
-	//   this touch points. Touch point ids are unique as long as they
-	//   exist (between `touch_begin` and `touch_end` or `touch_cancel`) but
-	//   might be reused after that.
-	// x,y: the window-local coordinates where the touch started.
-    void (*touch_begin)(struct swa_window*, unsigned id, int x, int y);
+    void (*touch_begin)(struct swa_window*, const struct swa_touch_begin_event*);
 	// Updates the position of a touch point.
-	// id: the identification of the touch point as previously introduced
-	//   by `touch_begin`.
-	// x, y: the new touch position in window-local coordinates.
-    void (*touch_update)(struct swa_window*, unsigned id, int x, int y);
+    void (*touch_update)(struct swa_window*, const struct swa_touch_update_event*);
 	// touch_end: ends a touch point. No further events for this
 	// touch point will be generated.
 	// id: the identification of the touch point as previously introduced
 	//   by `touch_begin`.
-    void (*touch_end)(struct swa_window*, unsigned id);
+	// data: backend-dependent event data, only guaranteed to be valid
+	//   in the called event handler function.
+	//   May be passed to functions that require information about
+	//   the internal event trigger.
+    void (*touch_end)(struct swa_window*, unsigned id, void* data);
 	// Cancels all currently active touch points.
 	// Should be interpreted as a canceled gesture.
     void (*touch_cancel)(struct swa_window*);
@@ -345,22 +414,21 @@ struct swa_window_listener {
     void (*surface_created)(struct swa_window*);
 };
 
-union swa_exchange_data {
-    const char* text;
-    const char** text_list;
-    struct swa_image image;
+struct swa_exchange_data {
+    const char* data; // textual or raw data
+	uint64_t size;
 };
 
 enum swa_data_action {
-    none,
-    copy,
-    move,
+    swa_data_action_none = 0,
+    swa_data_action_copy,
+    swa_data_action_move,
 };
 
 struct swa_data_source_interface {
     void (*destroy)(struct swa_data_source*);
     const char** (*formats)(struct swa_data_source*, unsigned* count);
-    union swa_exchange_data (*data)(struct swa_data_source*, const char* format);
+    struct swa_exchange_data (*data)(struct swa_data_source*, const char* format);
     struct swa_image (*image)(struct swa_data_source*);
     enum swa_data_action (*supported_actions)(struct swa_data_source*);
     void (*selected_action)(struct swa_data_source*, enum swa_data_action);
@@ -418,6 +486,7 @@ bool swa_display_key_pressed(struct swa_display*, enum swa_key);
 // for this key that is nontheless dependent on the keyboard layout and
 // could e.g. be shown to the user when configuring keyboard shortcuts.
 // Might return NULL on failure or when there is no name for this keycode.
+// The returned buffer must be freed.
 // Only valid if the display has the 'keyboard' capability.
 const char* swa_display_key_name(struct swa_display*, enum swa_key);
 
@@ -482,35 +551,82 @@ bool swa_display_start_dnd(struct swa_display*, struct swa_data_source*, void* t
 // On some platforms, the number of windows that can be created is strictly
 // limited (e.g. to 1 or the number of available outputs).
 struct swa_window* swa_display_create_window(struct swa_display*,
-	struct swa_window_settings);
+	const struct swa_window_settings*);
 
 // window api
 void swa_window_destroy(struct swa_window*);
 enum swa_window_cap swa_window_get_capabilities(struct swa_window*);
 void swa_window_set_min_size(struct swa_window*, unsigned w, unsigned h);
 void swa_window_set_max_size(struct swa_window*, unsigned w, unsigned h);
+
+// Shows or hides the window.
+// Only valid if the window has the window has the 'visibility' capability.
 void swa_window_show(struct swa_window*, bool show);
 
+// Changes the size of a window.
 // Calling this function will not emit a size event.
 // It will usually emit a draw event though (but might not e.g. if the
 // window is somehow hidden anyways).
+// Only valid if the window has the window has the 'size' capability.
 void swa_window_set_size(struct swa_window*, unsigned w, unsigned h);
+
+// Changes the position of the window. The space of the given coordinates
+// are backend-dependent but will usually refer to a position on
+// the current output or desktop.
+// Only valid if the window has the window has the 'position' capability.
 void swa_window_set_position(struct swa_window*, int x, int y);
+
 // If the given cursor is an image cursor, the stored image data
 // will be copied or otherwise used, it must not remain valid after this call.
-// Only valid if the corresponding dislpay has the 'mouse' capability.
+// Only valid if the window has the 'cursor' capability.
 void swa_window_set_cursor(struct swa_window*, struct swa_cursor cursor);
+
+// Asks the backend to emit a draw event when it is a good time to redraw.
+// Backends will internally try to implement redraw throttling, i.e.
+// roughly synchronize redrawing with the monitor/compositor.
+// This function will never call the draw handler itself but rather at
+// least defer the event. This means, it is safe to call this function
+// from the draw handler itself for continuous redrawing.
+// If the window is currently hidden (e.g. on a
+// different workspace or minimized or below another window), no
+// draw event might be emitted at all.
+// Important: See swa_window_surface_frame.
 void swa_window_refresh(struct swa_window*);
+
+// Notifies the window to perform redraw throttling.
+// When drawing on to window using vulkan or a platform-specific
+// method, it is important to call swa_window_surface_frame before
+// applying the new contents (i.e. presenting/commiting) to allow
+// the implementation to implement redraw throttling. Otherwise
+// the behavior of `swa_window_refresh` might be unexpected or suboptimal.
+// Calling this without presenting afterwards is an error.
+// If draw handlers aren't used, this isn't needed at all.
 void swa_window_surface_frame(struct swa_window*);
 
+// Changes the window state.
 // Calling this function will not emit a state event.
+// Calling this with the respective states is only valid if they
+// are included in the window's capabilities.
 void swa_window_set_state(struct swa_window*, enum swa_window_state);
+
+// Asks the system to start a session where the user moves the window.
+// Useful when implementing client-side decorations.
+// Only valid when the window has the 'begin_move' capability.
 void swa_window_begin_move(struct swa_window*, void* trigger_event_data);
-void swa_window_begin_resize(struct swa_window*, enum swa_edge edges, void* trigger_event_data);
-void swa_window_set_title(struct swa_window*, const char*);
+
+// Asks the system to start a session where the user resizes the window.
+// Useful when implementing client-side decorations.
+// Only valid when the window has the 'begin_resize' capability.
+void swa_window_begin_resize(struct swa_window*, enum swa_edge edges,
+	void* trigger_event_data);
+
+// Changes the window title. The given null-terminated string must be utf8.
+// Only valid if the window has the 'title' capability.
+void swa_window_set_title(struct swa_window*, const char* utf8);
 
 // The passed image must not remain valid after this call.
 // Can pass NULL to unset the icon.
+// Only valid if the window has the 'icon' capability.
 void swa_window_set_icon(struct swa_window*, const struct swa_image* image);
 
 // Returns whether the window should be decorated by the user.
@@ -519,28 +635,39 @@ void swa_window_set_icon(struct swa_window*, const struct swa_image* image);
 // (and those are supported by the backend as well).
 bool swa_window_is_client_decorated(struct swa_window*);
 
-// The objects must remain valid until it is changed or the window is destroyed.
+// The listener object must remain valid until it is changed or the window is
+// destroyed.
 void swa_window_set_listener(struct swa_window*, const struct swa_window_listener*);
+const struct swa_window_listener* swa_window_get_listener(struct swa_window*);
+
+// Allows to set a word of custom data.
+// Can be later on retrieved using `swa_window_get_userdata`.
+// Mainly present for window listeners.
 void swa_window_set_userdata(struct swa_window*, void* data);
+
+// Retrieves the data previously set with `swa_window_set_userdata`.
 void* swa_window_get_userdata(struct swa_window*);
 
-// Only valid if the window was created with surface set to vk.
+// Only valid if the window was created with surface set to `swa_surface_vk`.
 // The surface will automatically be destroyed when the window is destroyed.
 // Note that the surface might get lost on some platforms, signaled by the
 // surface_destroyed event.
 bool swa_window_get_vk_surface(struct swa_window*, void* vkSurfaceKHR);
 
-// Only valid if the window was created with surface set to gl.
+// Only valid if the window was created with surface set to `swa_surface_gl`.
 bool swa_window_gl_make_current(struct swa_window*);
 bool swa_window_gl_swap_buffers(struct swa_window*);
 bool swa_window_gl_set_swap_interval(struct swa_window*, int interval);
 
-// Only valid if the window was created with surface set to buffer.
+// Only valid if the window was created with surface set to `swa_surface_buffer`.
 // Implementations might use multiple buffers to avoid flickering, i.e.
 // the caller should not expect two calls to `get_buffer` ever to
 // return the same image.
+// Returns false on error, in this case no valid image is returned
+// and `swa_window_apply_buffer` must not be called.
 bool swa_window_get_buffer(struct swa_window*, struct swa_image*);
 
+// Only valid if the window was created with surface set to `buffer`.
 // Sets the window contents to the image data stored in the image
 // returned by the last call to `get_buffer`.
 // For each call of `apply_buffer`, there must have been a previous
@@ -548,14 +675,43 @@ bool swa_window_get_buffer(struct swa_window*, struct swa_image*);
 void swa_window_apply_buffer(struct swa_window*);
 
 // data offers
-typedef void (*swa_formats_handler)(const char** formats, unsigned count, void* data);
-typedef void (*swa_data_handler)(union swa_exchange_data, void* data);
+typedef void (*swa_formats_handler)(struct swa_data_offer*,
+	const char** formats, unsigned n_formats);
+typedef void (*swa_data_handler)(struct swa_data_offer*,
+	const char* format, struct swa_exchange_data);
 
-bool swa_data_offer_types(struct swa_data_offer*, swa_formats_handler cb, void* data);
-bool swa_data_offer_data(struct swa_data_offer*, const char* format, swa_data_handler cb, void* data);
-void swa_data_offer_set_preferred(struct swa_data_offer*, const char* foramt, enum swa_data_action action);
+// Requests all formats in which this data offer can provide its data.
+// The given callback will be called when the formats were retrieved.
+// Returns false on error. When an error occurs later, will
+// call the given callback without any formats (n_formats = 0).
+// At any time, there can only be one formats request, i.e. calling
+// this again before the callback was triggered is an error.
+// Implementations may call the callback from within this function, if
+// the format list is immediately available.
+bool swa_data_offer_formats(struct swa_data_offer*, swa_formats_handler cb);
+
+// Requests the data_offer's data in a specific format.
+// The given callback will be called with the data when retrieved.
+// Returns false on error. When an error occurs later, will call the
+// given callback without any data.
+bool swa_data_offer_data(struct swa_data_offer*, const char* format,
+	swa_data_handler cb);
+
+// Sets the preferred format and action on a data offer.
+// Only relevant and expected to be used for data offers introduced
+// by dnd events.
+// Pass format = NULL or action = action_none to signal that this
+// offer can't be handled (can be in response to the current dnd position).
+void swa_data_offer_set_preferred(struct swa_data_offer*, const char* format,
+	enum swa_data_action action);
+
+// Returns the currently selected action for the given data offer.
 enum swa_data_action swa_data_offer_action(struct swa_data_offer*);
+
+// Returns all supported actions by this offer.
 enum swa_data_action swa_data_offer_supported_actions(struct swa_data_offer*);
+void swa_data_offer_set_userdata(struct swa_data_offer*, void*);
+void* swa_data_offer_get_userdata(struct swa_data_offer*);
 
 // utility
 // Initializes the given settings to the default state.
@@ -571,13 +727,31 @@ unsigned swa_image_format_size(enum swa_image_format);
 // Can also be used to create an image with a different stride.
 // If `new_stride` is zero, will tightly pack the image.
 // The data in the returned image must be freed.
-struct swa_image swa_convert_image_new(struct swa_image* source,
+struct swa_image swa_convert_image_new(const struct swa_image* src,
 	enum swa_image_format format, unsigned new_stride);
 
-// Expects `dst` to already have enough data allocated and stride
-// and format set.
-void swa_convert_image(struct swa_image* sourc, struct swa_image* dst);
+// Converts an image in place.
+// Expects `src` to be a valid image.
+// Expects `dst` to already have enough data allocated and width, height,
+// stride and format set which will be used for conversion.
+// Width and height of the both images must match.
+void swa_convert_image(const struct swa_image* src, const struct swa_image* dst);
 
+// Returns the corresponding image format with reversed component order.
+// Example: argb32 will be mapped to bgra32.
+enum swa_image_format swa_image_format_reversed(enum swa_image_format);
+
+// Computes the corresponding image format to the given one
+// with toggled byte/word order semantics.
+// In practice this simply means:
+// On big endian systems it just returns the given format while
+// on little endian systems it returns the reversed format.
+// This is useful when translating between swa_image_format and another
+// pixel format definition that is given in word order instead of
+// swa_image_format's byte order.
+// Note how only one function is needed since translating from byte
+// to word and from word to byte order is the same operation.
+enum swa_image_format swa_image_format_toggle_byte_word(enum swa_image_format);
 
 #ifdef __cplusplus
 }

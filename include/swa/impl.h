@@ -23,7 +23,8 @@ struct swa_display_interface {
 	struct swa_data_offer* (*get_clipboard)(struct swa_display*);
 	bool (*set_clipboard)(struct swa_display*, struct swa_data_source*, void*);
 	bool (*start_dnd)(struct swa_display*, struct swa_data_source*, void*);
-	struct swa_window* (*create_window)(struct swa_display*, struct swa_window_settings);
+	struct swa_window* (*create_window)(struct swa_display*,
+		const struct swa_window_settings*);
 };
 
 struct swa_window_interface {
@@ -58,13 +59,13 @@ struct swa_window_interface {
 
 struct swa_data_offer_interface {
 	void (*destroy)(struct swa_data_offer*);
-	bool (*types)(struct swa_data_offer*, swa_formats_handler cb, void* data);
-	bool (*data)(struct swa_data_offer*, const char* format, swa_data_handler cb, void* data);
-	void (*set_preferred)(struct swa_data_offer*, const char* foramt, enum swa_data_action action);
+	bool (*formats)(struct swa_data_offer*, swa_formats_handler cb);
+	bool (*data)(struct swa_data_offer*, const char* format, swa_data_handler cb);
+	void (*set_preferred)(struct swa_data_offer*, const char* format,
+		enum swa_data_action action);
 	enum swa_data_action (*action)(struct swa_data_offer*);
 	enum swa_data_action (*supported_actions)(struct swa_data_offer*);
 };
-
 
 struct swa_display {
 	const struct swa_display_interface* impl;
@@ -72,12 +73,13 @@ struct swa_display {
 
 struct swa_window {
 	const struct swa_window_interface* impl;
-	struct swa_window_listener* listener;
+	const struct swa_window_listener* listener;
 	void* userdata;
 };
 
 struct swa_data_offer {
 	const struct swa_data_offer_interface* impl;
+	void* userdata;
 };
 
 #ifdef __cplusplus

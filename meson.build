@@ -23,6 +23,7 @@ add_project_arguments(
 cc = meson.get_compiler('c')
 swa_src = files(
 	'src/swa/swa.c',
+	'src/swa/xkb.c',
 	'src/swa/wayland.c',
 )
 
@@ -30,10 +31,13 @@ source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
+dep_xkbcommon = dependency('xkbcommon')
 dep_ml = dependency('posix_mainloop', fallback: ['ml', 'posix_mainloop_dep'])
 dep_dlg = dependency('dlg', fallback: ['dlg', 'dlg_dep'])
 
 dep_wl_client = dependency('wayland-client', required: true)
+dep_wl_cursor = dependency('wayland-cursor', required: true)
+dep_wl_egl = dependency('wayland-egl', required: true)
 wl_protos = dependency('wayland-protocols', version: '>=1.14', required: true)
 wl_scanner = find_program('wayland-scanner', required: true)
 wl_protocol_dir = wl_protos.get_pkgconfig_variable('pkgdatadir')
@@ -85,7 +89,10 @@ swa_deps = [
 	dep_ml,
 	dep_dlg,
 	dep_wl_client,
+	dep_wl_cursor,
+	dep_wl_egl,
 	dep_wl_protos,
+	dep_xkbcommon,
 ]
 
 conf_data = configuration_data()
@@ -103,3 +110,11 @@ lib_swa = library('swa',
 	include_directories: swa_inc,
 	dependencies: swa_deps,
 	install: true)
+
+swa_dep = declare_dependency(
+	link_with: lib_swa,
+	include_directories: include_directories('include'))
+
+executable('example',
+	'example.c',
+	dependencies: [swa_dep, dep_dlg])
