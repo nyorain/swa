@@ -1,6 +1,6 @@
-
 #define _POSIX_C_SOURCE 200809L
 
+#include <swa/config.h>
 #include <swa/wayland.h>
 #include <dlg/dlg.h>
 #include <mainloop.h>
@@ -9,8 +9,6 @@
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_wayland.h>
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -19,6 +17,11 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <poll.h>
+
+#ifdef SWA_WITH_VK
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_wayland.h>
+#endif
 
 #define SWA_DECORATION_MODE_PENDING 0xFFFFFFFFu
 
@@ -167,13 +170,15 @@ static bool check_error(struct swa_display_wl* dpy) {
 	return false;;
 }
 
-static bool set_cloexec(int fd) {
+static bool add_fd_flags(int fd, int add_flags) {
 	long flags = fcntl(fd, F_GETFD);
 	if(flags == -1) {
+		dlg_error("fcntl (get): %s (%d)", strerror(errno), errno);
 		return false;
 	}
 
-	if(fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == -1) {
+	if(fcntl(fd, F_SETFD, flags | add_flags) == -1) {
+		dlg_error("fcntl (set): %s (%d)", strerror(errno), errno);
 		return false;
 	}
 
@@ -184,7 +189,7 @@ static int create_pool_file(size_t size, char** name) {
 	static const char template[] = "swa-buffer-XXXXXX";
 	const char *path = getenv("XDG_RUNTIME_DIR");
 	if(path == NULL) {
-		dlg_error(stderr, "XDG_RUNTIME_DIR is not set\n");
+		dlg_error("XDG_RUNTIME_DIR is not set");
 		return -1;
 	}
 
@@ -199,7 +204,7 @@ static int create_pool_file(size_t size, char** name) {
 		return -1;
 	}
 
-	if(!set_cloexec(fd)) {
+	if(!add_fd_flags(fd, FD_CLOEXEC)) {
 		dlg_error("set_cloexec: %s (%d)", strerror(errno), errno);
 		close(fd);
 		free(name);
@@ -452,11 +457,27 @@ static void win_destroy(struct swa_window* base) {
 	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
 	if(win->surface) wl_surface_destroy(win->surface);
 
+	// destroy surface buffer
 	if(win->surface_type == swa_surface_buffer) {
 		for(unsigned i = 0u; i < win->buffer.n_bufs; ++i) {
 			buffer_finish(&win->buffer.buffers[i]);
 		}
 		free(win->buffer.buffers);
+	} else if(win->surface_type == swa_surface_vk) {
+		dlg_assert(win->vk.instance);
+		dlg_assert(win->vk.surface);
+
+		VkInstance instance;
+		VkSurfaceKHR surface;
+		memcpy(&instance, &win->vk.instance, sizeof(instance));
+		memcpy(&surface, &win->vk.surface, sizeof(surface));
+		PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
+			vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
+		if(fn) {
+			fn(instance, surface, NULL);
+		} else {
+			dlg_error("Failed to load 'vkDestroySurfaceKHR' function");
+		}
 	}
 
 	free(base);
@@ -496,7 +517,7 @@ static void win_show(struct swa_window* base, bool show) {
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	// TODO: we might be able to implement it by just chaing width and height
+	// we might be able to implement it by just chaing width and height
 	// and redrawing, resulting in a larger buffer. Not sure.
 	dlg_warn("window doesn't have resize capability");
 }
@@ -576,6 +597,18 @@ static void refresh_cb(struct ml_defer* defer) {
 	if(win->base.listener && win->base.listener->draw) {
 		win->base.listener->draw(&win->base);
 	}
+
+	// TODO: problem if draw handler calls win_refresh again
+	// *before* commiting (or calling win_frame).
+	// - make it an requirement to call refresh *after* the surface
+	//   contents were changed/frame was called? would make sense i guess
+	// - actively try to detect this situation in win_refresh and
+	//   wait there? but i guess the other backends would have similar
+	//   problems. Probably best to require in the interface that
+	//   'win_refresh should be called after window contents were changed
+	//   (via gl_swap_buffers or win_apply_buffer) or win_frame
+	//   was called to trigger a new frame. Calling win_refresh
+	//   inside the draw handler before that happened is undefined'.
 	ml_defer_enable(defer, false);
 }
 
@@ -705,11 +738,23 @@ static bool win_is_client_decorated(struct swa_window* base) {
 	return win->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
 }
 
-// TODO
 static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
+#ifdef SWA_WITH_VK
 	struct swa_window_wl* win = get_window_wl(base);
+	if(win->surface_type != swa_surface_vk) {
+		dlg_warn("can't get vulkan surface from non-vulkan window");
+		return false;
+	}
+
+	memcpy(&vkSurfaceKHR, &win->vk.surface, sizeof(VkSurfaceKHR));
+	return win->vk.surface;
+#else
+	dlg_warn("swa was compiled without vulkan suport");
+	return false;
+#endif
 }
 
+// TODO
 static bool win_gl_make_current(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
 }
@@ -829,8 +874,8 @@ static void data_offer_offer(void* data, struct wl_data_offer* wl_data_offer,
 	offer->formats[offer->n_formats - 1] = strdup(mime_type);
 }
 
-static void data_offer_source_actions(void* data, struct wl_data_offer* wl_data_offer,
-		uint32_t source_actions) {
+static void data_offer_source_actions(void* data,
+		struct wl_data_offer* wl_data_offer, uint32_t source_actions) {
 	struct swa_data_offer_wl* offer = data;
 	dlg_assert(offer->offer == wl_data_offer);
 
@@ -869,6 +914,25 @@ static const struct wl_data_offer_listener data_offer_listener = {
 static void data_offer_destroy(struct swa_data_offer* base) {
 	struct swa_data_offer_wl* offer = get_data_offer_wl(base);
 
+	// unlink
+	if(offer->next) offer->next->prev = offer->prev;
+	if(offer->prev) offer->prev->next = offer->next;
+	if(offer->dpy && offer->dpy->data_offer_list == offer) {
+		offer->dpy->data_offer_list = offer->next;
+	}
+
+	// TODO: finish dnd source if succesful
+
+	if(offer->data.handler) {
+		dlg_assert(offer->data.format);
+		struct swa_exchange_data data = {0};
+		offer->data.handler(&offer->base, offer->data.format, data);
+	}
+	if(offer->data.format) free((void*)offer->data.format);
+	if(offer->data.bytes) free(offer->data.bytes);
+	if(offer->data.fd) close(offer->data.fd);
+	if(offer->data.io) ml_io_destroy(offer->data.io);
+
 	if(offer->offer) wl_data_offer_destroy(offer->offer);
 	for(unsigned i = 0u; i < offer->n_formats; ++i) {
 		free((void*)offer->formats[i]);
@@ -883,16 +947,125 @@ static bool data_offer_formats(struct swa_data_offer* base, swa_formats_handler 
 	return true;
 }
 
+static void data_pipe_cb(struct ml_io* io, unsigned revents) {
+	(void) revents;
+
+	struct swa_data_offer_wl* offer = ml_io_get_data(io);
+	dlg_assert(offer->data.fd == ml_io_get_fd(io));
+
+	// TODO: could use ioctl FIONREAD on most unixes
+	unsigned readCount = 2048u;
+	while(true) {
+		unsigned size = offer->data.n_bytes;
+		offer->data.bytes = realloc(offer->data.bytes, size + readCount);
+		int ret = read(offer->data.fd, offer->data.bytes + size, readCount);
+		size += readCount;
+
+		if(ret == 0) {
+			// other side closed, reading is finished
+			// transfer ownership of the data to the application
+			struct swa_exchange_data data = {
+				.data = offer->data.bytes,
+				.size = offer->data.n_bytes,
+			};
+			offer->data.handler(&offer->base, offer->data.format, data);
+
+			// unset handler data
+			ml_io_destroy(offer->data.io);
+			close(offer->data.fd);
+			free((void*) offer->data.format);
+			memset(&offer->data, 0, sizeof(offer->data));
+		} else if(ret < 0) {
+			// EAGAIN: no data available at the moment, continue polling,
+			// i.e. break below. Other errors here are unexpected,
+			// we cancel the data transfer
+			if(errno != EAGAIN && errno != EWOULDBLOCK) {
+				dlg_warn("read(pipe): %s (%d)", strerror(errno), errno);
+
+				struct swa_exchange_data data = {0};
+				offer->data.handler(&offer->base, offer->data.format, data);
+
+				// unset handler data
+				ml_io_destroy(offer->data.io);
+				close(offer->data.fd);
+				free(offer->data.bytes);
+				free((void*) offer->data.format);
+				memset(&offer->data, 0, sizeof(offer->data));
+			}
+		} else if((unsigned) ret < readCount) {
+			// we finished reading avilable data
+			// try again to see whether we get eof or EAGAIN now
+			offer->data.n_bytes = size + ret;
+			continue;
+		} else if((unsigned) ret == readCount) {
+			// more data might be avilable, continue
+			// let read size grow exponentially for performance
+			readCount *= 2;
+			continue;
+		} else {
+			dlg_error("unreachable: ret = %d; readCount = %d",
+				ret, readCount);
+		}
+
+		break;
+	}
+}
+
 static bool data_offer_data(struct swa_data_offer* base, const char* format,
 		swa_data_handler cb) {
 	struct swa_data_offer_wl* offer = get_data_offer_wl(base);
-	// TODO
+	dlg_assert(!offer->data.handler);
+
+	// TODO: on linux, we should use pipe2 here
+	int fds[2];
+	int err = pipe(fds);
+	if(err < 0) {
+		dlg_error("pipe: %s (%d)", strerror(errno), errno);
+		return false;
+	}
+
+	if(!add_fd_flags(fds[0], FD_CLOEXEC | O_NONBLOCK)) {
+		return false;
+	}
+
+	wl_data_offer_receive(offer->offer, format, fds[1]);
+	close(fds[1]);
+
+	offer->data.n_bytes = 0;
+	offer->data.fd = fds[0];
+	offer->data.handler = cb;
+	offer->data.format = strdup(format);
+	offer->data.io = ml_io_new(offer->dpy->mainloop, fds[0],
+		ml_io_input | ml_io_error | ml_io_hangup, data_pipe_cb);
+	ml_io_set_data(offer->data.io, offer);
+
 	return true;
 }
-static void data_offer_set_preferred(struct swa_data_offer* base, const char* format,
-		enum swa_data_action action) {
+static void data_offer_set_preferred(struct swa_data_offer* base,
+		const char* format, enum swa_data_action action) {
 	struct swa_data_offer_wl* offer = get_data_offer_wl(base);
-	// TODO
+	dlg_assert(offer->dnd);
+	wl_data_offer_accept(offer->offer, offer->dpy->dnd.serial, format);
+
+	enum wl_data_device_manager_dnd_action wl_action =
+		WL_DATA_DEVICE_MANAGER_DND_ACTION_NONE;
+	if(format) {
+		switch(action) {
+			case swa_data_action_copy:
+				wl_action = WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY;
+				break;
+			case swa_data_action_move:
+				wl_action = WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE;
+				break;
+			default:
+				break;
+		}
+	}
+
+	unsigned v = wl_data_offer_get_version(offer->offer);
+	if(v > WL_DATA_OFFER_SET_ACTIONS_SINCE_VERSION) {
+		wl_data_offer_set_actions(offer->offer, wl_action, wl_action);
+	}
 }
 static enum swa_data_action data_offer_get_action(struct swa_data_offer* base) {
 	struct swa_data_offer_wl* offer = get_data_offer_wl(base);
@@ -921,6 +1094,11 @@ static void data_dev_data_offer(void* data, struct wl_data_device* wl_data_dev,
 	offer->base.impl = &data_offer_impl;
 	offer->dpy = dpy;
 	offer->offer = wl_offer;
+	if(dpy->data_offer_list) {
+		dpy->data_offer_list->prev = offer;
+	}
+	offer->next = dpy->data_offer_list;
+	dpy->data_offer_list = offer;
 	wl_data_offer_add_listener(wl_offer, &data_offer_listener, offer);
 }
 
@@ -981,8 +1159,16 @@ static const struct wl_data_device_listener data_dev_listener = {
 
 void display_destroy(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
+	dlg_assert(!dpy->focus);
+	dlg_assert(!dpy->mouse_over);
+
 	swa_xkb_finish(&dpy->xkb);
-	// TODO: destroy all data offers
+	for(struct swa_data_offer_wl* d = dpy->data_offer_list; d;) {
+		struct swa_data_offer_wl* next = d->next;
+		data_offer_destroy(&d->base);
+		d = next;
+	}
+
 	if(dpy->event_source) ml_custom_destroy(dpy->event_source);
 	if(dpy->touch_points) free(dpy->touch_points);
 	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
@@ -1031,8 +1217,12 @@ void display_wakeup(struct swa_display* base) {
 enum swa_display_cap display_capabilities(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	enum swa_display_cap caps =
+#ifdef SWA_WITH_GL
 		swa_display_cap_gl |
+#endif
+#ifdef SWA_WITH_VK
 		swa_display_cap_vk |
+#endif
 		swa_display_cap_client_decoration;
 	if(dpy->shm) caps |= swa_display_cap_buffer_surface;
 	if(dpy->keyboard) caps |= swa_display_cap_keyboard;
@@ -1047,12 +1237,18 @@ enum swa_display_cap display_capabilities(struct swa_display* base) {
 }
 
 const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
+#ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
 		VK_KHR_WAYLAND_SURFACE_EXTENSION_NAME,
 	};
 	*count = sizeof(names) / sizeof(names[0]);
 	return names;
+#else
+	dlg_warn("swa was compiled without vulkan suport");
+	*count = 0;
+	return NULL;
+#endif
 }
 
 bool display_key_pressed(struct swa_display* base, enum swa_key key) {
@@ -1227,12 +1423,53 @@ struct swa_window* display_create_window(struct swa_display* base,
 	// which is not expected behavior.
 	win_set_cursor(&win->base, settings->cursor);
 
-	// surface
-	win->surface_type = settings->surface;
-
 	// commit the role so we get a configure event and can start drawing
 	wl_surface_commit(win->surface);
+
+	// surface
+	win->surface_type = settings->surface;
+	if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		win->vk.instance = win->vk.instance;
+		if(!win->vk.instance) {
+			dlg_error("Didn't set vulkan instance for vulkan window");
+			goto err;
+		}
+
+		VkWaylandSurfaceCreateInfoKHR info = {0};
+		info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
+		info.display = win->dpy->display;
+		info.surface = win->surface;
+
+		VkInstance instance;
+		VkSurfaceKHR surface;
+		memcpy(&instance, &win->vk.instance, sizeof(instance));
+
+		PFN_vkCreateWaylandSurfaceKHR fn = (PFN_vkCreateWaylandSurfaceKHR)
+			vkGetInstanceProcAddr(instance, "vkCreateWaylandSurfaceKHR");
+		if(!fn) {
+			dlg_error("Failed to load 'vkCreateWaylandSurfaceKHR' function");
+			goto err;
+		}
+
+		VkResult res = fn(instance, &info, NULL, &surface);
+		if(res != VK_SUCCESS) {
+			dlg_error("Failed to create vulkan surface: %d", res);
+			goto err;
+		}
+
+		memcpy(&win->vk.surface, &surface, sizeof(VkSurfaceKHR));
+#else
+		dlg_error("swa was compiled without vulkan support");
+		goto err;
+#endif
+	}
+
 	return &win->base;
+
+err:
+	win_destroy(&win->base);
+	return NULL;
 }
 
 static const struct swa_display_interface display_impl = {
@@ -1849,6 +2086,7 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 			.pressed = pressed,
 			.utf8 = utf8,
 			.repeated = false,
+			.modifiers = swa_xkb_modifiers(&dpy->xkb),
 			.data = (void*)(uintptr_t)serial,
 		};
 		dpy->focus->base.listener->key(&dpy->focus->base, &ev);
@@ -1894,6 +2132,7 @@ static void key_repeat_cb(struct ml_timer* timer, const struct timespec* ts) {
 			.pressed = true,
 			.utf8 = utf8,
 			.repeated = true,
+			.modifiers = swa_xkb_modifiers(&dpy->xkb),
 			.data = (void*)(uintptr_t)dpy->key_repeat.serial,
 		};
 		dpy->focus->base.listener->key(&dpy->focus->base, &ev);

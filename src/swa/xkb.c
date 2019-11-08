@@ -108,7 +108,6 @@ void swa_xkb_key(struct swa_xkb_context* xkb, uint8_t keycode,
 	enum xkb_compose_status status = xkb_compose_state_get_status(xkb->compose_state);
 	if(status == XKB_COMPOSE_NOTHING) {
 		unsigned count = xkb_state_key_get_utf8(xkb->state, keycode, NULL, 0);
-		dlg_info(":2: %d", count);
 		if(count > 0) {
 			*out_utf8 = malloc(count + 1);
 			xkb_state_key_get_utf8(xkb->state, keycode, *out_utf8, count + 1);

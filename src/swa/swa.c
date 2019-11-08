@@ -365,6 +365,11 @@ void* swa_window_get_userdata(struct swa_window* win) {
 }
 
 // data offer api
+void swa_data_offer_destroy(struct swa_data_offer* offer) {
+	if(offer) {
+		offer->impl->destroy(offer);
+	}
+}
 bool swa_data_offer_formats(struct swa_data_offer* offer,
 		swa_formats_handler cb) {
 	return offer->impl->formats(offer, cb);

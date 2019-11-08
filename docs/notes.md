@@ -9,15 +9,22 @@ Notes
 
 todo wayland:
 
-- buffer surfaces
 - data exchange (probbaly move that to another file though)
-- vulkan
+- wakeup pipe
 - gl
 	- implement egl first
 - check that everything is cleaned up correctly
+- pre-mulitplied alpha. Do other compositors/backends require that
+  as well for transprency?
 
 later:
 
+- re-entrant callbacks. Allowed to modify window state in handler?
+  allowed to call data_offer_destroy in data offer callback?
+  etc
+- option to load vkGetInstanceProcAddr dynamically
+- abolish event trigger datas? just use the last received serial?
+  what for x11 and other backends?
 - for most timers (e.g. key repeat timer wayland), CLOCK_MONOTONIC
   would be better. requires ml support
 - wayland handle multiple images

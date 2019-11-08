@@ -677,8 +677,14 @@ void swa_window_apply_buffer(struct swa_window*);
 // data offers
 typedef void (*swa_formats_handler)(struct swa_data_offer*,
 	const char** formats, unsigned n_formats);
+
+// When called, ownership of the data is transferred to the
+// application, i.e. it is reponsible for freeing it.
+// Safe to free data offer from this callback
 typedef void (*swa_data_handler)(struct swa_data_offer*,
 	const char* format, struct swa_exchange_data);
+
+void swa_data_offer_destroy(struct swa_data_offer*);
 
 // Requests all formats in which this data offer can provide its data.
 // The given callback will be called when the formats were retrieved.
@@ -694,6 +700,11 @@ bool swa_data_offer_formats(struct swa_data_offer*, swa_formats_handler cb);
 // The given callback will be called with the data when retrieved.
 // Returns false on error. When an error occurs later, will call the
 // given callback without any data.
+// Only one data request at a time is allowed, i.e. calling this again
+// before the callback was triggered is an error. The format parameter
+// will be copied and doesn't have to remain valid.
+// Implementations might call the callback before returning, if
+// the data is immediately available.
 bool swa_data_offer_data(struct swa_data_offer*, const char* format,
 	swa_data_handler cb);
 

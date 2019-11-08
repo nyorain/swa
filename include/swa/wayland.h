@@ -30,9 +30,6 @@ struct swa_display_wl {
 	struct wl_data_device* data_dev;
 
 	struct mainloop* mainloop;
-	struct ml_io* display_io;
-	struct ml_io* wakeup_io;
-	struct ml_timer* keyboard_timer;
 	bool error;
 
 	struct swa_xkb_context xkb;
@@ -63,6 +60,11 @@ struct swa_display_wl {
 		int32_t delay; // in ms
 	} key_repeat;
 
+	struct {
+		struct swa_data_offer_wl* offer;
+		uint32_t serial;
+	} dnd;
+
 	unsigned capacity_touch_points;
 	unsigned n_touch_points;
 	struct swa_wl_touch_point* touch_points;
@@ -72,8 +74,8 @@ struct swa_display_wl {
 	// and roundtripping) without dispatching normal events.
 	struct wl_event_queue* wl_queue;
 
+	struct swa_data_offer_wl* data_offer_list;
 	struct swa_data_offer_wl* selection;
-	struct swa_data_offer_wl* dnd;
 };
 
 struct swa_wl_touch_point {
@@ -149,26 +151,30 @@ struct swa_window_wl {
 	};
 };
 
-struct swa_data_handler_wl {
-	swa_data_handler handler;
-	const char* format;
-	uint64_t n_bytes;
-	const char* bytes;
-};
-
 struct swa_data_offer_wl {
 	struct swa_data_offer base;
 	struct swa_display_wl* dpy;
 	struct wl_data_offer* offer;
 
+	// they form a linked list
+	struct swa_data_offer_wl* next;
+	struct swa_data_offer_wl* prev;
+
 	// formats and actions supported by other side
 	unsigned n_formats;
 	const char** formats;
+	bool dnd;
 	enum swa_data_action supported_actions;
 	enum swa_data_action action;
 
-	unsigned n_handlers;
-	struct swa_data_handler_wl* handlers;
+	struct {
+		const char* format;
+		int fd;
+		swa_data_handler handler;
+		uint64_t n_bytes;
+		char* bytes;
+		struct ml_io* io;
+	} data;
 };
 
 struct swa_display* swa_display_wl_create(void);

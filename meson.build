@@ -31,7 +31,8 @@ source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
-dep_xkbcommon = dependency('xkbcommon')
+dep_vulkan = dependency('vulkan', required: true)
+dep_xkbcommon = dependency('xkbcommon', required: true)
 dep_ml = dependency('posix_mainloop', fallback: ['ml', 'posix_mainloop_dep'])
 dep_dlg = dependency('dlg', fallback: ['dlg', 'dlg_dep'])
 
@@ -93,12 +94,13 @@ swa_deps = [
 	dep_wl_egl,
 	dep_wl_protos,
 	dep_xkbcommon,
+	dep_vulkan,
 ]
 
 conf_data = configuration_data()
-configure_file(output: 'config.h',
-	configuration: conf_data
-)
+conf_data.set('SWA_WITH_VK', true, description: 'Compiled with Vulkan support')
+conf_data.set('SWA_WITH_GL', true, description: 'Compiled with OpenGL support')
+subdir('include/swa')
 
 swa_inc = [
 	include_directories('src'),
