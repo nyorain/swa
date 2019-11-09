@@ -1,4 +1,4 @@
 [wrap-git]
 directory=pml
 url=https://github.com/nyorain/pml
-revision=master
+revision=v0.1.0
