@@ -1,4 +1,0 @@
-[wrap-git]
-directory=ml
-url=https://github.com/nyorain/posix_mainloop.git
-revision=master

@@ -39,6 +39,7 @@ unsigned swa_image_format_size(enum swa_image_format fmt) {
 	// unreachable for valid formats
 	// dont' put it in default so we get warnings about unhandled enum values
 	dlg_error("Invalid image format %d", fmt);
+	return 0;
 }
 
 struct swa_image swa_convert_image_new(const struct swa_image* src,
@@ -150,6 +151,7 @@ static struct pixel read_pixel(const uint8_t* data, enum swa_image_format fmt) {
 	// unreachable for valid formats
 	// dont' put it in default so we get warnings about unhandled enum values
 	dlg_error("Invalid image format %d", fmt);
+	return (struct pixel){0, 0, 0, 0};
 }
 
 void swa_convert_image(const struct swa_image* src, const struct swa_image* dst) {
@@ -197,6 +199,7 @@ enum swa_image_format swa_image_format_reversed(enum swa_image_format fmt) {
 	// unreachable for valid formats
 	// dont' put it in default so we get warnings about unhandled enum values
 	dlg_error("Invalid image format %d", fmt);
+	return swa_image_format_none;
 }
 
 // 1: big
@@ -348,7 +351,7 @@ bool swa_window_get_buffer(struct swa_window* win, struct swa_image* img) {
 	return win->impl->get_buffer(win, img);
 }
 void swa_window_apply_buffer(struct swa_window* win) {
-	return win->impl->apply_buffer(win);
+	win->impl->apply_buffer(win);
 }
 void swa_window_set_listener(struct swa_window* win,
 		const struct swa_window_listener* listener) {

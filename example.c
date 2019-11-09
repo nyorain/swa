@@ -3,6 +3,7 @@
 #include <dlg/dlg.h>
 #include <string.h>
 
+static bool run = true;
 static void window_draw(struct swa_window* win) {
 	struct swa_image img;
 	if(!swa_window_get_buffer(win, &img)) {
@@ -22,8 +23,10 @@ static void clipboard_text(struct swa_data_offer* offer, const char* format,
 	char buf[256];
 	unsigned size = data.size < 256 ? data.size : 256;
 	memcpy(buf, data.data, size);
-	dlg_info("clipboard: '%s'", buf);
-	swa_data_offer_destroy(offer);
+	dlg_info("clipboard:\n==== begin ====\n%s\n==== end ====", buf);
+
+	// TODO: fix this situation
+	// swa_data_offer_destroy(offer);
 }
 
 static void clipboard_formats(struct swa_data_offer* offer, const char** formats,
@@ -49,13 +52,20 @@ static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
 		if(offer) {
 			dlg_debug("requesting data offer formats");
 			swa_data_offer_formats(offer, clipboard_formats);
+		} else {
+			dlg_debug("no clipboard data available");
 		}
 	}
 }
 
-const static struct swa_window_listener window_listener = {
+static void window_close(struct swa_window* win) {
+	run = false;
+}
+
+static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.key = window_key,
+	.close = window_close,
 };
 
 int main() {
@@ -70,9 +80,12 @@ int main() {
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	swa_window_set_userdata(win, dpy);
 
-	while(true) {
+	while(run) {
 		if(!swa_display_wait_events(dpy)) {
 			break;
 		}
 	}
+
+	swa_window_destroy(win);
+	swa_display_destroy(dpy);
 }

@@ -14,7 +14,7 @@ struct swa_display_wl {
 	struct swa_display base;
 	struct wl_display* display;
 	struct wl_registry* registry;
-	struct ml_custom* event_source;
+	struct pml_custom* event_source;
 
 	// globals
 	struct wl_compositor* compositor;
@@ -29,8 +29,9 @@ struct swa_display_wl {
 	struct wl_touch* touch;
 	struct wl_data_device* data_dev;
 
-	struct mainloop* mainloop;
+	struct pml* pml;
 	bool error;
+	bool ready;
 
 	struct swa_xkb_context xkb;
 
@@ -43,7 +44,7 @@ struct swa_display_wl {
 	uint32_t mouse_enter_serial;
 
 	struct {
-		struct ml_timer* timer;
+		struct pml_timer* timer;
 		struct timespec set;
 		struct wl_cursor_theme* theme;
 		struct wl_surface* surface;
@@ -53,7 +54,7 @@ struct swa_display_wl {
 	} cursor;
 
 	struct {
-		struct ml_timer* timer;
+		struct pml_timer* timer;
 		uint32_t key;
 		uint32_t serial;
 		int32_t rate; // in repeats per second
@@ -130,7 +131,7 @@ struct swa_window_wl {
 	unsigned height;
 	uint32_t decoration_mode;
 	enum swa_window_state state;
-	struct ml_defer* defer_redraw;
+	struct pml_defer* defer_redraw;
 
 	struct {
 		// if this is != NULL, this window has a native cursor that
@@ -173,7 +174,7 @@ struct swa_data_offer_wl {
 		swa_data_handler handler;
 		uint64_t n_bytes;
 		char* bytes;
-		struct ml_io* io;
+		struct pml_io* io;
 	} data;
 };
 

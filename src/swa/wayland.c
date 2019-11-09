@@ -3,7 +3,7 @@
 #include <swa/config.h>
 #include <swa/wayland.h>
 #include <dlg/dlg.h>
-#include <mainloop.h>
+#include <pml.h>
 #include <wayland-client-core.h>
 #include <wayland-cursor.h>
 #include <wayland-client-protocol.h>
@@ -289,7 +289,7 @@ static void cursor_render(struct swa_display_wl* dpy) {
 	dlg_assert(dpy->cursor.active);
 
 	struct timespec ts;
-	clock_gettime(CLOCK_REALTIME, &ts);
+	clock_gettime(CLOCK_MONOTONIC, &ts);
 	uint32_t dms = 1000 * (ts.tv_sec - dpy->cursor.set.tv_sec) +
 		(ts.tv_nsec - dpy->cursor.set.tv_nsec) / (1000 * 1000);
 
@@ -309,7 +309,7 @@ static void cursor_render(struct swa_display_wl* dpy) {
 
 	if(duration > 0) {
 		ts.tv_nsec += duration * 1000 * 1000;
-		ml_timer_restart(dpy->cursor.timer, &ts);
+		pml_timer_set_time(dpy->cursor.timer, ts);
 	}
 }
 
@@ -328,8 +328,8 @@ static const struct wl_callback_listener cursor_frame_listener = {
 	.done = cursor_frame
 };
 
-static void cursor_time_cb(struct ml_timer* timer, const struct timespec* ts) {
-	struct swa_display_wl* dpy = ml_timer_get_data(timer);
+static void cursor_time_cb(struct pml_timer* timer) {
+	struct swa_display_wl* dpy = pml_timer_get_data(timer);
 	if(dpy->cursor.frame_callback) {
 		dpy->cursor.redraw = true;
 		return;
@@ -367,13 +367,14 @@ static void set_cursor(struct swa_display_wl* dpy, struct swa_window_wl* win) {
 			&cursor_frame_listener, dpy);
 
 		if(win->cursor.native->image_count > 1) {
-			clock_gettime(CLOCK_REALTIME, &dpy->cursor.set);
+			clock_gettime(CLOCK_MONOTONIC, &dpy->cursor.set);
 			struct timespec next = dpy->cursor.set;
 			next.tv_nsec += start->delay * 1000 * 1000;
 			if(!dpy->cursor.timer) {
-				dpy->cursor.timer = ml_timer_new(dpy->mainloop, &next,
+				dpy->cursor.timer = pml_timer_new(dpy->pml, &next,
 					cursor_time_cb);
-				ml_timer_set_data(dpy->cursor.timer, dpy);
+				pml_timer_set_data(dpy->cursor.timer, dpy);
+				pml_timer_set_clock(dpy->cursor.timer, CLOCK_MONOTONIC);
 			}
 		}
 	} else {
@@ -432,7 +433,7 @@ static void win_destroy(struct swa_window* base) {
 	// unlink everywhere
 	if(win->dpy) {
 		if(win->dpy->focus == win) win->dpy->focus = NULL;
-		if(win->dpy->mouse_over == win) win->dpy->focus = NULL;
+		if(win->dpy->mouse_over == win) win->dpy->mouse_over = NULL;
 
 		// remove tracked touch points for this window
 		unsigned out = 0u;
@@ -450,7 +451,7 @@ static void win_destroy(struct swa_window* base) {
 		win->dpy->n_touch_points = out;
 	}
 
-	if(win->defer_redraw) ml_defer_destroy(win->defer_redraw);
+	if(win->defer_redraw) pml_defer_destroy(win->defer_redraw);
 	if(win->frame_callback) wl_callback_destroy(win->frame_callback);
 	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
 	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
@@ -591,8 +592,8 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	}
 }
 
-static void refresh_cb(struct ml_defer* defer) {
-	struct swa_window_wl* win = ml_defer_get_data(defer);
+static void refresh_cb(struct pml_defer* defer) {
+	struct swa_window_wl* win = pml_defer_get_data(defer);
 	win->redraw = false;
 	if(win->base.listener && win->base.listener->draw) {
 		win->base.listener->draw(&win->base);
@@ -609,7 +610,7 @@ static void refresh_cb(struct ml_defer* defer) {
 	//   (via gl_swap_buffers or win_apply_buffer) or win_frame
 	//   was called to trigger a new frame. Calling win_refresh
 	//   inside the draw handler before that happened is undefined'.
-	ml_defer_enable(defer, false);
+	pml_defer_enable(defer, false);
 }
 
 static void win_refresh(struct swa_window* base) {
@@ -619,10 +620,10 @@ static void win_refresh(struct swa_window* base) {
 	}
 
 	if(!win->defer_redraw) {
-		win->defer_redraw = ml_defer_new(win->dpy->mainloop, refresh_cb);
-		ml_defer_set_data(win->defer_redraw, win);
+		win->defer_redraw = pml_defer_new(win->dpy->pml, refresh_cb);
+		pml_defer_set_data(win->defer_redraw, win);
 	}
-	ml_defer_enable(win->defer_redraw, true);
+	pml_defer_enable(win->defer_redraw, true);
 }
 
 static void win_frame_done(void* data, struct wl_callback* cb, uint32_t id) {
@@ -692,7 +693,7 @@ static void win_begin_move(struct swa_window* base, void* trigger) {
 		return;
 	}
 
-	uint32_t serial = (uint32_t) trigger;
+	uint32_t serial = (uint32_t)(uintptr_t)trigger;
 	xdg_toplevel_move(win->xdg_toplevel, win->dpy->seat, serial);
 }
 static void win_begin_resize(struct swa_window* base, enum swa_edge edges,
@@ -708,7 +709,7 @@ static void win_begin_resize(struct swa_window* base, enum swa_edge edges,
 		return;
 	}
 
-	uint32_t serial = (uint32_t) trigger;
+	uint32_t serial = (uint32_t)(uintptr_t)trigger;
 
 	// the enumerations map directly onto each other
 	enum xdg_toplevel_resize_edge wl_edges = (enum xdg_toplevel_resize_edge) edges;
@@ -756,13 +757,16 @@ static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
 
 // TODO
 static bool win_gl_make_current(struct swa_window* base) {
-	struct swa_window_wl* win = get_window_wl(base);
+	// struct swa_window_wl* win = get_window_wl(base);
+	return false;
 }
 static bool win_gl_swap_buffers(struct swa_window* base) {
-	struct swa_window_wl* win = get_window_wl(base);
+	// struct swa_window_wl* win = get_window_wl(base);
+	return false;
 }
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
-	struct swa_window_wl* win = get_window_wl(base);
+	// struct swa_window_wl* win = get_window_wl(base);
+	return false;
 }
 
 static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
@@ -771,7 +775,7 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 	static const enum wl_shm_format format = WL_SHM_FORMAT_ARGB8888;
 
 	struct swa_window_wl* win = get_window_wl(base);
-	dlg_assertm(!win->buffer.active, "There is already an active buffer");
+	dlg_assertm(win->buffer.active == -1, "There is already an active buffer");
 	// search for free buffer
 	// prefer buffers with matching dimensions
 	struct swa_wl_buffer* found = NULL;
@@ -848,6 +852,7 @@ static const struct swa_window_interface window_impl = {
 	.is_client_decorated = win_is_client_decorated,
 	.get_vk_surface = win_get_vk_surface,
 	.gl_make_current = win_gl_make_current,
+	.gl_swap_buffers = win_gl_swap_buffers,
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
 	.apply_buffer = win_apply_buffer
@@ -931,7 +936,7 @@ static void data_offer_destroy(struct swa_data_offer* base) {
 	if(offer->data.format) free((void*)offer->data.format);
 	if(offer->data.bytes) free(offer->data.bytes);
 	if(offer->data.fd) close(offer->data.fd);
-	if(offer->data.io) ml_io_destroy(offer->data.io);
+	if(offer->data.io) pml_io_destroy(offer->data.io);
 
 	if(offer->offer) wl_data_offer_destroy(offer->offer);
 	for(unsigned i = 0u; i < offer->n_formats; ++i) {
@@ -947,11 +952,11 @@ static bool data_offer_formats(struct swa_data_offer* base, swa_formats_handler 
 	return true;
 }
 
-static void data_pipe_cb(struct ml_io* io, unsigned revents) {
+static void data_pipe_cb(struct pml_io* io, unsigned revents) {
 	(void) revents;
 
-	struct swa_data_offer_wl* offer = ml_io_get_data(io);
-	dlg_assert(offer->data.fd == ml_io_get_fd(io));
+	struct swa_data_offer_wl* offer = pml_io_get_data(io);
+	dlg_assert(offer->data.fd == pml_io_get_fd(io));
 
 	// TODO: could use ioctl FIONREAD on most unixes
 	unsigned readCount = 2048u;
@@ -971,7 +976,7 @@ static void data_pipe_cb(struct ml_io* io, unsigned revents) {
 			offer->data.handler(&offer->base, offer->data.format, data);
 
 			// unset handler data
-			ml_io_destroy(offer->data.io);
+			pml_io_destroy(offer->data.io);
 			close(offer->data.fd);
 			free((void*) offer->data.format);
 			memset(&offer->data, 0, sizeof(offer->data));
@@ -986,7 +991,7 @@ static void data_pipe_cb(struct ml_io* io, unsigned revents) {
 				offer->data.handler(&offer->base, offer->data.format, data);
 
 				// unset handler data
-				ml_io_destroy(offer->data.io);
+				pml_io_destroy(offer->data.io);
 				close(offer->data.fd);
 				free(offer->data.bytes);
 				free((void*) offer->data.format);
@@ -1035,9 +1040,9 @@ static bool data_offer_data(struct swa_data_offer* base, const char* format,
 	offer->data.fd = fds[0];
 	offer->data.handler = cb;
 	offer->data.format = strdup(format);
-	offer->data.io = ml_io_new(offer->dpy->mainloop, fds[0],
-		ml_io_input | ml_io_error | ml_io_hangup, data_pipe_cb);
-	ml_io_set_data(offer->data.io, offer);
+	offer->data.io = pml_io_new(offer->dpy->pml, fds[0],
+		POLLIN, data_pipe_cb);
+	pml_io_set_data(offer->data.io, offer);
 
 	return true;
 }
@@ -1169,11 +1174,11 @@ void display_destroy(struct swa_display* base) {
 		d = next;
 	}
 
-	if(dpy->event_source) ml_custom_destroy(dpy->event_source);
+	if(dpy->event_source) pml_custom_destroy(dpy->event_source);
 	if(dpy->touch_points) free(dpy->touch_points);
 	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
-	if(dpy->key_repeat.timer) ml_timer_destroy(dpy->key_repeat.timer);
-	if(dpy->cursor.timer) ml_timer_destroy(dpy->cursor.timer);
+	if(dpy->key_repeat.timer) pml_timer_destroy(dpy->key_repeat.timer);
+	if(dpy->cursor.timer) pml_timer_destroy(dpy->cursor.timer);
 	if(dpy->cursor.frame_callback) wl_callback_destroy(dpy->cursor.frame_callback);
 	if(dpy->cursor.theme) wl_cursor_theme_destroy(dpy->cursor.theme);
 	if(dpy->cursor.surface) wl_surface_destroy(dpy->cursor.surface);
@@ -1183,23 +1188,25 @@ void display_destroy(struct swa_display* base) {
 	if(dpy->pointer) wl_pointer_destroy(dpy->pointer);
 	if(dpy->touch) wl_touch_destroy(dpy->touch);
 	if(dpy->xdg_wm_base) xdg_wm_base_destroy(dpy->xdg_wm_base);
+	if(dpy->decoration_manager) zxdg_decoration_manager_v1_destroy(dpy->decoration_manager);
 	if(dpy->seat) wl_seat_destroy(dpy->seat);
 	if(dpy->data_dev_manager) wl_data_device_manager_destroy(dpy->data_dev_manager);
 	if(dpy->compositor) wl_compositor_destroy(dpy->compositor);
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
+	if(dpy->pml) pml_destroy(dpy->pml);
 	free(dpy);
 }
 
 bool display_poll_events(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
-	mainloop_iterate(dpy->mainloop, false);
+	pml_iterate(dpy->pml, false);
 	return !dpy->error;
 }
 
 bool display_wait_events(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
-	mainloop_iterate(dpy->mainloop, true);
+	pml_iterate(dpy->pml, true);
 	return !dpy->error;
 }
 
@@ -1337,16 +1344,15 @@ struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	return &dpy->selection->base;
 }
 
+// TODO
 bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source, void* trigger) {
-	struct swa_display_wl* dpy = get_display_wl(base);
-	// TODO
+	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
 bool display_start_dnd(struct swa_display* base,
 		struct swa_data_source* source, void* trigger) {
-	struct swa_display_wl* dpy = get_display_wl(base);
-	// TODO
+	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
 
@@ -1373,6 +1379,9 @@ struct swa_window* display_create_window(struct swa_display* base,
 	if(settings->app_name) {
 		xdg_toplevel_set_app_id(win->xdg_toplevel, settings->app_name);
 	}
+
+	// commit the role so we get a configure event and can start drawing
+	wl_surface_commit(win->surface);
 
 	// when the decoration protocol is not present, client side decorations
 	// should be assumed on wayland
@@ -1423,12 +1432,11 @@ struct swa_window* display_create_window(struct swa_display* base,
 	// which is not expected behavior.
 	win_set_cursor(&win->base, settings->cursor);
 
-	// commit the role so we get a configure event and can start drawing
-	wl_surface_commit(win->surface);
-
 	// surface
 	win->surface_type = settings->surface;
-	if(win->surface_type == swa_surface_vk) {
+	if(win->surface_type == swa_surface_buffer) {
+		win->buffer.active = -1;
+	} else if(win->surface_type == swa_surface_vk) {
 #ifdef SWA_WITH_VK
 		win->vk.instance = win->vk.instance;
 		if(!win->vk.instance) {
@@ -1495,6 +1503,14 @@ static const struct swa_display_interface display_impl = {
 static void decoration_configure(void *data,
 		struct zxdg_toplevel_decoration_v1* deco, uint32_t mode) {
 	struct swa_window_wl* win = data;
+	if(win->decoration_mode != SWA_DECORATION_MODE_PENDING) {
+		// The decoration protocol states that clients must respect these
+		// events *at any time*. But swa doesn't (and shouldn't) have
+		// an extra event when decoration mode changes. This could
+		// therefore be problematic (when applications cache this state).
+		// Maybe at least send a draw event or something?
+		dlg_warn("Compositor changed decoration mode after initialization");
+	}
 	win->decoration_mode = mode;
 }
 
@@ -1511,7 +1527,7 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 	// (mainly for the first configure event).
 	bool resized = false;
 	if(width) {
-		resized = (int32_t)win->width != width;
+		resized |= (int32_t)win->width != width;
 		win->width = width;
 	} else if(win->width == SWA_DEFAULT_SIZE) {
 		resized = true;
@@ -1519,7 +1535,7 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 	}
 
 	if(height) {
-		resized = (int32_t)win->height != height;
+		resized |= (int32_t)win->height != height;
 		win->height = height;
 	} else if(win->height == SWA_DEFAULT_SIZE) {
 		resized = true;
@@ -2050,7 +2066,7 @@ static void keyboard_leave(void* data, struct wl_keyboard* wl_keyboard,
 	// stop the repeat timer if it exists
 	if(dpy->key_repeat.timer) {
 		dpy->key_repeat.key = dpy->key_repeat.serial = 0;
-		ml_timer_restart(dpy->key_repeat.timer, NULL); // stop
+		pml_timer_disable(dpy->key_repeat.timer);
 	}
 
 	memset(dpy->key_states, 0, sizeof(dpy->key_states));
@@ -2099,12 +2115,12 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 		dpy->key_repeat.serial = serial;
 
 		struct timespec next;
-		clock_gettime(CLOCK_REALTIME, &next);
+		clock_gettime(CLOCK_MONOTONIC, &next);
 		next.tv_nsec += 1000 * 1000 * dpy->key_repeat.delay;
-		ml_timer_restart(dpy->key_repeat.timer, &next);
+		pml_timer_set_time(dpy->key_repeat.timer, next);
 	} else if(!pressed && key == dpy->key_repeat.key) {
 		dpy->key_repeat.key = dpy->key_repeat.serial = 0;
-		ml_timer_restart(dpy->key_repeat.timer, NULL); // stop
+		pml_timer_disable(dpy->key_repeat.timer);
 	}
 }
 
@@ -2118,8 +2134,8 @@ static void keyboard_modifiers(void* data, struct wl_keyboard* wl_keyboard,
 		(int[3]){group, group, group});
 }
 
-static void key_repeat_cb(struct ml_timer* timer, const struct timespec* ts) {
-	struct swa_display_wl* dpy = ml_timer_get_data(timer);
+static void key_repeat_cb(struct pml_timer* timer) {
+	struct swa_display_wl* dpy = pml_timer_get_data(timer);
 	dlg_assert(dpy->keyboard);
 	dlg_assert(dpy->focus);
 
@@ -2140,13 +2156,13 @@ static void key_repeat_cb(struct ml_timer* timer, const struct timespec* ts) {
 	}
 
 	struct timespec next;
-	clock_gettime(CLOCK_REALTIME, &next);
+	clock_gettime(CLOCK_MONOTONIC, &next);
 	if(dpy->key_repeat.rate == 1) {
 		next.tv_sec += 1;
 	} else {
 		next.tv_nsec += (1000 * 1000 * 1000) / dpy->key_repeat.rate;
 	}
-	ml_timer_restart(timer, &next);
+	pml_timer_set_time(timer, next);
 }
 
 static void keyboard_repeat_info(void* data, struct wl_keyboard* wl_keyboard,
@@ -2156,8 +2172,9 @@ static void keyboard_repeat_info(void* data, struct wl_keyboard* wl_keyboard,
 	dpy->key_repeat.rate = rate;
 	dpy->key_repeat.delay = delay;
 	if(rate > 0 && !dpy->key_repeat.timer) {
-		dpy->key_repeat.timer = ml_timer_new(dpy->mainloop, NULL, key_repeat_cb);
-		ml_timer_set_data(dpy->key_repeat.timer, dpy);
+		dpy->key_repeat.timer = pml_timer_new(dpy->pml, NULL, key_repeat_cb);
+		pml_timer_set_data(dpy->key_repeat.timer, dpy);
+		pml_timer_set_clock(dpy->key_repeat.timer, CLOCK_MONOTONIC);
 	}
 }
 
@@ -2185,7 +2202,7 @@ static void seat_caps(void* data, struct wl_seat* seat, uint32_t caps) {
 	} else if(!(caps & WL_SEAT_CAPABILITY_KEYBOARD) && dpy->keyboard) {
 		dlg_info("lost wl_keyboard");
 		swa_xkb_finish(&dpy->xkb);
-		ml_timer_destroy(dpy->key_repeat.timer);
+		pml_timer_destroy(dpy->key_repeat.timer);
 		wl_keyboard_destroy(dpy->keyboard);
 		dpy->keyboard = NULL;
 	}
@@ -2298,30 +2315,32 @@ static const struct wl_registry_listener registry_listener = {
 	.global_remove = handle_global_remove,
 };
 
-static void fd_prepare(struct ml_custom* c) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) ml_custom_get_data(c);
+static void fd_prepare(struct pml_custom* c) {
+	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
 	if(!check_error(dpy)) {
 		return;
 	}
 
-	// wl_display_prepare_read returns -1 if the event queue wasn't empty
-	// we simply dispatch the pending events
-	while(wl_display_prepare_read(dpy->display) == -1) {
-		wl_display_dispatch_pending(dpy->display);
-	}
-
 	int ret = wl_display_flush(dpy->display);
-	if(ret == -1) {
+	if(ret == -1 && errno != EAGAIN) {
 		// TODO: we should handle EAGAIN case, no more data can
 		// be written in that case. We could poll the display for
 		// POLLOUT
 		dlg_error("wl_display_flush: %s (%d)", strerror(errno), errno);
 	}
+
+	// wl_display_prepare_read returns -1 if the event queue wasn't empty.
+	// We remember that there are already events to be dispatched
+	// (ready = true)
+	dpy->ready = false;
+	if(wl_display_prepare_read(dpy->display) == -1) {
+		dpy->ready = true;
+	}
 }
 
-static unsigned fd_query(struct ml_custom* c, struct pollfd* fds,
+static unsigned fd_query(struct pml_custom* c, struct pollfd* fds,
 		unsigned n_fds, int* timeout) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) ml_custom_get_data(c);
+	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
 	if(dpy->error) {
 		*timeout = 0;
 		return 0;
@@ -2332,14 +2351,34 @@ static unsigned fd_query(struct ml_custom* c, struct pollfd* fds,
 		fds[0].events = POLLIN | POLLERR;
 	}
 
-	*timeout = -1;
+	*timeout = dpy->ready ? 0 : -1;
 	return 1;
 }
 
-static void fd_dispatch(struct ml_custom* c, struct pollfd* fds, unsigned n_fds) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) ml_custom_get_data(c);
+static void fd_dispatch(struct pml_custom* c, struct pollfd* fds, unsigned n_fds) {
+	dlg_assert(n_fds == 1);
 
-	if(n_fds > 0 && fds[0].revents) {
+	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
+	bool ready = dpy->ready;
+	dpy->ready = false;
+
+	// check for error
+	if(!check_error(dpy)) {
+		return;
+	}
+
+	if(ready) { // there were already pending events in 'prepare'
+		wl_display_dispatch_pending(dpy->display);
+	}
+
+	bool readable = n_fds > 0 && fds[0].revents;
+	if(readable) {
+		if(ready) { // in this case we never prepared reading
+			while(wl_display_prepare_read(dpy->display) == -1) {
+				wl_display_dispatch_pending(dpy->display);
+			}
+		}
+
 		int ret = wl_display_read_events(dpy->display);
 		if(ret == -1) {
 			dlg_error("wl_display_read_events: %s (%d)\n", strerror(errno), errno);
@@ -2347,17 +2386,12 @@ static void fd_dispatch(struct ml_custom* c, struct pollfd* fds, unsigned n_fds)
 		}
 
 		wl_display_dispatch_pending(dpy->display);
-	} else {
+	} else if(!ready) {
 		wl_display_cancel_read(dpy->display);
-	}
-
-	// check for error
-	if(!check_error(dpy)) {
-		return;
 	}
 }
 
-static const struct ml_custom_impl event_source_impl = {
+static const struct pml_custom_impl event_source_impl = {
 	.prepare = fd_prepare,
 	.query = fd_query,
 	.dispatch = fd_dispatch
@@ -2375,9 +2409,9 @@ struct swa_display* swa_display_wl_create(void) {
 	struct swa_display_wl* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->display = wld;
-	dpy->mainloop = mainloop_new();
-	dpy->event_source = ml_custom_new(dpy->mainloop, &event_source_impl);
-	ml_custom_set_data(dpy->event_source, dpy);
+	dpy->pml = pml_new();
+	dpy->event_source = pml_custom_new(dpy->pml, &event_source_impl);
+	pml_custom_set_data(dpy->event_source, dpy);
 
 	dpy->wl_queue = wl_display_create_queue(dpy->display);
 	dpy->registry = wl_display_get_registry(dpy->display);

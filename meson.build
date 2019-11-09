@@ -31,10 +31,17 @@ source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
+dep_pml = dependency('pml',
+	fallback: ['pml', 'pml_dep'],
+	static: true
+)
+dep_dlg = dependency('dlg',
+	fallback: ['dlg', 'dlg_dep'],
+	static: true
+)
+
 dep_vulkan = dependency('vulkan', required: true)
 dep_xkbcommon = dependency('xkbcommon', required: true)
-dep_ml = dependency('posix_mainloop', fallback: ['ml', 'posix_mainloop_dep'])
-dep_dlg = dependency('dlg', fallback: ['dlg', 'dlg_dep'])
 
 dep_wl_client = dependency('wayland-client', required: true)
 dep_wl_cursor = dependency('wayland-cursor', required: true)
@@ -87,7 +94,7 @@ dep_wl_protos = declare_dependency(
 )
 
 swa_deps = [
-	dep_ml,
+	dep_pml,
 	dep_dlg,
 	dep_wl_client,
 	dep_wl_cursor,

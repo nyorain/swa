@@ -13,7 +13,7 @@ extern "C" {
 
 struct pollfd;
 struct swa_display;
-struct mainloop;
+struct pml;
 
 // Returns whether the given display has a posix implementation.
 bool swa_display_is_posix(struct swa_display*);
@@ -85,13 +85,13 @@ unsigned swa_display_posix_query(struct swa_display*,
 void swa_display_posix_dispatch(struct swa_display*, struct pollfd* fds,
 	unsigned n_fds);
 
-// Many posix display implementations use the posix_mainloop
-// (see github.com/nyorain/posix_mainloop) library as internal mainloop.
+// Many posix display implementations use a posix mainloop implementation
+// (see github.com/nyorain/pml) library as internal mainloop.
 // Will return this object, which can be used to easily add timers,
 // i/o and defer callbacks to the already existent mainloop.
 // Since not all posix display implementations need this, some might
 // return NULL.
-struct mainloop* swa_display_posix_get_mainloop(struct swa_display*);
+struct pml* swa_display_posix_get_mainloop(struct swa_display*);
 
 #ifdef __cplusplus
 }

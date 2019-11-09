@@ -100,7 +100,6 @@ enum swa_keyboard_mod swa_xkb_modifiers(struct swa_xkb_context* xkb) {
 void swa_xkb_key(struct swa_xkb_context* xkb, uint8_t keycode,
 		char** out_utf8, bool* canceled) {
 	xkb_keysym_t keysym = xkb_state_key_get_one_sym(xkb->state, keycode);
-	bool composed = false;
 	*canceled = false;
 	*out_utf8 = NULL;
 
@@ -113,7 +112,6 @@ void swa_xkb_key(struct swa_xkb_context* xkb, uint8_t keycode,
 			xkb_state_key_get_utf8(xkb->state, keycode, *out_utf8, count + 1);
 		}
 	} else if(status == XKB_COMPOSE_COMPOSED) {
-		composed = true;
 		unsigned count = xkb_compose_state_get_utf8(xkb->compose_state, NULL, 0);
 		if(count > 0) {
 			*out_utf8 = malloc(count + 1);
