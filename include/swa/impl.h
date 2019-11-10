@@ -8,8 +8,7 @@ extern "C" {
 
 struct swa_display_interface {
 	void (*destroy)(struct swa_display*);
-	bool (*poll_events)(struct swa_display*);
-	bool (*wait_events)(struct swa_display*);
+	bool (*dispatch)(struct swa_display*, bool block);
 	void (*wakeup)(struct swa_display*);
 	enum swa_display_cap (*capabilities)(struct swa_display*);
 	const char** (*vk_extensions)(struct swa_display*, unsigned* count);

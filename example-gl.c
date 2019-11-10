@@ -22,9 +22,8 @@ static void window_close(struct swa_window* win) {
 
 static void window_mouse_button(struct swa_window* win,
 		const struct swa_mouse_button_event* ev) {
-	dlg_info("mouse button: %d %d", ev->button, ev->pressed);
 	if(ev->pressed && ev->button == swa_mouse_button_left) {
-		dlg_info("begin resize");
+		dlg_debug("begin resize");
 		swa_window_begin_resize(win, swa_edge_bottom_right, ev->data);
 	}
 }
@@ -60,7 +59,7 @@ int main() {
 	swa_window_set_userdata(win, dpy);
 
 	while(run) {
-		if(!swa_display_wait_events(dpy)) {
+		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}
 	}

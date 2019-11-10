@@ -14,7 +14,7 @@ struct swa_display_wl {
 	struct swa_display base;
 	struct wl_display* display;
 	struct wl_registry* registry;
-	struct pml_custom* event_source;
+	struct pml_io* io_source;
 
 	// globals
 	struct wl_compositor* compositor;

@@ -91,7 +91,7 @@ int main() {
 	swa_window_set_userdata(win, dpy);
 
 	while(run) {
-		if(!swa_display_wait_events(dpy)) {
+		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}
 	}

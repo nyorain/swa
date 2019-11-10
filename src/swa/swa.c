@@ -229,11 +229,8 @@ void swa_display_destroy(struct swa_display* dpy) {
 		dpy->impl->destroy(dpy);
 	}
 }
-bool swa_display_poll_events(struct swa_display* dpy) {
-	return dpy->impl->poll_events(dpy);
-}
-bool swa_display_wait_events(struct swa_display* dpy) {
-	return dpy->impl->wait_events(dpy);
+bool swa_display_dispatch(struct swa_display* dpy, bool block) {
+	return dpy->impl->dispatch(dpy, block);
 }
 void swa_display_wakeup(struct swa_display* dpy) {
 	dpy->impl->wakeup(dpy);

@@ -336,7 +336,7 @@ struct swa_touch_update_event {
 };
 
 // All callbacks are guaranteed to only be called from inside
-// `swa_display_poll_events` or `swa_display_wait_events`.
+// `swa_display_dispatch(_pending)`
 struct swa_window_listener {
 	// Called by the system e.g. when the window contents where invalidated
 	// or emitted in response to a call to `swa_window_refresh`.
@@ -447,17 +447,12 @@ struct swa_display* swa_display_autocreate(void);
 // Destroys and frees the passed display. It must not be used after this.
 void swa_display_destroy(struct swa_display*);
 
-// Reads and dispatches all available events without waiting for new ones.
+// Reads and dispatches all available events.
+// If 'block' is true and no event is currently available, will block
+// until at least one event has been dispatched.
 // Returns false if there was a critical error that means this display
 // should be destroyed (e.g. connection to display server lost).
-bool swa_display_poll_events(struct swa_display*);
-
-// Read and dispatches all available events.
-// If and only if none are available at the moment, will wait until
-// at least one event could be dispatched.
-// Returns false if there was a critical error that means this display
-// should be dstroyed (e.g. connection to display server lost).
-bool swa_display_wait_events(struct swa_display*);
+bool swa_display_dispatch(struct swa_display*, bool block);
 
 // Can be used to wakeup `swa_display_wait_events` from another thread.
 // Has no effect when `swa_display_wait_events` isn't currently called.

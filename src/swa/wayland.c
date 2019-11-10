@@ -58,14 +58,16 @@ static struct swa_data_offer_wl* get_data_offer_wl(struct swa_data_offer* base) 
 	return (struct swa_data_offer_wl*) base;
 }
 
+// Checks and returns if the display has an (critical) error.
+// The first time this error is noticed, a description will be printed.
 static bool check_error(struct swa_display_wl* dpy) {
 	if(dpy->error) {
-		return false;
+		return true;
 	}
 
 	int err = wl_display_get_error(dpy->display);
 	if(!err) {
-		return true;
+		return false;
 	}
 
 	dpy->error = true;
@@ -155,25 +157,20 @@ static bool check_error(struct swa_display_wl* dpy) {
 			interface_name = interface->name;
 		}
 
-		dlg_fatal("Wayland display has critical protocol error\n\t"
+		dlg_error("Wayland display has critical protocol error\n\t"
 			"Interface: '%s'\n\t"
-			"Error: '%s'\n\t"
-			"Last log message: '%s'\n\t"
-			"Will exit dui now.\n", interface_name, error_name,
-			last_wl_log ? last_wl_log : "<none>");
+			"Error: '%s'", interface_name, error_name);
 	} else {
-		const char* errorName = strerror(err);
-		if(!errorName) {
-			errorName = "<unknown>";
+		const char* ename = strerror(err);
+		if(!ename) {
+			ename = "<unknown>";
 		}
 
-		dlg_fatal("Wayland display has critical non-protocol error: '%s' (%d)\n\t"
-			"Last log message: '%s'\n\t"
-			"Will exit dui now.\n", errorName, err,
-			last_wl_log ? last_wl_log : "<none>");
+		dlg_error("Wayland display has critical error: '%s' (%d)",
+			ename, err);
 	}
 
-	return false;;
+	return true;
 }
 
 static bool add_fd_flags(int fd, int add_flags) {
@@ -457,13 +454,6 @@ static void win_destroy(struct swa_window* base) {
 		win->dpy->n_touch_points = out;
 	}
 
-	if(win->defer_redraw) pml_defer_destroy(win->defer_redraw);
-	if(win->frame_callback) wl_callback_destroy(win->frame_callback);
-	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
-	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
-	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
-	if(win->surface) wl_surface_destroy(win->surface);
-
 	// destroy surface buffer
 	if(win->surface_type == swa_surface_buffer) {
 		for(unsigned i = 0u; i < win->buffer.n_bufs; ++i) {
@@ -500,12 +490,19 @@ static void win_destroy(struct swa_window* base) {
 			eglDestroySurface(win->dpy->egl->display, win->gl.surface);
 		}
 		if(win->gl.egl_window) {
-			wl_egl_window_destroy(win->gl.surface);
+			wl_egl_window_destroy(win->gl.egl_window);
 		}
 #else
 		dlg_error("swa was compiled without gl support; invalid surface");
 #endif
 	}
+
+	if(win->defer_redraw) pml_defer_destroy(win->defer_redraw);
+	if(win->frame_callback) wl_callback_destroy(win->frame_callback);
+	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
+	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
+	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
+	if(win->surface) wl_surface_destroy(win->surface);
 
 	free(base);
 }
@@ -675,7 +672,6 @@ static const struct wl_callback_listener win_frame_listener = {
 static void win_surface_frame(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(win->frame_callback) {
-		dlg_debug("Destroying pending frame callback");
 		wl_callback_destroy(win->frame_callback);
 		win->frame_callback = NULL;
 	}
@@ -1236,7 +1232,7 @@ void display_destroy(struct swa_display* base) {
 	if(dpy->egl) swa_egl_display_destroy(dpy->egl);
 #endif
 
-	if(dpy->event_source) pml_custom_destroy(dpy->event_source);
+	if(dpy->io_source) pml_io_destroy(dpy->io_source);
 	if(dpy->touch_points) free(dpy->touch_points);
 	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
 	if(dpy->key_repeat.timer) pml_timer_destroy(dpy->key_repeat.timer);
@@ -1260,15 +1256,34 @@ void display_destroy(struct swa_display* base) {
 	free(dpy);
 }
 
-bool display_poll_events(struct swa_display* base) {
-	struct swa_display_wl* dpy = get_display_wl(base);
-	pml_iterate(dpy->pml, false);
-	return !dpy->error;
+static bool print_error(struct swa_display_wl* dpy, const char* fn) {
+	// check for critical errors
+	if(check_error(dpy)) {
+		return false;
+	}
+
+	// otherwise output non-critical error
+	dlg_error("%s: %s (%d)", fn, strerror(errno), errno);
+	return true;
 }
 
-bool display_wait_events(struct swa_display* base) {
+bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_wl* dpy = get_display_wl(base);
-	pml_iterate(dpy->pml, true);
+
+	// dispatch all buffered events. Those won't be detected by POLL
+	// so without this we might block or return even though there are
+	// events
+	int res;
+	while((res = wl_display_dispatch_pending(dpy->display)) > 0);
+	if(res < 0) {
+		return print_error(dpy, "wl_display_dispatch_pending");
+	}
+
+	if(wl_display_flush(dpy->display) == -1) {
+		return print_error(dpy, "wl_display_flush");
+	}
+
+	pml_iterate(dpy->pml, block);
 	return !dpy->error;
 }
 
@@ -1278,7 +1293,7 @@ void display_wakeup(struct swa_display* base) {
 
 	// if the pipe is full, the waiting thread will wake up and clear
 	// it and it doesn't matter that our write call failed
-	if(err < 0 && errno != EAGAIN && errno != EWOULDBLOCK) {
+	if(err < 0 && errno != EAGAIN) {
 		dlg_warn("Writing to wakeup pipe failed: %s", strerror(errno));
 	}
 }
@@ -1585,14 +1600,6 @@ struct swa_window* display_create_window(struct swa_display* base,
 			}
 		}
 
-		EGLint val;
-		eglGetConfigAttrib(edpy, config, EGL_ALPHA_SIZE, &val);
-		dlg_debug("alpha size: %d", val);
-		eglGetConfigAttrib(edpy, config, EGL_NATIVE_VISUAL_ID, &val);
-		dlg_debug("config id: %d", val);
-		eglGetConfigAttrib(edpy, config, EGL_TRANSPARENT_TYPE, &val);
-		dlg_debug("transparent type: %d", val);
-
 		// create context
 		const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
 		EGLint context_attribs[5];
@@ -1636,8 +1643,7 @@ err:
 
 static const struct swa_display_interface display_impl = {
 	.destroy = display_destroy,
-	.poll_events = display_poll_events,
-	.wait_events = display_wait_events,
+	.dispatch = display_dispatch,
 	.wakeup = display_wakeup,
 	.capabilities = display_capabilities,
 	.vk_extensions = display_vk_extensions,
@@ -1676,7 +1682,6 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		  int32_t width, int32_t height, struct wl_array *states) {
 	struct swa_window_wl* win = data;
 	dlg_assert(width >= 0 && height >= 0);
-	dlg_debug("toplevel_configure: %d %d", width, height);
 
 	// width or height being 0 means we should decide them ourselves
 	// (mainly for the first configure event).
@@ -2474,92 +2479,28 @@ static const struct wl_registry_listener registry_listener = {
 	.global_remove = handle_global_remove,
 };
 
-static void fd_prepare(struct pml_custom* c) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
-	if(!check_error(dpy)) {
-		return;
-	}
-
-	int ret = wl_display_flush(dpy->display);
-	if(ret == -1 && errno != EAGAIN) {
-		// TODO: we should handle EAGAIN case, no more data can
-		// be written in that case. We could poll the display for
-		// POLLOUT
-		dlg_error("wl_display_flush: %s (%d)", strerror(errno), errno);
-	}
-
-	// TODO: this is a hack atm since wayland doesn't offer a function
-	// that reports whether there are pending events (without dispatching
-	// them yet). Could alternatively be solved by adding "check"
-	// events to the mainloop that allow re-entrancy.
-	// We currently additionally assume that no other custom event source
-	// will perform anything that could lead to the display queue being
-	// filled in their prepare callback.
-	//
-	// wl_display_prepare_read returns -1 if the event queue wasn't empty.
-	// We remember that there are already events to be dispatched
-	// (ready = true)
-	dpy->ready = false;
-	if(wl_display_prepare_read(dpy->display) == -1) {
-		dpy->ready = true;
-	} else {
-		wl_display_cancel_read(dpy->display);
-	}
-}
-
-static unsigned fd_query(struct pml_custom* c, struct pollfd* fds,
-		unsigned n_fds, int* timeout) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
-	if(dpy->error) {
-		*timeout = 0;
-		return 0;
-	}
-
-	if(n_fds > 0) {
-		fds[0].fd = wl_display_get_fd(dpy->display);
-		fds[0].events = POLLIN | POLLERR;
-	}
-
-	*timeout = dpy->ready ? 0 : -1;
-	return 1;
-}
-
-static void fd_dispatch(struct pml_custom* c, struct pollfd* fds, unsigned n_fds) {
-	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
-	bool ready = dpy->ready;
-	dpy->ready = false;
-
-	// check for error
-	if(!check_error(dpy)) {
-		return;
-	}
-
-	dlg_assert(n_fds == 1);
-	if(ready) { // there were already pending events in 'prepare'
-		wl_display_dispatch_pending(dpy->display);
-	}
-
-	bool readable = n_fds > 0 && fds[0].revents;
-	if(readable) {
+void dispatch_display(struct pml_io* io, unsigned revents) {
+	struct swa_display_wl* dpy = pml_io_get_data(io);
+	if(revents & POLLIN) {
 		while(wl_display_prepare_read(dpy->display) == -1) {
-			wl_display_dispatch_pending(dpy->display);
+			if(wl_display_dispatch_pending(dpy->display) == -1) {
+				print_error(dpy, "wl_display_dispatch_pending");
+				return;
+			}
 		}
-
-		int ret = wl_display_read_events(dpy->display);
-		if(ret == -1) {
-			dlg_error("wl_display_read_events: %s (%d)\n", strerror(errno), errno);
+		if(wl_display_read_events(dpy->display) == -1) {
+			print_error(dpy, "wl_display_read_events");
 			return;
 		}
 
-		wl_display_dispatch_pending(dpy->display);
+		int res;
+		while((res = wl_display_dispatch_pending(dpy->display)) > 0);
+		if(res < 0) {
+			print_error(dpy, "wl_display_dispatch_pending");
+			return;
+		}
 	}
 }
-
-static const struct pml_custom_impl event_source_impl = {
-	.prepare = fd_prepare,
-	.query = fd_query,
-	.dispatch = fd_dispatch
-};
 
 struct swa_display* swa_display_wl_create(void) {
 	struct wl_display* wld = wl_display_connect(NULL);
@@ -2569,13 +2510,14 @@ struct swa_display* swa_display_wl_create(void) {
 
 	wl_log_set_handler_client(log_handler);
 
-	// TODO: wakeup pipes
+	// TODO: create wakeup pipes
 	struct swa_display_wl* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->display = wld;
 	dpy->pml = pml_new();
-	dpy->event_source = pml_custom_new(dpy->pml, &event_source_impl);
-	pml_custom_set_data(dpy->event_source, dpy);
+	dpy->io_source = pml_io_new(dpy->pml, wl_display_get_fd(wld),
+		POLLIN, dispatch_display);
+	pml_io_set_data(dpy->io_source, dpy);
 
 	dpy->wl_queue = wl_display_create_queue(dpy->display);
 	dpy->registry = wl_display_get_registry(dpy->display);
