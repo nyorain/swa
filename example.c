@@ -70,6 +70,10 @@ static const struct swa_window_listener window_listener = {
 
 int main() {
 	struct swa_display* dpy = swa_display_autocreate();
+	if(!dpy) {
+		dlg_fatal("No swa backend available");
+		return EXIT_FAILURE;
+	}
 
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
@@ -78,6 +82,12 @@ int main() {
 	settings.surface = swa_surface_buffer;
 	settings.listener = &window_listener;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
+	if(!win) {
+		dlg_fatal("Failed to create window");
+		swa_display_destroy(dpy);
+		return EXIT_FAILURE;
+	}
+
 	swa_window_set_userdata(win, dpy);
 
 	while(run) {

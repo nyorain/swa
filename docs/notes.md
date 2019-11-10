@@ -19,6 +19,15 @@ todo wayland:
 
 later:
 
+- gl transparency semantics. Does the platform use premultiplied alpha?
+  e.g. on wayland we have to use premultiplied alpha, on other platforms
+  probably not
+- error checking. Make sure we cleanup everything?
+	- or don't do that in places where errors aren't expected?
+	  tradeoff maintainability and possibly usability here i guess?
+	  like do we really have to check the return value of
+	  wl_compositor_create_surface? i don't know any condition we can/want
+	  to handle in which it returns NULL.
 - re-entrant callbacks. Allowed to modify window state in handler?
   allowed to call data_offer_destroy in data offer callback?
   etc

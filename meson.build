@@ -25,6 +25,7 @@ swa_src = files(
 	'src/swa/swa.c',
 	'src/swa/xkb.c',
 	'src/swa/wayland.c',
+	'src/swa/egl.c',
 )
 
 source_root = '/'.join(meson.source_root().split('\\'))
@@ -46,6 +47,7 @@ dep_xkbcommon = dependency('xkbcommon', required: true)
 dep_wl_client = dependency('wayland-client', required: true)
 dep_wl_cursor = dependency('wayland-cursor', required: true)
 dep_wl_egl = dependency('wayland-egl', required: true)
+dep_egl = dependency('egl', required: true)
 wl_protos = dependency('wayland-protocols', version: '>=1.14', required: true)
 wl_scanner = find_program('wayland-scanner', required: true)
 wl_protocol_dir = wl_protos.get_pkgconfig_variable('pkgdatadir')
@@ -102,6 +104,7 @@ swa_deps = [
 	dep_wl_protos,
 	dep_xkbcommon,
 	dep_vulkan,
+	dep_egl,
 ]
 
 conf_data = configuration_data()
@@ -127,3 +130,7 @@ swa_dep = declare_dependency(
 executable('example',
 	'example.c',
 	dependencies: [swa_dep, dep_dlg])
+
+executable('example-gl',
+	'example-gl.c',
+	dependencies: [swa_dep, dep_dlg, dependency('gl', required: true)])

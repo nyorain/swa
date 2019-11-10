@@ -1,5 +1,8 @@
 #pragma once
 
+#include <EGL/egl.h>
+#include <EGL/eglext.h>
+
 // fwd decls from egl.h
 typedef void* EGLDisplay;
 typedef void* EGLConfig;
@@ -10,9 +13,22 @@ typedef void* EGLSurface;
 extern "C" {
 #endif
 
+struct swa_egl_display {
+	struct {
+		PFNEGLGETPLATFORMDISPLAYEXTPROC getPlatformDisplay;
+		PFNEGLCREATEPLATFORMWINDOWSURFACEEXTPROC createPlatformWindowSurface;
+	} api;
+
+	EGLDisplay display;
+};
+
 struct swa_egl_context {
+	EGLConfig config;
 	EGLContext context;
 };
+
+struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* dpy);
+void swa_egl_display_destroy(struct swa_egl_display*);
 
 #ifdef __cplusplus
 }

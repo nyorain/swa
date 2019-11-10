@@ -77,6 +77,8 @@ struct swa_display_wl {
 
 	struct swa_data_offer_wl* data_offer_list;
 	struct swa_data_offer_wl* selection;
+
+	struct swa_egl_display* egl;
 };
 
 struct swa_wl_touch_point {
@@ -100,7 +102,7 @@ struct swa_wl_buffer_surface {
 };
 
 struct swa_wl_gl_surface {
-	EGLSurface egl_surface;
+	EGLSurface surface;
 	EGLContext context;
 	struct wl_egl_window* egl_window;
 };

@@ -23,6 +23,12 @@
 #include <vulkan/vulkan_wayland.h>
 #endif
 
+#ifdef SWA_WITH_GL
+#include <swa/egl.h>
+#include <wayland-egl-core.h>
+#include <EGL/egl.h>
+#endif
+
 #define SWA_DECORATION_MODE_PENDING 0xFFFFFFFFu
 
 static const struct swa_display_interface display_impl;
@@ -465,20 +471,40 @@ static void win_destroy(struct swa_window* base) {
 		}
 		free(win->buffer.buffers);
 	} else if(win->surface_type == swa_surface_vk) {
-		dlg_assert(win->vk.instance);
-		dlg_assert(win->vk.surface);
+#ifdef SWA_WITH_VK
+		if(win->vk.surface) {
+			dlg_assert(win->vk.instance);
 
-		VkInstance instance;
-		VkSurfaceKHR surface;
-		memcpy(&instance, &win->vk.instance, sizeof(instance));
-		memcpy(&surface, &win->vk.surface, sizeof(surface));
-		PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
-			vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
-		if(fn) {
-			fn(instance, surface, NULL);
-		} else {
-			dlg_error("Failed to load 'vkDestroySurfaceKHR' function");
+			VkInstance instance;
+			VkSurfaceKHR surface;
+			memcpy(&instance, &win->vk.instance, sizeof(instance));
+			memcpy(&surface, &win->vk.surface, sizeof(surface));
+			PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
+				vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
+			if(fn) {
+				fn(instance, surface, NULL);
+			} else {
+				dlg_error("Failed to load 'vkDestroySurfaceKHR' function");
+			}
 		}
+#else
+		dlg_error("swa was compiled without vk support; invalid surface");
+#endif
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		// if they are still current, egl will defer destruction
+		if(win->gl.context) {
+			eglDestroyContext(win->dpy->egl->display, win->gl.context);
+		}
+		if(win->gl.surface) {
+			eglDestroySurface(win->dpy->egl->display, win->gl.surface);
+		}
+		if(win->gl.egl_window) {
+			wl_egl_window_destroy(win->gl.surface);
+		}
+#else
+		dlg_error("swa was compiled without gl support; invalid surface");
+#endif
 	}
 
 	free(base);
@@ -595,11 +621,9 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 static void refresh_cb(struct pml_defer* defer) {
 	struct swa_window_wl* win = pml_defer_get_data(defer);
 	win->redraw = false;
-	if(win->base.listener && win->base.listener->draw) {
-		win->base.listener->draw(&win->base);
-	}
 
-	// TODO: problem if draw handler calls win_refresh again
+	// TODO: move this here or after handler call?
+	// problem if draw handler calls win_refresh again
 	// *before* commiting (or calling win_frame).
 	// - make it an requirement to call refresh *after* the surface
 	//   contents were changed/frame was called? would make sense i guess
@@ -611,6 +635,10 @@ static void refresh_cb(struct pml_defer* defer) {
 	//   was called to trigger a new frame. Calling win_refresh
 	//   inside the draw handler before that happened is undefined'.
 	pml_defer_enable(defer, false);
+
+	if(win->base.listener && win->base.listener->draw) {
+		win->base.listener->draw(&win->base);
+	}
 }
 
 static void win_refresh(struct swa_window* base) {
@@ -647,6 +675,7 @@ static const struct wl_callback_listener win_frame_listener = {
 static void win_surface_frame(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(win->frame_callback) {
+		dlg_debug("Destroying pending frame callback");
 		wl_callback_destroy(win->frame_callback);
 		win->frame_callback = NULL;
 	}
@@ -713,7 +742,7 @@ static void win_begin_resize(struct swa_window* base, enum swa_edge edges,
 
 	// the enumerations map directly onto each other
 	enum xdg_toplevel_resize_edge wl_edges = (enum xdg_toplevel_resize_edge) edges;
-	xdg_toplevel_resize(win->xdg_toplevel, win->dpy->seat, wl_edges, serial);
+	xdg_toplevel_resize(win->xdg_toplevel, win->dpy->seat, serial, wl_edges);
 }
 static void win_set_title(struct swa_window* base, const char* title) {
 	struct swa_window_wl* win = get_window_wl(base);
@@ -755,14 +784,31 @@ static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
 #endif
 }
 
-// TODO
 static bool win_gl_make_current(struct swa_window* base) {
-	// struct swa_window_wl* win = get_window_wl(base);
-	return false;
+	struct swa_window_wl* win = get_window_wl(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+	return eglMakeCurrent(win->dpy->egl->display, win->gl.surface,
+		win->gl.surface, win->gl.context);
 }
 static bool win_gl_swap_buffers(struct swa_window* base) {
-	// struct swa_window_wl* win = get_window_wl(base);
-	return false;
+	struct swa_window_wl* win = get_window_wl(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+
+	// eglSwapBuffers must commit to the surface in one way or another
+	win_surface_frame(&win->base);
+	return eglSwapBuffers(win->dpy->egl->display, win->gl.surface);
 }
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
 	// struct swa_window_wl* win = get_window_wl(base);
@@ -775,7 +821,16 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 	static const enum wl_shm_format format = WL_SHM_FORMAT_ARGB8888;
 
 	struct swa_window_wl* win = get_window_wl(base);
-	dlg_assertm(win->buffer.active == -1, "There is already an active buffer");
+	if(win->surface_type != swa_surface_buffer) {
+		dlg_error("Window doesn't have buffer surface");
+		return false;
+	}
+
+	if(win->buffer.active != -1) {
+		dlg_error("There is already an active buffer");
+		return false;
+	}
+
 	// search for free buffer
 	// prefer buffers with matching dimensions
 	struct swa_wl_buffer* found = NULL;
@@ -823,7 +878,10 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 
 static void win_apply_buffer(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
-	dlg_assertm(win->buffer.active >= 0, "No active buffer");
+	if(win->buffer.active < 0) {
+		dlg_error("No active buffer");
+		return;
+	}
 
 	struct swa_wl_buffer* buf = &win->buffer.buffers[win->buffer.active];
 	wl_surface_attach(win->surface, buf->buffer, 0, 0);
@@ -1174,6 +1232,10 @@ void display_destroy(struct swa_display* base) {
 		d = next;
 	}
 
+#ifdef SWA_WITH_GL
+	if(dpy->egl) swa_egl_display_destroy(dpy->egl);
+#endif
+
 	if(dpy->event_source) pml_custom_destroy(dpy->event_source);
 	if(dpy->touch_points) free(dpy->touch_points);
 	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
@@ -1363,10 +1425,11 @@ struct swa_window* display_create_window(struct swa_display* base,
 	win->base.impl = &window_impl;
 	win->base.listener = settings->listener;
 	win->dpy = dpy;
-	win->surface = wl_compositor_create_surface(dpy->compositor);
-	wl_surface_set_user_data(win->surface, win);
 	win->width = settings->width;
 	win->height = settings->height;
+
+	win->surface = wl_compositor_create_surface(dpy->compositor);
+	wl_surface_set_user_data(win->surface, win);
 
 	win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->surface);
 	xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
@@ -1380,7 +1443,19 @@ struct swa_window* display_create_window(struct swa_display* base,
 		xdg_toplevel_set_app_id(win->xdg_toplevel, settings->app_name);
 	}
 
+	if(settings->state != swa_window_state_normal) {
+		win_set_state(&win->base, settings->state);
+	}
+
+	// note how we always set the cursor, even if this is cursor_default
+	// this is needed since when the pointer enters this surface we
+	// *always* want to set the cursor, otherwise the previously
+	// used cursor will just be used (which can be different every time)
+	// which is not expected behavior.
+	win_set_cursor(&win->base, settings->cursor);
+
 	// commit the role so we get a configure event and can start drawing
+	// also important for the decoration mode negotiation
 	wl_surface_commit(win->surface);
 
 	// when the decoration protocol is not present, client side decorations
@@ -1421,18 +1496,7 @@ struct swa_window* display_create_window(struct swa_display* base,
 			"the compositor doesn't support the decoration protocol");
 	}
 
-	if(settings->state != swa_window_state_normal) {
-		win_set_state(&win->base, settings->state);
-	}
-
-	// note how we always set the cursor, even if this is cursor_default
-	// this is needed since when the pointer enters this surface we
-	// *always* want to set the cursor, otherwise the previously
-	// used cursor will just be used (which can be different every time)
-	// which is not expected behavior.
-	win_set_cursor(&win->base, settings->cursor);
-
-	// surface
+	// initializing the surface after having commited the role seems fitting
 	win->surface_type = settings->surface;
 	if(win->surface_type == swa_surface_buffer) {
 		win->buffer.active = -1;
@@ -1469,6 +1533,96 @@ struct swa_window* display_create_window(struct swa_display* base,
 		memcpy(&win->vk.surface, &surface, sizeof(VkSurfaceKHR));
 #else
 		dlg_error("swa was compiled without vulkan support");
+		goto err;
+#endif
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		if(!dpy->egl) {
+			dpy->egl = swa_egl_display_create(EGL_PLATFORM_WAYLAND_EXT,
+				dpy->display);
+			if(!dpy->egl) {
+				goto err;
+			}
+		}
+
+		unsigned width = win->width == SWA_DEFAULT_SIZE ?
+			SWA_FALLBACK_WIDTH : win->width;
+		unsigned height = win->height == SWA_DEFAULT_SIZE ?
+			SWA_FALLBACK_HEIGHT : win->height;
+		win->gl.egl_window = wl_egl_window_create(win->surface, width, height);
+
+		// find config
+		EGLint config_attribs[] = {
+			EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+			// TODO: only since egl 1.4
+			// EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+			EGL_RED_SIZE, 8,
+			EGL_GREEN_SIZE, 8,
+			EGL_BLUE_SIZE, 8,
+			EGL_ALPHA_SIZE, 8,
+			EGL_NONE,
+		};
+
+		EGLDisplay edpy = dpy->egl->display;
+		EGLint count;
+		EGLConfig config;
+		EGLBoolean ret = eglChooseConfig(edpy, config_attribs, &config, 1, &count);
+		if(ret == EGL_FALSE) {
+			dlg_error("eglChooseConfig returned false");
+			goto err;
+		}
+
+		// in this case we couldn't find any configs
+		// try again, just choose any config
+		if(count == 0) {
+			dlg_debug("Couldn't find 32-bit rgba egl config");
+			config_attribs[3] = EGL_NONE;
+			ret = eglChooseConfig(edpy, config_attribs, &config, 1, &count);
+
+			if(count == 0) {
+				dlg_error("Couldn't find any egl config");
+				goto err;
+			}
+		}
+
+		EGLint val;
+		eglGetConfigAttrib(edpy, config, EGL_ALPHA_SIZE, &val);
+		dlg_debug("alpha size: %d", val);
+		eglGetConfigAttrib(edpy, config, EGL_NATIVE_VISUAL_ID, &val);
+		dlg_debug("config id: %d", val);
+		eglGetConfigAttrib(edpy, config, EGL_TRANSPARENT_TYPE, &val);
+		dlg_debug("transparent type: %d", val);
+
+		// create context
+		const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
+		EGLint context_attribs[5];
+		if(strstr(exts, "EGL_KHR_create_context")) {
+			context_attribs[0] = EGL_CONTEXT_MAJOR_VERSION;
+			context_attribs[1] = settings->surface_settings.gl.major;
+			context_attribs[2] = EGL_CONTEXT_MINOR_VERSION;
+			context_attribs[3] = settings->surface_settings.gl.minor;
+			context_attribs[4] = EGL_NONE;
+		} else {
+			context_attribs[0] = EGL_CONTEXT_CLIENT_VERSION;
+			context_attribs[1] = settings->surface_settings.gl.major;
+			context_attribs[2] = EGL_NONE;
+		}
+
+		win->gl.context = eglCreateContext(edpy, config, NULL, context_attribs);
+		if(!win->gl.context) {
+			dlg_error("eglCreateContext failed");
+			goto err;
+		}
+
+		// create surface
+		win->gl.surface = dpy->egl->api.createPlatformWindowSurface(
+			edpy, config, win->gl.egl_window, NULL);
+		if(!win->gl.surface) {
+			dlg_error("eglCreatePlatformWindowSurface failed");
+			goto err;
+		}
+#else
+		dlg_error("swa was compiled without GL support");
 		goto err;
 #endif
 	}
@@ -1522,28 +1676,33 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 		  int32_t width, int32_t height, struct wl_array *states) {
 	struct swa_window_wl* win = data;
 	dlg_assert(width >= 0 && height >= 0);
+	dlg_debug("toplevel_configure: %d %d", width, height);
 
 	// width or height being 0 means we should decide them ourselves
 	// (mainly for the first configure event).
-	bool resized = false;
-	if(width) {
-		resized |= (int32_t)win->width != width;
-		win->width = width;
-	} else if(win->width == SWA_DEFAULT_SIZE) {
-		resized = true;
-		win->width = SWA_FALLBACK_WIDTH;
+	if(width == 0) {
+		width = (win->width == SWA_DEFAULT_SIZE) ?
+			SWA_FALLBACK_WIDTH : win->width;
+	}
+	if(height == 0) {
+		height = (win->height == SWA_DEFAULT_SIZE) ?
+			SWA_FALLBACK_HEIGHT : win->height;
 	}
 
-	if(height) {
-		resized |= (int32_t)win->height != height;
-		win->height = height;
-	} else if(win->height == SWA_DEFAULT_SIZE) {
-		resized = true;
-		win->height = SWA_FALLBACK_HEIGHT;
-	}
+	bool resized = (win->width != (uint32_t)width) ||
+		(win->height != (uint32_t)height);
+	win->width = width;
+	win->height = height;
 
-	if(resized && win->base.listener && win->base.listener->resize) {
-		win->base.listener->resize(&win->base, win->width, win->height);
+	if(resized) {
+		if(win->surface_type == swa_surface_gl) {
+			dlg_assert(win->gl.egl_window);
+			wl_egl_window_resize(win->gl.egl_window, width, height, 0, 0);
+		}
+
+		if(win->base.listener && win->base.listener->resize) {
+			win->base.listener->resize(&win->base, win->width, win->height);
+		}
 	}
 
 	// refresh the window if the size changed or if it was never
@@ -2329,12 +2488,22 @@ static void fd_prepare(struct pml_custom* c) {
 		dlg_error("wl_display_flush: %s (%d)", strerror(errno), errno);
 	}
 
+	// TODO: this is a hack atm since wayland doesn't offer a function
+	// that reports whether there are pending events (without dispatching
+	// them yet). Could alternatively be solved by adding "check"
+	// events to the mainloop that allow re-entrancy.
+	// We currently additionally assume that no other custom event source
+	// will perform anything that could lead to the display queue being
+	// filled in their prepare callback.
+	//
 	// wl_display_prepare_read returns -1 if the event queue wasn't empty.
 	// We remember that there are already events to be dispatched
 	// (ready = true)
 	dpy->ready = false;
 	if(wl_display_prepare_read(dpy->display) == -1) {
 		dpy->ready = true;
+	} else {
+		wl_display_cancel_read(dpy->display);
 	}
 }
 
@@ -2356,8 +2525,6 @@ static unsigned fd_query(struct pml_custom* c, struct pollfd* fds,
 }
 
 static void fd_dispatch(struct pml_custom* c, struct pollfd* fds, unsigned n_fds) {
-	dlg_assert(n_fds == 1);
-
 	struct swa_display_wl* dpy = (struct swa_display_wl*) pml_custom_get_data(c);
 	bool ready = dpy->ready;
 	dpy->ready = false;
@@ -2367,16 +2534,15 @@ static void fd_dispatch(struct pml_custom* c, struct pollfd* fds, unsigned n_fds
 		return;
 	}
 
+	dlg_assert(n_fds == 1);
 	if(ready) { // there were already pending events in 'prepare'
 		wl_display_dispatch_pending(dpy->display);
 	}
 
 	bool readable = n_fds > 0 && fds[0].revents;
 	if(readable) {
-		if(ready) { // in this case we never prepared reading
-			while(wl_display_prepare_read(dpy->display) == -1) {
-				wl_display_dispatch_pending(dpy->display);
-			}
+		while(wl_display_prepare_read(dpy->display) == -1) {
+			wl_display_dispatch_pending(dpy->display);
 		}
 
 		int ret = wl_display_read_events(dpy->display);
@@ -2386,8 +2552,6 @@ static void fd_dispatch(struct pml_custom* c, struct pollfd* fds, unsigned n_fds
 		}
 
 		wl_display_dispatch_pending(dpy->display);
-	} else if(!ready) {
-		wl_display_cancel_read(dpy->display);
 	}
 }
 
