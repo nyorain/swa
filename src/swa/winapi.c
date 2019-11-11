@@ -1,4 +1,5 @@
 #include <swa/winapi.h>
+#include <dlg/dlg.h>
 
 #define UNICODE
 #include <windows.h>
@@ -68,7 +69,7 @@ bool display_dispatch(struct swa_display* base, bool block) {
             FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM |
                 FORMAT_MESSAGE_ALLOCATE_BUFFER, NULL,
                 code, 0, (wchar_t*) &buffer, 0, NULL);
-            dlg_error("GetMessage: ", buffer);
+            dlg_error("GetMessage: %ls", buffer);
             LocalFree(buffer);
             dpy->error = true;
             return false;
@@ -155,7 +156,7 @@ struct swa_window* display_get_mouse_over(struct swa_display* base) {
 }
 struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_win* dpy = get_display_win(base);
-    return NULL; 
+    return NULL;
 }
 bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source, void* trigger) {
@@ -217,31 +218,31 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 }
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_show(struct swa_window* base, bool show) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_set_position(struct swa_window* base, int x, int y) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_refresh(struct swa_window* base) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_surface_frame(struct swa_window* base) {
@@ -250,7 +251,7 @@ static void win_surface_frame(struct swa_window* base) {
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
-	struct swa_window_win* win = get_window_wl(base);
+	struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_begin_move(struct swa_window* base, void* trigger) {
@@ -267,21 +268,27 @@ static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {
+	return false;
 }
 
 static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
+	return false;
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
+	return false;
 }
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
+	return false;
 }
 
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
+	return false;
 }
 
 static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
+	return false;
 }
 
 static void win_apply_buffer(struct swa_window* base) {
