@@ -1,5 +1,18 @@
 #include <swa/winapi.h>
 
+#define UNICODE
+#include <windows.h>
+#include <winuser.h>
+#include <windowsx.h>
+
+// undefine the shittiest macros
+// holy fuck microsoft...
+#undef near
+#undef far
+#undef ERROR
+#undef MemoryBarrier
+#undef UNICODE
+
 #ifdef SWA_WITH_VK
 #include <vulkan/vulkan.h>
 #include <vulkan/vulkan_win32.h>
@@ -22,10 +35,52 @@ static struct swa_window_win* get_window_win(struct swa_window* base) {
 // display api
 void display_destroy(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
+    free(dpy);
+}
+
+static bool dispatch_one(void) {
+	MSG msg;
+	if(!PeekMessage(&msg, 0, 0, 0, PM_REMOVE)) {
+		return false;
+	}
+
+	TranslateMessage(&msg);
+	DispatchMessage(&msg);
+	return true;
 }
 
 bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_win* dpy = get_display_win(base);
+    if(dpy->error) {
+        return false;
+    }
+
+    // wait for first message if we are allowed to block
+    if(block) {
+        MSG msg;
+        int ret = GetMessage(&msg, NULL, 0, 0);
+        if(ret == -1) {
+            // winapi documentation suggests that errors here are
+            // of critical nature and exiting the application is the
+            // usual strategy.
+            wchar_t* buffer;
+            int code = GetLastError();
+            FormatMessage(FORMAT_MESSAGE_FROM_SYSTEM |
+                FORMAT_MESSAGE_ALLOCATE_BUFFER, NULL,
+                code, 0, (wchar_t*) &buffer, 0, NULL);
+            dlg_error("GetMessage: ", buffer);
+            LocalFree(buffer);
+            dpy->error = true;
+            return false;
+        } else {
+		    TranslateMessage(&msg);
+		    DispatchMessage(&msg);
+        }
+    }
+
+    // dispatch all messages
+    while(dispatch_one());
+    return true;
 }
 
 void display_wakeup(struct swa_display* base) {

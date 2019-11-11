@@ -9,6 +9,7 @@ extern "C" {
 
 struct swa_display_win {
     struct swa_display base;
+    bool error;
 };
 
 struct swa_window_win {
