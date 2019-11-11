@@ -28,6 +28,12 @@ later:
 	  like do we really have to check the return value of
 	  wl_compositor_create_surface? i don't know any condition we can/want
 	  to handle in which it returns NULL.
+- interface of swa_window_get_vk_surface is weird.
+  Make it return a uint64_t/VkSurfaceKHR instead?
+  Or better this way so we can do a cast/memcpy and don't leave this
+  to the user?
+  	- do we need memcpy for those handles? We could require the application
+	  to pass in a pointer to a VkSurfaceKHR/VkInstance
 - re-entrant callbacks. Allowed to modify window state in handler?
   allowed to call data_offer_destroy in data offer callback?
   etc

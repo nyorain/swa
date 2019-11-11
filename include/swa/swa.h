@@ -212,7 +212,7 @@ struct swa_gl_surface_settings {
 
 // The instance must remain valid until the window is destroyed.
 struct swa_vk_surface_settings {
-    uint64_t instance; // type: vkInstance
+    uint64_t instance; // type: VkInstance
 };
 
 struct swa_window_settings {
