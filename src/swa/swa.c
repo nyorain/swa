@@ -1,11 +1,25 @@
 #include <swa/impl.h>
-#include <swa/wayland.h>
 #include <dlg/dlg.h>
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef SWA_WITH_WL
+#include <swa/wayland.h>
+#endif
+
+#ifdef SWA_WITH_WIN
+#include <swa/winapi.h>
+#endif
+
 struct swa_display* swa_display_autocreate(void) {
-	return swa_display_wl_create();
+	struct swa_display* dpy;
+#ifdef SWA_WITH_WL
+	if(dpy = swa_display_wl_create()) return dpy;
+#endif
+#ifdef SWA_WITH_WIN
+	if(dpy = swa_display_win_create()) return dpy;
+#endif
+	return NULL;
 }
 
 void swa_window_settings_default(struct swa_window_settings* settings) {
