@@ -1,3 +1,4 @@
+#include <swa/config.h>
 #include <swa/impl.h>
 #include <dlg/dlg.h>
 #include <stdlib.h>
