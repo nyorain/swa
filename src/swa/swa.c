@@ -266,14 +266,12 @@ struct swa_data_offer* swa_display_get_clipboard(struct swa_display* dpy) {
 	return dpy->impl->get_clipboard(dpy);
 }
 bool swa_display_set_clipboard(struct swa_display* dpy,
-		struct swa_data_source* source,
-		void* trigger_event_data) {
-	return dpy->impl->set_clipboard(dpy, source, trigger_event_data);
+		struct swa_data_source* source) {
+	return dpy->impl->set_clipboard(dpy, source);
 }
 bool swa_display_start_dnd(struct swa_display* dpy,
-		struct swa_data_source* source,
-		void* trigger_event_data) {
-	return dpy->impl->start_dnd(dpy, source, trigger_event_data);
+		struct swa_data_source* source) {
+	return dpy->impl->start_dnd(dpy, source);
 }
 struct swa_window* swa_display_create_window(struct swa_display* dpy,
 		const struct swa_window_settings* settings) {
@@ -316,12 +314,11 @@ void swa_window_surface_frame(struct swa_window* win) {
 void swa_window_set_state(struct swa_window* win, enum swa_window_state state) {
 	win->impl->set_state(win, state);
 }
-void swa_window_begin_move(struct swa_window* win, void* trigger) {
-	win->impl->begin_move(win, trigger);
+void swa_window_begin_move(struct swa_window* win) {
+	win->impl->begin_move(win);
 }
-void swa_window_begin_resize(struct swa_window* win, enum swa_edge edges,
-		void* trigger) {
-	win->impl->begin_resize(win, edges, trigger);
+void swa_window_begin_resize(struct swa_window* win, enum swa_edge edges) {
+	win->impl->begin_resize(win, edges);
 }
 void swa_window_set_title(struct swa_window* win, const char* title) {
 	win->impl->set_title(win, title);
@@ -332,8 +329,8 @@ void swa_window_set_icon(struct swa_window* win, const struct swa_image* image) 
 bool swa_window_is_client_decorated(struct swa_window* win) {
 	return win->impl->is_client_decorated(win);
 }
-bool swa_window_get_vk_surface(struct swa_window* win, void* vkSurfaceKHR) {
-	return win->impl->get_vk_surface(win, vkSurfaceKHR);
+uint64_t swa_window_get_vk_surface(struct swa_window* win) {
+	return win->impl->get_vk_surface(win);
 }
 bool swa_window_gl_make_current(struct swa_window* win) {
 	return win->impl->gl_make_current(win);

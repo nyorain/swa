@@ -20,8 +20,8 @@ struct swa_display_interface {
 	void (*mouse_position)(struct swa_display*, int* x, int* y);
 	struct swa_window* (*get_mouse_over)(struct swa_display*);
 	struct swa_data_offer* (*get_clipboard)(struct swa_display*);
-	bool (*set_clipboard)(struct swa_display*, struct swa_data_source*, void*);
-	bool (*start_dnd)(struct swa_display*, struct swa_data_source*, void*);
+	bool (*set_clipboard)(struct swa_display*, struct swa_data_source*);
+	bool (*start_dnd)(struct swa_display*, struct swa_data_source*);
 	struct swa_window* (*create_window)(struct swa_display*,
 		const struct swa_window_settings*);
 };
@@ -40,13 +40,13 @@ struct swa_window_interface {
 	void (*surface_frame)(struct swa_window*);
 
 	void (*set_state)(struct swa_window*, enum swa_window_state);
-	void (*begin_move)(struct swa_window*, void* trigger_event_data);
-	void (*begin_resize)(struct swa_window*, enum swa_edge edges, void*);
+	void (*begin_move)(struct swa_window*);
+	void (*begin_resize)(struct swa_window*, enum swa_edge edges);
 	void (*set_title)(struct swa_window*, const char*);
 
 	void (*set_icon)(struct swa_window*, const struct swa_image* image);
 	bool (*is_client_decorated)(struct swa_window*);
-	bool (*get_vk_surface)(struct swa_window*, void* vkSurfaceKHR);
+	uint64_t (*get_vk_surface)(struct swa_window*);
 
 	bool (*gl_make_current)(struct swa_window*);
 	bool (*gl_swap_buffers)(struct swa_window*);

@@ -188,6 +188,24 @@ static bool add_fd_flags(int fd, int add_flags) {
 	return true;
 }
 
+static bool swa_pipe(int fds[static 2]) {
+	// NOTE: on linux we could use pipe2 here, not as racy
+	int err = pipe(fds);
+	if(err < 0) {
+		dlg_error("pipe: %s (%d)", strerror(errno), errno);
+		return false;
+	}
+
+	int flags = O_NONBLOCK | FD_CLOEXEC;
+	if(!add_fd_flags(fds[0], flags) || !add_fd_flags(fds[0], flags)) {
+		close(fds[0]);
+		close(fds[1]);
+		return false;
+	}
+
+	return true;
+}
+
 static int create_pool_file(size_t size, char** name) {
 	static const char template[] = "swa-buffer-XXXXXX";
 	const char *path = getenv("XDG_RUNTIME_DIR");
@@ -288,6 +306,7 @@ static void buffer_finish(struct swa_wl_buffer* buf) {
 }
 
 static void cursor_render(struct swa_display_wl* dpy) {
+	dlg_trace("cursor_render");
 	dlg_assert(dpy->cursor.timer);
 	dlg_assert(dpy->cursor.active);
 
@@ -374,11 +393,11 @@ static void set_cursor(struct swa_display_wl* dpy, struct swa_window_wl* win) {
 			struct timespec next = dpy->cursor.set;
 			next.tv_nsec += start->delay * 1000 * 1000;
 			if(!dpy->cursor.timer) {
-				dpy->cursor.timer = pml_timer_new(dpy->pml, &next,
-					cursor_time_cb);
+				dpy->cursor.timer = pml_timer_new(dpy->pml, NULL, cursor_time_cb);
 				pml_timer_set_data(dpy->cursor.timer, dpy);
 				pml_timer_set_clock(dpy->cursor.timer, CLOCK_MONOTONIC);
 			}
+			pml_timer_set_time(dpy->cursor.timer, next);
 		}
 	} else {
 		buffer = win->cursor.buffer.buffer;
@@ -706,39 +725,26 @@ static void win_set_state(struct swa_window* base, enum swa_window_state state) 
 	}
 }
 
-static void win_begin_move(struct swa_window* base, void* trigger) {
+static void win_begin_move(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(!win->dpy->seat) {
 		dlg_warn("Can't begin moving window without seat");
 		return;
 	}
 
-	if(!trigger) {
-		dlg_warn("Can't begin moving window without valid trigger event");
-		return;
-	}
-
-	uint32_t serial = (uint32_t)(uintptr_t)trigger;
-	xdg_toplevel_move(win->xdg_toplevel, win->dpy->seat, serial);
+	xdg_toplevel_move(win->xdg_toplevel, win->dpy->seat, win->dpy->last_serial);
 }
-static void win_begin_resize(struct swa_window* base, enum swa_edge edges,
-		void* trigger) {
+static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(!win->dpy->seat) {
 		dlg_warn("Can't begin resizing window without seat");
 		return;
 	}
 
-	if(!trigger) {
-		dlg_warn("Can't begin resizing window without valid trigger event");
-		return;
-	}
-
-	uint32_t serial = (uint32_t)(uintptr_t)trigger;
-
 	// the enumerations map directly onto each other
 	enum xdg_toplevel_resize_edge wl_edges = (enum xdg_toplevel_resize_edge) edges;
-	xdg_toplevel_resize(win->xdg_toplevel, win->dpy->seat, serial, wl_edges);
+	xdg_toplevel_resize(win->xdg_toplevel, win->dpy->seat,
+		win->dpy->last_serial, wl_edges);
 }
 static void win_set_title(struct swa_window* base, const char* title) {
 	struct swa_window_wl* win = get_window_wl(base);
@@ -764,19 +770,18 @@ static bool win_is_client_decorated(struct swa_window* base) {
 	return win->decoration_mode == ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
 }
 
-static bool win_get_vk_surface(struct swa_window* base, void* vkSurfaceKHR) {
+static uint64_t win_get_vk_surface(struct swa_window* base) {
 #ifdef SWA_WITH_VK
 	struct swa_window_wl* win = get_window_wl(base);
 	if(win->surface_type != swa_surface_vk) {
 		dlg_warn("can't get vulkan surface from non-vulkan window");
-		return false;
+		return 0;
 	}
 
-	memcpy(&vkSurfaceKHR, &win->vk.surface, sizeof(VkSurfaceKHR));
-	return win->vk.surface;
+	return (uint64_t) win->vk.surface;
 #else
 	dlg_warn("swa was compiled without vulkan suport");
-	return false;
+	return 0;
 #endif
 }
 
@@ -1012,7 +1017,8 @@ static void data_pipe_cb(struct pml_io* io, unsigned revents) {
 	struct swa_data_offer_wl* offer = pml_io_get_data(io);
 	dlg_assert(offer->data.fd == pml_io_get_fd(io));
 
-	// TODO: could use ioctl FIONREAD on most unixes
+	// TODO: could use ioctl FIONREAD on most unixes for efficient
+	//   buffer sizing
 	unsigned readCount = 2048u;
 	while(true) {
 		unsigned size = offer->data.n_bytes;
@@ -1035,10 +1041,13 @@ static void data_pipe_cb(struct pml_io* io, unsigned revents) {
 			free((void*) offer->data.format);
 			memset(&offer->data, 0, sizeof(offer->data));
 		} else if(ret < 0) {
+			// EINTR: interrupted by signal, just try again
 			// EAGAIN: no data available at the moment, continue polling,
 			// i.e. break below. Other errors here are unexpected,
 			// we cancel the data transfer
-			if(errno != EAGAIN && errno != EWOULDBLOCK) {
+			if(errno == EINTR) {
+				continue;
+			} else if(errno != EAGAIN) {
 				dlg_warn("read(pipe): %s (%d)", strerror(errno), errno);
 
 				struct swa_exchange_data data = {0};
@@ -1075,15 +1084,8 @@ static bool data_offer_data(struct swa_data_offer* base, const char* format,
 	struct swa_data_offer_wl* offer = get_data_offer_wl(base);
 	dlg_assert(!offer->data.handler);
 
-	// TODO: on linux, we should use pipe2 here
 	int fds[2];
-	int err = pipe(fds);
-	if(err < 0) {
-		dlg_error("pipe: %s (%d)", strerror(errno), errno);
-		return false;
-	}
-
-	if(!add_fd_flags(fds[0], FD_CLOEXEC | O_NONBLOCK)) {
+	if(!swa_pipe(fds)) {
 		return false;
 	}
 
@@ -1232,6 +1234,8 @@ void display_destroy(struct swa_display* base) {
 	if(dpy->egl) swa_egl_display_destroy(dpy->egl);
 #endif
 
+	if(dpy->wakeup_pipe_r) close(dpy->wakeup_pipe_r);
+	if(dpy->wakeup_pipe_w) close(dpy->wakeup_pipe_w);
 	if(dpy->io_source) pml_io_destroy(dpy->io_source);
 	if(dpy->touch_points) free(dpy->touch_points);
 	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
@@ -1423,12 +1427,12 @@ struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 
 // TODO
 bool display_set_clipboard(struct swa_display* base,
-		struct swa_data_source* source, void* trigger) {
+		struct swa_data_source* source) {
 	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
 bool display_start_dnd(struct swa_display* base,
-		struct swa_data_source* source, void* trigger) {
+		struct swa_data_source* source) {
 	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
@@ -1808,6 +1812,7 @@ static void touch_down(void* data, struct wl_touch* wl_touch, uint32_t serial,
 		dpy->capacity_touch_points = dpy->n_touch_points;
 	}
 
+	dpy->last_serial = serial;
 	dpy->touch_points[i].id = id;
 	dpy->touch_points[i].window = win;
 	dpy->touch_points[i].x = wl_fixed_to_int(sx);
@@ -1820,7 +1825,6 @@ static void touch_down(void* data, struct wl_touch* wl_touch, uint32_t serial,
 			.id = id,
 			.x = dpy->touch_points[i].x,
 			.y = dpy->touch_points[i].y,
-			data = (void*)(uintptr_t)serial,
 		};
 		listener->touch_begin(&win->base, &ev);
 	}
@@ -1842,12 +1846,12 @@ static void touch_up(void* data, struct wl_touch* wl_touch, uint32_t serial,
 		return;
 	}
 
+	dpy->last_serial = serial;
 	dlg_assert(dpy->touch_points[i].window);
 	const struct swa_window_listener* listener =
 		dpy->touch_points[i].window->base.listener;
 	if(listener && listener->touch_end) {
-		listener->touch_end(&dpy->touch_points[i].window->base, id,
-			(void*)(uintptr_t)serial);
+		listener->touch_end(&dpy->touch_points[i].window->base, id);
 	}
 
 	// erase the touch point
@@ -1973,12 +1977,12 @@ static void pointer_enter(void* data, struct wl_pointer* wl_pointer,
 
 	dpy->mouse_x = wl_fixed_to_int(sx);
 	dpy->mouse_y = wl_fixed_to_int(sy);
+	dpy->last_serial = serial;
 	if(win->base.listener && win->base.listener->mouse_cross) {
 		struct swa_mouse_cross_event ev = {
 			.x = dpy->mouse_x,
 			.y = dpy->mouse_y,
 			.entered = true,
-			.data = (void*)(uintptr_t)serial,
 		};
 		win->base.listener->mouse_cross(&win->base, &ev);
 	}
@@ -1997,21 +2001,22 @@ static void pointer_leave(void *data, struct wl_pointer *wl_pointer,
 	dlg_assert(dpy->mouse_over == win);
 	dpy->mouse_over = NULL;
 
+	dpy->last_serial = serial;
 	if(win->base.listener && win->base.listener->mouse_cross) {
 		struct swa_mouse_cross_event ev = {
 			.x = dpy->mouse_x,
 			.y = dpy->mouse_y,
 			.entered = false,
-			.data = (void*)(uintptr_t)serial,
 		};
 		win->base.listener->mouse_cross(&win->base, &ev);
 	}
 
-	// unset state
+	// unset cursor state
 	dpy->mouse_enter_serial = 0;
 	dpy->mouse_button_states = 0;
 	dpy->cursor.active = NULL;
 	dpy->cursor.redraw = false;
+	pml_timer_disable(dpy->cursor.timer);
 	if(dpy->cursor.frame_callback) {
 		wl_callback_destroy(dpy->cursor.frame_callback);
 		dpy->cursor.frame_callback = NULL;
@@ -2076,6 +2081,7 @@ static void pointer_button(void* data, struct wl_pointer* wl_pointer,
 		dpy->mouse_button_states &= ~(uint64_t)(1 << button);
 	}
 
+	dpy->last_serial = serial;
 	const struct swa_window_listener* listener = dpy->mouse_over->base.listener;
 	if(listener && listener->mouse_button) {
 		struct swa_mouse_button_event ev = {
@@ -2083,7 +2089,6 @@ static void pointer_button(void* data, struct wl_pointer* wl_pointer,
 			.pressed = state,
 			.x = dpy->mouse_x,
 			.y = dpy->mouse_y,
-			.data = (void*)(uintptr_t)serial,
 		};
 		listener->mouse_button(&dpy->mouse_over->base, &ev);
 	}
@@ -2260,6 +2265,7 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 		// TODO: ring the bell when canceled?
 	}
 
+	dpy->last_serial = serial;
 	if(dpy->focus->base.listener && dpy->focus->base.listener->key) {
 		struct swa_key_event ev = {
 			.keycode = key,
@@ -2267,7 +2273,6 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 			.utf8 = utf8,
 			.repeated = false,
 			.modifiers = swa_xkb_modifiers(&dpy->xkb),
-			.data = (void*)(uintptr_t)serial,
 		};
 		dpy->focus->base.listener->key(&dpy->focus->base, &ev);
 		free(utf8);
@@ -2305,6 +2310,9 @@ static void key_repeat_cb(struct pml_timer* timer) {
 
 	char* utf8;
 	bool canceled;
+
+	// set the serial of the original key press here again
+	dpy->last_serial = dpy->key_repeat.serial;
 	swa_xkb_key(&dpy->xkb, dpy->key_repeat.key + 8, &utf8, &canceled);
 	if(dpy->focus->base.listener && dpy->focus->base.listener->key) {
 		struct swa_key_event ev = {
@@ -2313,7 +2321,6 @@ static void key_repeat_cb(struct pml_timer* timer) {
 			.utf8 = utf8,
 			.repeated = true,
 			.modifiers = swa_xkb_modifiers(&dpy->xkb),
-			.data = (void*)(uintptr_t)dpy->key_repeat.serial,
 		};
 		dpy->focus->base.listener->key(&dpy->focus->base, &ev);
 		free(utf8);
@@ -2510,7 +2517,6 @@ struct swa_display* swa_display_wl_create(void) {
 
 	wl_log_set_handler_client(log_handler);
 
-	// TODO: create wakeup pipes
 	struct swa_display_wl* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->display = wld;
@@ -2518,6 +2524,15 @@ struct swa_display* swa_display_wl_create(void) {
 	dpy->io_source = pml_io_new(dpy->pml, wl_display_get_fd(wld),
 		POLLIN, dispatch_display);
 	pml_io_set_data(dpy->io_source, dpy);
+
+	// create wakeup pipes
+	int fds[2];
+	if(!swa_pipe(fds)) {
+		goto error;
+	}
+
+	dpy->wakeup_pipe_r = fds[0];
+	dpy->wakeup_pipe_w = fds[1];
 
 	dpy->wl_queue = wl_display_create_queue(dpy->display);
 	dpy->registry = wl_display_get_registry(dpy->display);
@@ -2547,9 +2562,8 @@ struct swa_display* swa_display_wl_create(void) {
 	if(!dpy->compositor) missing = "wl_compositor";
 
 	if(missing) {
-		dlg_error("Missing required Wayland interface '%s'", missing);
-		display_destroy(&dpy->base);
-		return NULL;
+		dlg_error("Missing required wayland interface '%s'", missing);
+		goto error;
 	}
 
 	if(dpy->data_dev_manager && dpy->seat) {
@@ -2559,4 +2573,8 @@ struct swa_display* swa_display_wl_create(void) {
 	}
 
 	return &dpy->base;
+
+error:
+	display_destroy(&dpy->base);
+	return NULL;
 }

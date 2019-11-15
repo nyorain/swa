@@ -24,7 +24,7 @@ static void window_mouse_button(struct swa_window* win,
 		const struct swa_mouse_button_event* ev) {
 	if(ev->pressed && ev->button == swa_mouse_button_left) {
 		dlg_debug("begin resize");
-		swa_window_begin_resize(win, swa_edge_bottom_right, ev->data);
+		swa_window_begin_resize(win, swa_edge_bottom_right);
 	}
 }
 
@@ -41,6 +41,9 @@ int main() {
 		return EXIT_FAILURE;
 	}
 
+	struct swa_cursor cursor;
+	cursor.type = swa_cursor_load;
+
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
 	settings.app_name = "swa-example";
@@ -49,6 +52,7 @@ int main() {
 	settings.surface_settings.gl.major = 4;
 	settings.surface_settings.gl.minor = 0;
 	settings.listener = &window_listener;
+	settings.cursor = cursor;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");

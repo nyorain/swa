@@ -41,7 +41,8 @@ struct swa_display_wl {
 	int mouse_x, mouse_y;
 	struct swa_window_wl* focus;
 	struct swa_window_wl* mouse_over;
-	uint32_t mouse_enter_serial;
+	uint32_t mouse_enter_serial; // needed for cursor settings
+	uint32_t last_serial; // needed to start a dnd/resize/move session.
 
 	struct {
 		struct pml_timer* timer;

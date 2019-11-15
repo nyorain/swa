@@ -10,14 +10,10 @@ Notes
 todo wayland:
 
 - data exchange (probbaly move that to another file though)
-- wakeup pipe
-- gl
-	- implement egl first
+- better gl support, allow settings
 - check that everything is cleaned up correctly
-- pre-mulitplied alpha. Do other compositors/backends require that
-  as well for transprency?
 
-later:
+general
 
 - gl transparency semantics. Does the platform use premultiplied alpha?
   e.g. on wayland we have to use premultiplied alpha, on other platforms
@@ -28,31 +24,12 @@ later:
 	  like do we really have to check the return value of
 	  wl_compositor_create_surface? i don't know any condition we can/want
 	  to handle in which it returns NULL.
-- interface of swa_window_get_vk_surface is weird.
-  Make it return a uint64_t/VkSurfaceKHR instead?
-  Or better this way so we can do a cast/memcpy and don't leave this
-  to the user?
-  	- do we need memcpy for those handles? We could require the application
-	  to pass in a pointer to a VkSurfaceKHR/VkInstance
 - re-entrant callbacks. Allowed to modify window state in handler?
   allowed to call data_offer_destroy in data offer callback?
   etc
+
+laster
+
+- integration with posix api (see docs/posix.h)
 - option to load vkGetInstanceProcAddr dynamically
-- abolish event trigger datas? just use the last received serial?
-  what for x11 and other backends?
-- for most timers (e.g. key repeat timer wayland), CLOCK_MONOTONIC
-  would be better. requires ml support
-- wayland handle multiple images
-	- when setting a cursor, store time (clock_monotonic? or realtime?)
-	- just add a timer that is restarted with cursor_img->delay
-	  there, check the elapsed ms since cursor was set and query the
-	  current image (and time until next) with wl_cursor_frame_and_duration.
-	  reset timer with duration
-	- do we have to use frame callbacks? would probably be nice.
-	  when the frame callback wasn't yet triggered in the change timer,
-	  just set a flag that next commit should happen on frame callback.
-	  Otherwise redraw immediately.
-- image_format endian conversion
-	- TODO in wayland.c for that
-- integration with posix api
 - allow to not create a gl context for every window

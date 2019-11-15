@@ -257,11 +257,6 @@ struct swa_key_event {
 	// Usually only true for press events.
 	// In some cases it may be useful to ignore repeated events.
     bool repeated;
-	// Backend-dependent event data, only guaranteed to be valid
-	// in the called event handler function.
-	// May be passed to functions that require information about
-	// the internal event trigger.
-    void* data;
 };
 
 struct swa_mouse_button_event {
@@ -271,11 +266,6 @@ struct swa_mouse_button_event {
     enum swa_mouse_button button;
 	// Whether the button was pressed or released.
     bool pressed;
-	// Backend-dependent event data, only guaranteed to be valid
-	// in the called event handler function.
-	// May be passed to functions that require information about
-	// the internal event trigger.
-    void *data;
 };
 
 struct swa_mouse_move_event {
@@ -291,11 +281,6 @@ struct swa_mouse_cross_event {
 	bool entered;
 	// The position of the mouse in window-local coordinates.
 	int x, y;
-	// Backend-dependent event data, only guaranteed to be valid
-	// in the called event handler function.
-	// May be passed to functions that require information about
-	// the internal event trigger.
-	void* data;
 };
 
 struct swa_dnd_event {
@@ -317,11 +302,6 @@ struct swa_touch_begin_event {
 	unsigned id;
 	// Initial position of the new touch point in window-local coordinates.
 	int x, y;
-	// Backend-dependent event data, only guaranteed to be valid
-	// in the called event handler function.
-	// May be passed to functions that require information about
-	// the internal event trigger.
-	void* data;
 };
 
 struct swa_touch_update_event {
@@ -396,11 +376,7 @@ struct swa_window_listener {
 	// touch point will be generated.
 	// id: the identification of the touch point as previously introduced
 	//   by `touch_begin`.
-	// data: backend-dependent event data, only guaranteed to be valid
-	//   in the called event handler function.
-	//   May be passed to functions that require information about
-	//   the internal event trigger.
-    void (*touch_end)(struct swa_window*, unsigned id, void* data);
+    void (*touch_end)(struct swa_window*, unsigned id);
 	// Cancels all currently active touch points.
 	// Should be interpreted as a canceled gesture.
     void (*touch_cancel)(struct swa_window*);
@@ -522,21 +498,20 @@ struct swa_data_offer* swa_display_get_clipboard(struct swa_display*);
 // Requests the system to set the clipboard to the given data source.
 // This call passes ownership of the given `swa_data_source` to the display.
 // It must remain valid (and able to provide data) until the display destroys it.
-// The `trigger_event_data` parameter should be set to the event data pointer
-// provided with the event that triggered this action, as that is needed by some
-// systems. Will return whether setting the clipboard was succesful.
+// Will return whether setting the clipboard was succesful.
 // Only valid if the display has the 'clipboard' capability.
-bool swa_display_set_clipboard(struct swa_display*, struct swa_data_source*, void* trigger_event_data);
+bool swa_display_set_clipboard(struct swa_display*, struct swa_data_source*);
 
-// The `trigger_event_data` parameter should be set to the event data pointer
-// provided with the event that triggered this action, as that is needed by some
-// systems. Will return whether starting dnd was succesful (not whether it
+// Will return whether starting dnd was succesful (not whether it
 // was actually dropped anywhere, this information will be provided to the
 // data source implementation). Note that on some implementations (mainly windows)
 // this may block (but internally continue to dispatch events) until the dnd
 // session is complete.
 // Only valid if the display has the 'dnd' capability.
-bool swa_display_start_dnd(struct swa_display*, struct swa_data_source*, void* trigger_event_data);
+// The dnd session will be considered to be started by the last
+// dispatched event, i.e. you want to call this directly from within
+// the callback of the event that triggers this behavior.
+bool swa_display_start_dnd(struct swa_display*, struct swa_data_source*);
 
 // Creates a new window with the specified settings.
 // To use the default settings, you probably want to initialize them
@@ -607,13 +582,18 @@ void swa_window_set_state(struct swa_window*, enum swa_window_state);
 // Asks the system to start a session where the user moves the window.
 // Useful when implementing client-side decorations.
 // Only valid when the window has the 'begin_move' capability.
-void swa_window_begin_move(struct swa_window*, void* trigger_event_data);
+// The movement session will be considered to be started by the last
+// dispatched event, i.e. you want to call this directly from within
+// the callback of the event that triggers this behavior.
+void swa_window_begin_move(struct swa_window*);
 
 // Asks the system to start a session where the user resizes the window.
 // Useful when implementing client-side decorations.
 // Only valid when the window has the 'begin_resize' capability.
-void swa_window_begin_resize(struct swa_window*, enum swa_edge edges,
-	void* trigger_event_data);
+// The resizing session will be considered to be started by the last
+// dispatched event, i.e. you want to call this directly from within
+// the callback of the event that triggers this behavior.
+void swa_window_begin_resize(struct swa_window*, enum swa_edge edges);
 
 // Changes the window title. The given null-terminated string must be utf8.
 // Only valid if the window has the 'title' capability.
@@ -643,11 +623,13 @@ void swa_window_set_userdata(struct swa_window*, void* data);
 // Retrieves the data previously set with `swa_window_set_userdata`.
 void* swa_window_get_userdata(struct swa_window*);
 
+// Returns the vulkan surface associated with this window or 0 on error.
+// The returned value is a VkSurfaceKHR handle.
 // Only valid if the window was created with surface set to `swa_surface_vk`.
 // The surface will automatically be destroyed when the window is destroyed.
 // Note that the surface might get lost on some platforms, signaled by the
 // surface_destroyed event.
-bool swa_window_get_vk_surface(struct swa_window*, void* vkSurfaceKHR);
+uint64_t swa_window_get_vk_surface(struct swa_window*);
 
 // Only valid if the window was created with surface set to `swa_surface_gl`.
 bool swa_window_gl_make_current(struct swa_window*);
