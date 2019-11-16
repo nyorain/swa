@@ -392,11 +392,6 @@ static void set_cursor(struct swa_display_wl* dpy, struct swa_window_wl* win) {
 			clock_gettime(CLOCK_MONOTONIC, &dpy->cursor.set);
 			struct timespec next = dpy->cursor.set;
 			next.tv_nsec += start->delay * 1000 * 1000;
-			if(!dpy->cursor.timer) {
-				dpy->cursor.timer = pml_timer_new(dpy->pml, NULL, cursor_time_cb);
-				pml_timer_set_data(dpy->cursor.timer, dpy);
-				pml_timer_set_clock(dpy->cursor.timer, CLOCK_MONOTONIC);
-			}
 			pml_timer_set_time(dpy->cursor.timer, next);
 		}
 	} else {
@@ -1293,7 +1288,7 @@ bool display_dispatch(struct swa_display* base, bool block) {
 
 void display_wakeup(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
-	int err = write(dpy->wakeup_pipe_r, " ", 1);
+	int err = write(dpy->wakeup_pipe_w, " ", 1);
 
 	// if the pipe is full, the waiting thread will wake up and clear
 	// it and it doesn't matter that our write call failed
@@ -2382,26 +2377,33 @@ static void seat_caps(void* data, struct wl_seat* seat, uint32_t caps) {
 		dpy->pointer = wl_seat_get_pointer(seat);
 		wl_pointer_add_listener(dpy->pointer, &pointer_listener, dpy);
 
-		// initialize cursor stuff
-		if(!dpy->cursor.surface) {
-			dpy->cursor.surface = wl_compositor_create_surface(dpy->compositor);
-		}
-		if(!dpy->cursor.theme && dpy->shm) {
-			const char* theme = getenv("XCURSOR_THEME");
-			const char* size_str = getenv("XCURSOR_SIZE");
-			unsigned size = 32u;
-			if(size_str) {
-				long s = strtol(size_str, NULL, 10);
-				if(s <= 0) {
-					dlg_warn("Invalid XCURSOR_SIZE: %s", size_str);
-				} else {
-					size = s;
-				}
+		// initialize cursor stuff if we additionally have shm
+		if(dpy->shm) {
+			if(!dpy->cursor.surface) {
+				dpy->cursor.surface = wl_compositor_create_surface(dpy->compositor);
 			}
+			if(!dpy->cursor.theme) {
+				const char* theme = getenv("XCURSOR_THEME");
+				const char* size_str = getenv("XCURSOR_SIZE");
+				unsigned size = 32u;
+				if(size_str) {
+					long s = strtol(size_str, NULL, 10);
+					if(s <= 0) {
+						dlg_warn("Invalid XCURSOR_SIZE: %s", size_str);
+					} else {
+						size = s;
+					}
+				}
 
-			// if XCURSOR_THEME is not set, we pass in null, which will result
-			// in the default cursor theme being used.
-			dpy->cursor.theme = wl_cursor_theme_load(theme, size, dpy->shm);
+				// if XCURSOR_THEME is not set, we pass in null, which will result
+				// in the default cursor theme being used.
+				dpy->cursor.theme = wl_cursor_theme_load(theme, size, dpy->shm);
+			}
+			if(!dpy->cursor.timer) {
+				dpy->cursor.timer = pml_timer_new(dpy->pml, NULL, cursor_time_cb);
+				pml_timer_set_data(dpy->cursor.timer, dpy);
+				pml_timer_set_clock(dpy->cursor.timer, CLOCK_MONOTONIC);
+			}
 		}
 	} else if(!(caps & WL_SEAT_CAPABILITY_POINTER) && dpy->pointer) {
 		dlg_info("lost wl_pointer");
@@ -2486,7 +2488,7 @@ static const struct wl_registry_listener registry_listener = {
 	.global_remove = handle_global_remove,
 };
 
-void dispatch_display(struct pml_io* io, unsigned revents) {
+static void dispatch_display(struct pml_io* io, unsigned revents) {
 	struct swa_display_wl* dpy = pml_io_get_data(io);
 	if(revents & POLLIN) {
 		while(wl_display_prepare_read(dpy->display) == -1) {
@@ -2506,6 +2508,19 @@ void dispatch_display(struct pml_io* io, unsigned revents) {
 			print_error(dpy, "wl_display_dispatch_pending");
 			return;
 		}
+	}
+}
+
+static void clear_wakeup(struct pml_io* io, unsigned revents) {
+	char buf[128];
+	int ret;
+	int size = sizeof(buf);
+
+	int fd = pml_io_get_fd(io);
+	while((ret = read(fd, buf, size)) == size);
+
+	if(ret < 0) {
+		dlg_warn("Reading from wakeup pipe failed: %s", strerror(errno));
 	}
 }
 
@@ -2533,6 +2548,9 @@ struct swa_display* swa_display_wl_create(void) {
 
 	dpy->wakeup_pipe_r = fds[0];
 	dpy->wakeup_pipe_w = fds[1];
+	dpy->wakeup_io = pml_io_new(dpy->pml, dpy->wakeup_pipe_r,
+		POLLIN, clear_wakeup);
+	pml_io_set_data(dpy->wakeup_io, dpy);
 
 	dpy->wl_queue = wl_display_create_queue(dpy->display);
 	dpy->registry = wl_display_get_registry(dpy->display);

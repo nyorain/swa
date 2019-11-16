@@ -36,6 +36,7 @@ struct swa_display_wl {
 	struct swa_xkb_context xkb;
 
 	int wakeup_pipe_w, wakeup_pipe_r;
+	struct pml_io* wakeup_io;
 	uint64_t key_states[16]; // bitset
 	uint64_t mouse_button_states; // bitset
 	int mouse_x, mouse_y;

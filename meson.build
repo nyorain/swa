@@ -134,3 +134,8 @@ executable('example',
 executable('example-gl',
 	'example-gl.c',
 	dependencies: [swa_dep, dep_dlg, dependency('gl', required: true)])
+
+dep_threads = dependency('threads')
+executable('example-wakeup',
+	'example-wakeup.c',
+	dependencies: [swa_dep, dep_threads, dep_dlg])
