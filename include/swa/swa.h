@@ -17,11 +17,10 @@ struct swa_data_source;
 struct swa_window_listener;
 struct swa_image;
 
-// When these values are specified as size/position respectively
-// in swa_window_settings, the system default will be used.
-// If the system has no default, will use the SWA_FALLBACK_* values
+// When this value are specified as size in swa_window_settings,
+// the system default will be used.
+// If the system has no default, will use the SWA_FALLBACK_* values.
 #define SWA_DEFAULT_SIZE 0
-#define SWA_DEFAULT_POSITION INT_MAX
 
 #define SWA_FALLBACK_WIDTH 800
 #define SWA_FALLBACK_HEIGHT 500
@@ -218,7 +217,6 @@ struct swa_vk_surface_settings {
 
 struct swa_window_settings {
     unsigned width, height;
-    int x, y;
 	const char* app_name;
     const char* title;
     struct swa_cursor cursor;

@@ -1,13 +1,19 @@
 #include <swa/x11.h>
 #include <dlg/dlg.h>
+#include <string.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xlib-xcb.h>
+
 #include <xcb/xcb.h>
+#include <xcb/present.h>
+#include <xcb/xinput.h>
+#include <xcb/shm.h>
 
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
+static const unsigned max_prop_length = 0x1fffffff;
 
 // utility
 static struct swa_display_x11* get_display_x11(struct swa_display* base) {
@@ -26,8 +32,182 @@ static void display_destroy(struct swa_display* base) {
     free(dpy);
 }
 
+static struct swa_window_x11* find_window(struct swa_display_x11* dpy,
+		xcb_window_t win) {
+	return NULL;
+}
+
+static void process_event(struct swa_display_x11* dpy,
+		const xcb_generic_event_t* ev) {
+	unsigned type = ev->response_type & ~0x80;
+	struct swa_window_x11* win;
+
+	switch(type) {
+	case XCB_EXPOSE: {
+		xcb_expose_event_t* expose = (xcb_expose_event_t*) ev;
+		if((win = find_window(dpy, expose->window))) {
+			swa_window_refresh(&win->base);
+		}
+		break;
+	} case XCB_MAP_NOTIFY: {
+		xcb_map_notify_event_t* map = (xcb_map_notify_event_t*) ev;
+		if((win = find_window(dpy, map->window))) {
+			swa_window_refresh(&win->base);
+		}
+		break;
+	} case XCB_CONFIGURE_NOTIFY: {
+		xcb_configure_notify_event_t* configure =
+			(xcb_configure_notify_event_t*) ev;
+		if((win = find_window(dpy, configure->window))) {
+			win->width = configure->width;
+			win->height = configure->height;
+		}
+		break;
+	} case XCB_CLIENT_MESSAGE: {
+		xcb_client_message_event_t* client = (xcb_client_message_event_t*) ev;
+		unsigned protocol = client->data.data32[0];
+
+		if(protocol == dpy->ewmh._NET_WM_PING) {
+			xcb_ewmh_send_wm_ping(&dpy->ewmh, dpy->screen->root,
+				client->data.data32[1]);
+		} else if(protocol == dpy->atoms.delete_window &&
+				(win = find_window(dpy, client->window))) {
+			if(win->base.listener && win->base.listener->close) {
+				win->base.listener->close(&win->base);
+			}
+		}
+		break;
+	} case 0u: {
+		int code = ((xcb_generic_error_t*)ev)->error_code;
+		char buf[256];
+		XGetErrorText(dpy->display, code, buf, sizeof(buf));
+		dlg_error("retrieved x11 error code:: %s (%d)", buf, code);
+		break;
+	} default:
+		break;
+	}
+
+	// touch events
+	xcb_ge_generic_event_t* gev = (xcb_ge_generic_event_t*)ev;
+	if(dpy->ext.xinput && ev->response_type == XCB_GE_GENERIC &&
+			gev->extension == dpy->ext.xinput) {
+		// no matter the event type, always has the same basic layout
+		xcb_input_touch_begin_event_t* tev =
+			(xcb_input_touch_begin_event_t*)(gev);
+		if((win = find_window(dpy, tev->event)) && win->base.listener) {
+			const float fp16 = 65536.f;
+			float x = tev->event_x / fp16;
+			float y = tev->event_y / fp16;
+			unsigned id = tev->detail;
+			switch(gev->event_type) {
+				case XCB_INPUT_TOUCH_BEGIN:
+					if(win->base.listener->touch_begin) {
+						struct swa_touch_begin_event ev = {
+							.id = id,
+							.x = x,
+							.y = y,
+						};
+						win->base.listener->touch_begin(&win->base, &ev);
+					} return;
+				case XCB_INPUT_TOUCH_UPDATE:
+					if(win->base.listener->touch_update) {
+						struct swa_touch_update_event ev = {
+							.id = id,
+							.x = x,
+							.y = y,
+							// TODO: dx, dy
+							// or remove them from the event?
+						};
+						win->base.listener->touch_update(&win->base, &ev);
+					}
+					return;
+				 case XCB_INPUT_TOUCH_END:
+					if(win->base.listener->touch_end)
+						win->base.listener->touch_end(&win->base, id);
+					return;
+			}
+		}
+	}
+
+	// // present event
+	// if(presentOpcode_ && gev.response_type == XCB_GE_GENERIC &&
+	// 		gev.extension == presentOpcode_) {
+	// 	switch(gev.event_type) {
+	// 		case XCB_PRESENT_COMPLETE_NOTIFY: {
+	// 			auto pev = copyu<xcb_present_complete_notify_event_t>(gev);
+	// 			if(pev.window == xDummyWindow()) {
+	// 				for(auto& wc : present_) {
+	// 					wc->presentCompleteEvent(pev.serial);
+	// 				}
+	// 				present_.clear();
+	// 			} else {
+	// 				if(auto wc = windowContext(pev.window); wc) {
+	// 					wc->presentCompleteEvent(pev.serial);
+	// 				}
+	// 			}
+	// 			return;
+	// 		} case XCB_PRESENT_IDLE_NOTIFY:
+	// 		case XCB_PRESENT_CONFIGURE_NOTIFY:
+	// 			return;
+	// 	}
+	// }
+}
+
+static bool check_error(struct swa_display_x11* dpy) {
+	int err = xcb_connection_has_error(dpy->conn);
+	if(!err) {
+		return false;
+	}
+
+	const char* name = "<unknown error>";
+	#define ERR_CASE(x) case x: name = #x; break;
+	switch(err) {
+		ERR_CASE(XCB_CONN_ERROR);
+		ERR_CASE(XCB_CONN_CLOSED_EXT_NOTSUPPORTED);
+		ERR_CASE(XCB_CONN_CLOSED_REQ_LEN_EXCEED);
+		ERR_CASE(XCB_CONN_CLOSED_PARSE_ERR);
+		ERR_CASE(XCB_CONN_CLOSED_INVALID_SCREEN);
+		default: break;
+	}
+	#undef ERR_CASE
+
+	dlg_error("Critical xcb error: %s (%d)", name, err);
+	return dpy->error = true;
+}
+
 static bool display_dispatch(struct swa_display* base, bool block) {
-	return false;
+	struct swa_display_x11* dpy = get_display_x11(base);
+	if(check_error(dpy)) {
+		return false;
+	}
+
+	// when processing an event, we always have the next event ready
+	// as well (if there already is one) since this is useful
+	// in some cases, e.g. the only way to determine whether
+	// a key press is a repeat
+
+	if(block && !dpy->next_event) {
+		dpy->next_event = xcb_wait_for_event(dpy->conn);
+		if(!dpy->next_event) {
+			return !check_error(dpy);
+		}
+	}
+
+	while(true) {
+		xcb_generic_event_t* event;
+		if(dpy->next_event) {
+			event = dpy->next_event;
+			dpy->next_event = NULL;
+		} else if(!(event = xcb_poll_for_event(dpy->conn))) {
+			break;
+		}
+
+		dpy->next_event = xcb_poll_for_event(dpy->conn);
+		process_event(dpy, event);
+		free(event);
+	}
+
+	return !check_error(dpy);
 }
 
 static void display_wakeup(struct swa_display* base) {
@@ -47,11 +227,11 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 		swa_display_cap_server_decoration |
 		swa_display_cap_keyboard |
 		swa_display_cap_mouse |
-		// swa_display_cap_touch | // TODO: query touch suppoer
         // TODO: implement data exchange
 		// swa_display_cap_dnd |
 		// swa_display_cap_clipboard |
 		swa_display_cap_buffer_surface;
+	if(dpy->ext.xinput) caps |= swa_display_cap_touch;
 	return caps;
 }
 
@@ -59,7 +239,7 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 #ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
-		VK_KHR_WIN32_SURFACE_EXTENSION_NAME,
+		VK_KHR_X11_SURFACE_EXTENSION_NAME,
 	};
 	*count = sizeof(names) / sizeof(names[0]);
 	return names;
@@ -152,10 +332,9 @@ static void win_destroy(struct swa_window* base) {
 }
 
 static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
-    (void) base;
-    return swa_window_cap_cursor |
-        swa_window_cap_fullscreen |
-        swa_window_cap_maximize |
+	struct swa_window_x11* win = get_window_x11(base);
+    return win->dpy->ewmh_caps |
+		swa_window_cap_cursor |
         swa_window_cap_minimize |
         swa_window_cap_size |
         swa_window_cap_position |
@@ -193,8 +372,7 @@ static void win_refresh(struct swa_window* base) {
 }
 
 static void win_surface_frame(struct swa_window* base) {
-    (void) base;
-    // no-op
+	struct swa_window_x11* win = get_window_x11(base);
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
@@ -202,15 +380,19 @@ static void win_set_state(struct swa_window* base, enum swa_window_state state) 
 }
 
 static void win_begin_move(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
 }
 
 static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
+	struct swa_window_x11* win = get_window_x11(base);
 }
 
 static void win_set_title(struct swa_window* base, const char* title) {
+	struct swa_window_x11* win = get_window_x11(base);
 }
 
 static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
+	struct swa_window_x11* win = get_window_x11(base);
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {
@@ -265,8 +447,19 @@ static const struct swa_window_interface window_impl = {
 	.apply_buffer = win_apply_buffer
 };
 
+#define handle_error(dpy, err, txt) do {\
+	dlg_assert(err); \
+	char buf[256]; \
+	XGetErrorText(dpy->display, err->error_code, buf, sizeof(buf)); \
+	dlg_error(txt ": %s (%d)", buf, err->error_code); \
+	free(err); \
+} while(0)
+
 struct swa_display* swa_display_x11_create(void) {
 	// We start by opening a display since we need that for gl
+	// Neither egl nor glx support xcb. And since xlib is implemented
+	// using xcb these days, we can get the xcb connection from the
+	// xlib display but not the other way around.
 	Display* display = XOpenDisplay(NULL);
 	if(!display) {
 		return NULL;
@@ -275,9 +468,177 @@ struct swa_display* swa_display_x11_create(void) {
     struct swa_display_x11* dpy = calloc(1, sizeof(*dpy));
     dpy->base.impl = &display_impl;
 	dpy->display = display;
-	dpy->connection = XGetXCBConnection(display);
+	dpy->conn = XGetXCBConnection(display);
+	dpy->screen = xcb_setup_roots_iterator(xcb_get_setup(dpy->conn)).data;
 
+	// make sure we can retrieve events using xcb
 	XSetEventQueueOwner(dpy->display, XCBOwnsEventQueue);
+
+	// load atoms
+	xcb_intern_atom_cookie_t* ewmh_cookie =
+		xcb_ewmh_init_atoms(dpy->conn, &dpy->ewmh);
+
+	struct {
+		xcb_atom_t* atom;
+		const char* name;
+		xcb_intern_atom_cookie_t cookie;
+	} atoms[] = {
+		{&dpy->atoms.xdnd.enter, "XdndEnter", {}},
+		{&dpy->atoms.xdnd.position, "XdndPosition", {}},
+		{&dpy->atoms.xdnd.status, "XdndStatus", {}},
+		{&dpy->atoms.xdnd.type_list, "XdndTypeList", {}},
+		{&dpy->atoms.xdnd.action_copy, "XdndActionCopy", {}},
+		{&dpy->atoms.xdnd.action_move, "XdndActionMove", {}},
+		{&dpy->atoms.xdnd.action_ask, "XdndActionAsk", {}},
+		{&dpy->atoms.xdnd.action_link, "XdndActionLink", {}},
+		{&dpy->atoms.xdnd.drop, "XdndDrop", {}},
+		{&dpy->atoms.xdnd.leave, "XdndLeave", {}},
+		{&dpy->atoms.xdnd.finished, "XdndFinished", {}},
+		{&dpy->atoms.xdnd.selection, "XdndSelection", {}},
+		{&dpy->atoms.xdnd.proxy, "XdndProxy", {}},
+		{&dpy->atoms.xdnd.aware, "XdndAware", {}},
+
+		{&dpy->atoms.clipboard, "CLIPBOARD", {}},
+		{&dpy->atoms.targets, "TARGETS", {}},
+		{&dpy->atoms.text, "TEXT", {}},
+		{&dpy->atoms.utf8_string, "UTF8_STRING", {}},
+		{&dpy->atoms.file_name, "FILE_NAME", {}},
+
+		{&dpy->atoms.wm_delete_window, "WM_DELETE_WINDOW", {}},
+		{&dpy->atoms.motif_wm_hints, "_MOTIF_WM_HINTS", {}},
+
+		{&dpy->atoms.mime.text, "text/plain", {}},
+		{&dpy->atoms.mime.utf8, "text/plain;charset=utf8", {}},
+		{&dpy->atoms.mime.uri_list, "text/uri-list", {}},
+		{&dpy->atoms.mime.binary, "application/octet-stream", {}}
+	};
+
+	unsigned length = sizeof(atoms) / sizeof(atoms[0]);
+	for(unsigned i = 0u; i < length; ++i) {
+		unsigned len = strlen(atoms[i].name);
+		atoms[i].cookie = xcb_intern_atom(dpy->conn, 0, len, atoms[i].name);
+	}
+
+	xcb_generic_error_t* err;
+	for(unsigned i = 0u; i < length; ++i) {
+		xcb_intern_atom_reply_t* reply = xcb_intern_atom_reply(dpy->conn,
+			atoms[i].cookie, &err);
+		if(reply) {
+			*atoms[i].atom = reply->atom;
+			free(reply);
+		} else {
+			char buf[256];
+			XGetErrorText(dpy->display, err->error_code, buf, sizeof(buf));
+			dlg_warn("Failed to load atom %s: %s", atoms[i].name, buf);
+			free(err);
+		}
+	}
+
+	xcb_ewmh_init_atoms_replies(&dpy->ewmh, ewmh_cookie, &err);
+	if(err) {
+		handle_error(dpy, err, "xcb_ewmh_init_atoms");
+	}
+
+	// read out supported ewmh stuff
+	xcb_get_property_cookie_t c = xcb_get_property(dpy->conn, false,
+		dpy->screen->root, dpy->ewmh._NET_SUPPORTED,
+		XCB_ATOM_ANY, 0, max_prop_length);
+	xcb_get_property_reply_t* reply = xcb_get_property_reply(dpy->conn, c, &err);
+	if(reply) {
+		dlg_assert(reply->format == 32);
+		dlg_assert(reply->type == XCB_ATOM_ATOM);
+
+		xcb_atom_t* supported = xcb_get_property_value(reply);
+		unsigned count = xcb_get_property_value_length(reply) / 4;
+		bool state = false;
+		bool max_horz = false;
+		bool max_vert = false;
+		bool fullscreen = false;
+		for(unsigned i = 0u; i < count; ++i) {
+			if(supported[i] == dpy->ewmh._NET_WM_MOVERESIZE) {
+				dpy->ewmh_caps |= swa_window_cap_begin_resize;
+				dpy->ewmh_caps |= swa_window_cap_begin_move;
+			} else if(supported[i] == dpy->ewmh._NET_WM_STATE) {
+				state = true;
+			} else if(supported[i] == dpy->ewmh._NET_WM_STATE_FULLSCREEN) {
+				fullscreen = true;
+			} else if(supported[i] == dpy->ewmh._NET_WM_STATE_MAXIMIZED_HORZ) {
+				max_horz = true;
+			} else if(supported[i] == dpy->ewmh._NET_WM_STATE_MAXIMIZED_VERT) {
+				max_vert = true;
+			}
+		}
+
+		if(state) {
+			if(max_horz && max_vert) dpy->ewmh_caps |= swa_window_cap_maximize;
+			if(fullscreen) dpy->ewmh_caps |= swa_window_cap_fullscreen;
+		}
+	} else {
+		handle_error(dpy, err, "get_property on _NET_SUPPORTED");
+	}
+
+	// read out extension support
+	// NOTE: not really sure about those versions, kinda strict atm
+	// since that's what other libraries seem to do. We might be fine
+	// with lower versions of the extensions
+
+	// check for xpresent extension support
+	const xcb_query_extension_reply_t* ext;
+	ext = xcb_get_extension_data(dpy->conn, &xcb_input_id);
+	if(ext && ext->present) {
+		xcb_input_xi_query_version_cookie_t c =
+			xcb_input_xi_query_version(dpy->conn, 2, 0);
+		xcb_input_xi_query_version_reply_t* reply =
+			xcb_input_xi_query_version_reply(dpy->conn, c, &err);
+		if(!reply) {
+			handle_error(dpy, err, "xcb_input_xi_query_version");
+		} else if(reply->major_version < 2) {
+			dlg_info("xinput version too low: %d.%d",
+				reply->major_version, reply->minor_version);
+		} else {
+			dpy->ext.xinput = ext->major_opcode;
+		}
+		free(reply);
+	} else {
+		dlg_info("xinput not available, no touch input");
+	}
+
+	// check for present extension support
+	ext = xcb_get_extension_data(dpy->conn, &xcb_present_id);
+	if(ext && ext->present) {
+		xcb_present_query_version_cookie_t c =
+			xcb_present_query_version(dpy->conn, 1, 2);
+		xcb_present_query_version_reply_t* reply =
+			xcb_present_query_version_reply(dpy->conn, c, &err);
+		if(!reply) {
+			handle_error(dpy, err, "xcb_present_query_version");
+		} else if(reply->major_version < 1 || reply->minor_version < 2) {
+			dlg_info("xpresent version too low: %d.%d",
+				reply->major_version, reply->minor_version);
+		} else {
+			dpy->ext.xpresent = ext->major_opcode;
+		}
+		free(reply);
+	} else {
+		dlg_warn("xpresent not available, no frame callbacks");
+	}
+
+	// check for shm extension support
+	xcb_shm_query_version_cookie_t sc = xcb_shm_query_version(dpy->conn);
+	xcb_shm_query_version_reply_t* sreply =
+		xcb_shm_query_version_reply(dpy->conn, sc, &err);
+	if(!sreply) {
+		handle_error(dpy, err, "xcb_shm_query_version");
+	} else if(sreply->shared_pixmaps &&
+			sreply->major_version >= 1 &&
+			sreply->minor_version >= 2) {
+		dpy->ext.shm = true;
+	} else {
+		dlg_warn("xshm not fully supported: version %d.%d, pixmaps: %d",
+			sreply->major_version, sreply->minor_version,
+			sreply->shared_pixmaps);
+	}
+	free(sreply);
 
     return &dpy->base;
 }

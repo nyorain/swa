@@ -14,7 +14,6 @@ void swa_window_settings_default(struct swa_window_settings* settings) {
 	settings->app_name = "swapplication";
 	settings->title = "swa_window";
 	settings->state = swa_window_state_normal;
-	settings->x = settings->y = SWA_DEFAULT_POSITION;
 	settings->width = settings->height = SWA_DEFAULT_SIZE;
 }
 
