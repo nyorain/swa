@@ -31,5 +31,12 @@ general
 laster
 
 - integration with posix api (see docs/posix.h)
+	- nvm, android couldn't support it like this since inputs are tied
+	  to the looper and we can't retrieve looper fds.
+	  We could instead do just something like `swa_display_posix_add_fd`
+	  and `swa_display_posix_remove_fd` instead i guess.
+	  Something like this could be added for windows as well though,
+	  using handles instead of file descriptors. Maybe just make this
+	  part of the cross platform api somehow?
 - option to load vkGetInstanceProcAddr dynamically
 - allow to not create a gl context for every window

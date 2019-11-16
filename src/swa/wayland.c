@@ -1014,6 +1014,8 @@ static void data_pipe_cb(struct pml_io* io, unsigned revents) {
 
 	// TODO: could use ioctl FIONREAD on most unixes for efficient
 	//   buffer sizing
+	// TODO: i guess we should be prepared for this offer to be destroyed
+	//   by the callback. kinda hard to handle though
 	unsigned readCount = 2048u;
 	while(true) {
 		unsigned size = offer->data.n_bytes;
