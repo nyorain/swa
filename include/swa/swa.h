@@ -205,8 +205,9 @@ struct swa_cursor {
     struct swa_image image;
 };
 
-// TODO
+// Settings for creating opengl surface and context.
 struct swa_gl_surface_settings {
+	// The requested context version
     unsigned major, minor;
 };
 

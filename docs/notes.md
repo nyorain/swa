@@ -18,6 +18,11 @@ general
 - gl transparency semantics. Does the platform use premultiplied alpha?
   e.g. on wayland we have to use premultiplied alpha, on other platforms
   probably not
+- further gl settings: api (gl/gles, also give way to query which
+  api is used in context; then also give way to query function
+  pointers to allow apps to support both dynamically), srgb,
+  debug, forward_compatible, compatibility (legacy), etc...
+  hdr? i.e. color spaces/>8bit color output?
 - error checking. Make sure we cleanup everything?
 	- or don't do that in places where errors aren't expected?
 	  tradeoff maintainability and possibly usability here i guess?
@@ -39,4 +44,6 @@ laster
 	  using handles instead of file descriptors. Maybe just make this
 	  part of the cross platform api somehow?
 - option to load vkGetInstanceProcAddr dynamically
-- allow to not create a gl context for every window
+- allow to share gl contexts between windows
+	- or maybe not create one context per window? not important though,
+	  hundreds of windows isn't a priority usecase 

@@ -1,6 +1,11 @@
 #include <swa/x11.h>
 #include <dlg/dlg.h>
 
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <X11/Xlib-xcb.h>
+#include <xcb/xcb.h>
+
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 
@@ -261,7 +266,18 @@ static const struct swa_window_interface window_impl = {
 };
 
 struct swa_display* swa_display_x11_create(void) {
+	// We start by opening a display since we need that for gl
+	Display* display = XOpenDisplay(NULL);
+	if(!display) {
+		return NULL;
+	}
+
     struct swa_display_x11* dpy = calloc(1, sizeof(*dpy));
     dpy->base.impl = &display_impl;
+	dpy->display = display;
+	dpy->connection = XGetXCBConnection(display);
+
+	XSetEventQueueOwner(dpy->display, XCBOwnsEventQueue);
+
     return &dpy->base;
 }
