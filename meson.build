@@ -25,6 +25,7 @@ swa_src = files(
 	'src/swa/swa.c',
 	'src/swa/xkb.c',
 	'src/swa/wayland.c',
+	'src/swa/x11.c',
 	'src/swa/egl.c',
 )
 

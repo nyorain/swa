@@ -899,6 +899,7 @@ static const struct swa_window_interface window_impl = {
 	.refresh = win_refresh,
 	.surface_frame = win_surface_frame,
 	.set_state = win_set_state,
+	.set_cursor = win_set_cursor,
 	.begin_move = win_begin_move,
 	.begin_resize = win_begin_resize,
 	.set_title = win_set_title,
@@ -1215,7 +1216,7 @@ static const struct wl_data_device_listener data_dev_listener = {
 	.selection = data_dev_selection,
 };
 
-void display_destroy(struct swa_display* base) {
+static void display_destroy(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	dlg_assert(!dpy->focus);
 	dlg_assert(!dpy->mouse_over);
@@ -1268,7 +1269,7 @@ static bool print_error(struct swa_display_wl* dpy, const char* fn) {
 	return true;
 }
 
-bool display_dispatch(struct swa_display* base, bool block) {
+static bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 
 	// dispatch all buffered events. Those won't be detected by POLL
@@ -1288,7 +1289,7 @@ bool display_dispatch(struct swa_display* base, bool block) {
 	return !dpy->error;
 }
 
-void display_wakeup(struct swa_display* base) {
+static void display_wakeup(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	int err = write(dpy->wakeup_pipe_w, " ", 1);
 
@@ -1299,7 +1300,7 @@ void display_wakeup(struct swa_display* base) {
 	}
 }
 
-enum swa_display_cap display_capabilities(struct swa_display* base) {
+static enum swa_display_cap display_capabilities(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	enum swa_display_cap caps =
 #ifdef SWA_WITH_GL
@@ -1321,7 +1322,7 @@ enum swa_display_cap display_capabilities(struct swa_display* base) {
 	return caps;
 }
 
-const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
+static const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 #ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
@@ -1336,7 +1337,7 @@ const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 #endif
 }
 
-bool display_key_pressed(struct swa_display* base, enum swa_key key) {
+static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	const unsigned n_bits = 8 * sizeof(dpy->key_states);
 	if(key >= n_bits) {
@@ -1349,7 +1350,7 @@ bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	return (dpy->key_states[idx] & (1 << bit));
 }
 
-const char* display_key_name(struct swa_display* base, enum swa_key key) {
+static const char* display_key_name(struct swa_display* base, enum swa_key key) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->keyboard) {
 		dlg_warn("display has no keyboard");
@@ -1359,7 +1360,7 @@ const char* display_key_name(struct swa_display* base, enum swa_key key) {
 	return swa_xkb_key_name(&dpy->xkb, key);
 }
 
-enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
+static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->keyboard) {
 		dlg_warn("display has no keyboard");
@@ -1369,7 +1370,7 @@ enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
 	return swa_xkb_modifiers(&dpy->xkb);
 }
 
-struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
+static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->keyboard) {
 		dlg_warn("display has no keyboard");
@@ -1379,7 +1380,8 @@ struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	return &dpy->focus->base;
 }
 
-bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
+static bool display_mouse_button_pressed(struct swa_display* base,
+		enum swa_mouse_button button) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->pointer) {
 		dlg_warn("display has no mouse");
@@ -1393,7 +1395,7 @@ bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_butto
 
 	return (dpy->mouse_button_states & (1 << button));
 }
-void display_mouse_position(struct swa_display* base, int* x, int* y) {
+static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->pointer) {
 		dlg_warn("display has no mouse");
@@ -1407,7 +1409,7 @@ void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	*x = dpy->mouse_x;
 	*y = dpy->mouse_y;
 }
-struct swa_window* display_get_mouse_over(struct swa_display* base) {
+static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	if(!dpy->pointer) {
 		dlg_warn("display has no mouse");
@@ -1417,24 +1419,24 @@ struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	return &dpy->mouse_over->base;
 }
 
-struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
+static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	return &dpy->selection->base;
 }
 
 // TODO
-bool display_set_clipboard(struct swa_display* base,
+static bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source) {
 	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
-bool display_start_dnd(struct swa_display* base,
+static bool display_start_dnd(struct swa_display* base,
 		struct swa_data_source* source) {
 	// struct swa_display_wl* dpy = get_display_wl(base);
 	return false;
 }
 
-struct swa_window* display_create_window(struct swa_display* base,
+static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_wl* dpy = get_display_wl(base);
 	struct swa_window_wl* win = calloc(1, sizeof(*win));
