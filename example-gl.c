@@ -2,6 +2,10 @@
 #include <swa/key.h>
 #include <dlg/dlg.h>
 #include <string.h>
+// this is important as a visual studio workaround: their gl.h header is
+// broken windows.h has to be included first (which is pulled by stdlib.h)
+// Thanks Bill!
+#include <stdlib.h>
 #include <GL/gl.h>
 
 static bool run = true;

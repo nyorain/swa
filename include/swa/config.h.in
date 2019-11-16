@@ -1,0 +1,32 @@
+#pragma once
+
+// Built with wayland backend?
+#mesondefine SWA_WITH_WL
+
+// Built with winapi backend?
+#mesondefine SWA_WITH_WIN
+
+// Built with x11 backend?
+#mesondefine SWA_WITH_X11
+
+// Built with vulkan support?
+#mesondefine SWA_WITH_VK
+
+// Built with gl (egl/wgl) support?
+#mesondefine SWA_WITH_GL
+
+// Built as shared library?
+#mesondefine SWA_SHARED
+
+// win32 compatibility
+#if !defined(SWA_API) && defined(SWA_SHARED)
+ #if defined(_WIN32) || defined(__CYGWIN__)
+  #define SWA_API __declspec(dllimport)
+ #elif __GNUC__ >= 4
+  #define SWA_API __attribute__((visibility ("default")))
+ #endif
+#endif
+
+#ifndef SWA_API
+ #define SWA_API
+#endif

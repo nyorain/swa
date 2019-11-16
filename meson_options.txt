@@ -1,0 +1,2 @@
+option('shared', type: 'boolean', value: true,
+	description: 'Whether to build swa as a shared library')

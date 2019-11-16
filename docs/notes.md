@@ -15,6 +15,8 @@ todo wayland:
 
 general
 
+- merge swa_default_{size, position} into swa_default?
+- only build pml as subproject when on unix
 - gl transparency semantics. Does the platform use premultiplied alpha?
   e.g. on wayland we have to use premultiplied alpha, on other platforms
   probably not

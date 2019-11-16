@@ -483,34 +483,34 @@ struct swa_display* swa_display_x11_create(void) {
 		const char* name;
 		xcb_intern_atom_cookie_t cookie;
 	} atoms[] = {
-		{&dpy->atoms.xdnd.enter, "XdndEnter", {}},
-		{&dpy->atoms.xdnd.position, "XdndPosition", {}},
-		{&dpy->atoms.xdnd.status, "XdndStatus", {}},
-		{&dpy->atoms.xdnd.type_list, "XdndTypeList", {}},
-		{&dpy->atoms.xdnd.action_copy, "XdndActionCopy", {}},
-		{&dpy->atoms.xdnd.action_move, "XdndActionMove", {}},
-		{&dpy->atoms.xdnd.action_ask, "XdndActionAsk", {}},
-		{&dpy->atoms.xdnd.action_link, "XdndActionLink", {}},
-		{&dpy->atoms.xdnd.drop, "XdndDrop", {}},
-		{&dpy->atoms.xdnd.leave, "XdndLeave", {}},
-		{&dpy->atoms.xdnd.finished, "XdndFinished", {}},
-		{&dpy->atoms.xdnd.selection, "XdndSelection", {}},
-		{&dpy->atoms.xdnd.proxy, "XdndProxy", {}},
-		{&dpy->atoms.xdnd.aware, "XdndAware", {}},
+		{&dpy->atoms.xdnd.enter, "XdndEnter", {0}},
+		{&dpy->atoms.xdnd.position, "XdndPosition", {0}},
+		{&dpy->atoms.xdnd.status, "XdndStatus", {0}},
+		{&dpy->atoms.xdnd.type_list, "XdndTypeList", {0}},
+		{&dpy->atoms.xdnd.action_copy, "XdndActionCopy", {0}},
+		{&dpy->atoms.xdnd.action_move, "XdndActionMove", {0}},
+		{&dpy->atoms.xdnd.action_ask, "XdndActionAsk", {0}},
+		{&dpy->atoms.xdnd.action_link, "XdndActionLink", {0}},
+		{&dpy->atoms.xdnd.drop, "XdndDrop", {0}},
+		{&dpy->atoms.xdnd.leave, "XdndLeave", {0}},
+		{&dpy->atoms.xdnd.finished, "XdndFinished", {0}},
+		{&dpy->atoms.xdnd.selection, "XdndSelection", {0}},
+		{&dpy->atoms.xdnd.proxy, "XdndProxy", {0}},
+		{&dpy->atoms.xdnd.aware, "XdndAware", {0}},
 
-		{&dpy->atoms.clipboard, "CLIPBOARD", {}},
-		{&dpy->atoms.targets, "TARGETS", {}},
-		{&dpy->atoms.text, "TEXT", {}},
-		{&dpy->atoms.utf8_string, "UTF8_STRING", {}},
-		{&dpy->atoms.file_name, "FILE_NAME", {}},
+		{&dpy->atoms.clipboard, "CLIPBOARD", {0}},
+		{&dpy->atoms.targets, "TARGETS", {0}},
+		{&dpy->atoms.text, "TEXT", {0}},
+		{&dpy->atoms.utf8_string, "UTF8_STRING", {0}},
+		{&dpy->atoms.file_name, "FILE_NAME", {0}},
 
-		{&dpy->atoms.wm_delete_window, "WM_DELETE_WINDOW", {}},
-		{&dpy->atoms.motif_wm_hints, "_MOTIF_WM_HINTS", {}},
+		{&dpy->atoms.wm_delete_window, "WM_DELETE_WINDOW", {0}},
+		{&dpy->atoms.motif_wm_hints, "_MOTIF_WM_HINTS", {0}},
 
-		{&dpy->atoms.mime.text, "text/plain", {}},
-		{&dpy->atoms.mime.utf8, "text/plain;charset=utf8", {}},
-		{&dpy->atoms.mime.uri_list, "text/uri-list", {}},
-		{&dpy->atoms.mime.binary, "application/octet-stream", {}}
+		{&dpy->atoms.mime.text, "text/plain", {0}},
+		{&dpy->atoms.mime.utf8, "text/plain;charset=utf8", {0}},
+		{&dpy->atoms.mime.uri_list, "text/uri-list", {0}},
+		{&dpy->atoms.mime.binary, "application/octet-stream", {0}}
 	};
 
 	unsigned length = sizeof(atoms) / sizeof(atoms[0]);

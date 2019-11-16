@@ -1,3 +1,5 @@
-configure_file(output: 'config.h',
+configure_file(
+	input: 'config.h.in',
+	output: 'config.h',
 	configuration: conf_data
 )
