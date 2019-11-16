@@ -163,11 +163,18 @@ swa_inc = [
 	include_directories('include'),
 ]
 
-lib_swa = library('swa',
+if shared
+	lib_type = 'shared_library'
+else
+	lib_type = 'static_library'
+endif
+
+lib_swa = build_target('swa',
 	swa_src,
 	include_directories: swa_inc,
 	dependencies: swa_deps,
 	c_args: swa_args,
+	target_type: lib_type,
 	install: true)
 
 swa_dep = declare_dependency(

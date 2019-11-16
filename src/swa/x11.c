@@ -11,6 +11,11 @@
 #include <xcb/xinput.h>
 #include <xcb/shm.h>
 
+#ifdef SWA_WITH_VK
+#include <vulkan/vulkan.h>
+#include <vulkan/vulkan_xcb.h>
+#endif
+
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 static const unsigned max_prop_length = 0x1fffffff;
@@ -239,7 +244,7 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 #ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
-		VK_KHR_X11_SURFACE_EXTENSION_NAME,
+		VK_KHR_XCB_SURFACE_EXTENSION_NAME,
 	};
 	*count = sizeof(names) / sizeof(names[0]);
 	return names;

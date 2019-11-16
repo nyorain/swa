@@ -1,6 +1,7 @@
 Notes
 =====
 
+- document that we ignore the meson default_library argument
 - when to use events and when just use plain parameters in window listener?
 - allow implementations to e.g. not track touch points or other input events
   if the window has no listener at all or the listener doesn't implement
