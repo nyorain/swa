@@ -1,6 +1,9 @@
 #include <swa/x11.h>
 #include <dlg/dlg.h>
 #include <string.h>
+#include <unistd.h>
+#include <sys/ipc.h>
+#include <sys/shm.h>
 
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
@@ -31,6 +34,223 @@ static struct swa_window_x11* get_window_x11(struct swa_window* base) {
 	return (struct swa_window_x11*) base;
 }
 
+#define handle_error(dpy, err, txt) do {\
+	dlg_assert(err); \
+	char buf[256]; \
+	XGetErrorText(dpy->display, err->error_code, buf, sizeof(buf)); \
+	dlg_error(txt ": %s (%d)", buf, err->error_code); \
+	free(err); \
+} while(0)
+
+
+// window api
+static void win_destroy(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->dpy) {
+		struct swa_display_x11* dpy = win->dpy;
+		if(win->next) win->next->prev = win->prev;
+		if(win->prev) win->prev->next = win->next;
+		if(win->dpy->window_list == win) {
+			win->dpy->window_list = NULL;
+		}
+
+		if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
+		if(win->window) xcb_destroy_window(dpy->conn, win->window);
+	}
+    free(win);
+}
+
+static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+    return win->dpy->ewmh_caps |
+		swa_window_cap_cursor |
+        swa_window_cap_minimize |
+        swa_window_cap_size |
+        swa_window_cap_position |
+        swa_window_cap_size_limits |
+        swa_window_cap_title |
+        swa_window_cap_visibility;
+}
+
+static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_show(struct swa_window* base, bool show) {
+	struct swa_window_x11* win = get_window_x11(base);
+	if(show) {
+		xcb_map_window(win->dpy->conn, win->window);
+	} else {
+		xcb_unmap_window(win->dpy->conn, win->window);
+	}
+}
+
+static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_position(struct swa_window* base, int x, int y) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_refresh(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+
+	// TODO: use present extension
+	if(win->base.listener && win->base.listener->draw) {
+		win->base.listener->draw(base);
+	}
+}
+
+static void win_surface_frame(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_state(struct swa_window* base, enum swa_window_state state) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_begin_move(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_title(struct swa_window* base, const char* title) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
+	struct swa_window_x11* win = get_window_x11(base);
+}
+
+static bool win_is_client_decorated(struct swa_window* base) {
+	return false;
+}
+
+static uint64_t win_get_vk_surface(struct swa_window* base) {
+	return false;
+}
+
+static bool win_gl_make_current(struct swa_window* base) {
+	return false;
+}
+
+static bool win_gl_swap_buffers(struct swa_window* base) {
+	return false;
+}
+
+static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
+	return false;
+}
+
+static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->surface_type != swa_surface_buffer) {
+		dlg_error("Window doesn't have buffer surface");
+		return false;
+	}
+
+	struct swa_x11_buffer_surface* buf = &win->buffer;
+	if(buf->active) {
+		dlg_error("There is already an active buffer");
+		return false;
+	}
+
+	xcb_connection_t* conn = win->dpy->conn;
+
+	// check if we have to recreate the buffer
+	unsigned fmt_size = swa_image_format_size(win->buffer.format);
+	uint64_t n_bytes = win->width * win->height * fmt_size;
+	if(n_bytes > win->buffer.n_bytes) {
+		buf->n_bytes = n_bytes * 4; // overallocate for resizing
+		if(win->dpy->ext.shm) {
+			if(buf->shmseg) {
+				xcb_shm_detach(conn, buf->shmseg);
+				shmdt(win->buffer.bytes);
+				shmctl(win->buffer.shmid, IPC_RMID, 0);
+			}
+
+			buf->shmid = shmget(IPC_PRIVATE, buf->n_bytes, IPC_CREAT | 0777);
+			buf->bytes = shmat(buf->shmid, 0, 0);
+			buf->shmseg = xcb_generate_id(conn);
+			xcb_shm_attach(conn, buf->shmseg, buf->shmid, 0);
+		} else {
+			buf->bytes = malloc(n_bytes);
+		}
+	}
+
+	buf->active = true;
+	img->data = buf->bytes;
+	img->format = buf->format;
+	img->width = win->width;
+	img->height = win->height;
+	img->stride = fmt_size * win->width;
+
+	return true;
+}
+
+static void win_apply_buffer(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->surface_type != swa_surface_buffer) {
+		dlg_error("Window doesn't have buffer surface");
+		return;
+	}
+
+	struct swa_x11_buffer_surface* buf = &win->buffer;
+	if(!buf->active) {
+		dlg_error("Window has no active buffer");
+		return;
+	}
+
+	buf->active = false;
+	xcb_void_cookie_t cookie = xcb_shm_put_image_checked(win->dpy->conn,
+		win->window, buf->gc, win->width, win->height, 0, 0,
+		win->width, win->height, 0, 0, win->depth,
+		XCB_IMAGE_FORMAT_Z_PIXMAP, 0, buf->shmseg, 0);
+	xcb_generic_error_t* err = xcb_request_check(win->dpy->conn, cookie);
+	if(err) {
+		handle_error(win->dpy, err, "xcb_shm_put_image");
+		return;
+	}
+}
+
+static const struct swa_window_interface window_impl = {
+	.destroy = win_destroy,
+	.get_capabilities = win_get_capabilities,
+	.set_min_size = win_set_min_size,
+	.set_max_size = win_set_max_size,
+	.show = win_show,
+	.set_size = win_set_size,
+	.set_position = win_set_position,
+	.refresh = win_refresh,
+	.surface_frame = win_surface_frame,
+	.set_state = win_set_state,
+	.set_cursor = win_set_cursor,
+	.begin_move = win_begin_move,
+	.begin_resize = win_begin_resize,
+	.set_title = win_set_title,
+	.set_icon = win_set_icon,
+	.is_client_decorated = win_is_client_decorated,
+	.get_vk_surface = win_get_vk_surface,
+	.gl_make_current = win_gl_make_current,
+	.gl_swap_buffers = win_gl_swap_buffers,
+	.gl_set_swap_interval = win_gl_set_swap_interval,
+	.get_buffer = win_get_buffer,
+	.apply_buffer = win_apply_buffer
+};
+
+
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
@@ -38,7 +258,15 @@ static void display_destroy(struct swa_display* base) {
 }
 
 static struct swa_window_x11* find_window(struct swa_display_x11* dpy,
-		xcb_window_t win) {
+		xcb_window_t xcb_win) {
+	struct swa_window_x11* win = dpy->window_list;
+	while(win) {
+		if(win->window == xcb_win) {
+			return win;
+		}
+		win = win->next;
+	}
+
 	return NULL;
 }
 
@@ -75,8 +303,8 @@ static void process_event(struct swa_display_x11* dpy,
 		if(protocol == dpy->ewmh._NET_WM_PING) {
 			xcb_ewmh_send_wm_ping(&dpy->ewmh, dpy->screen->root,
 				client->data.data32[1]);
-		} else if(protocol == dpy->atoms.delete_window &&
-				(win = find_window(dpy, client->window))) {
+		} else if(protocol == dpy->atoms.wm_delete_window) {
+			win = find_window(dpy, client->window);
 			if(win->base.listener && win->base.listener->close) {
 				win->base.listener->close(&win->base);
 			}
@@ -191,6 +419,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 	// in some cases, e.g. the only way to determine whether
 	// a key press is a repeat
 
+	xcb_flush(dpy->conn);
 	if(block && !dpy->next_event) {
 		dpy->next_event = xcb_wait_for_event(dpy->conn);
 		if(!dpy->next_event) {
@@ -209,6 +438,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 
 		dpy->next_event = xcb_poll_for_event(dpy->conn);
 		process_event(dpy, event);
+		xcb_flush(dpy->conn);
 		free(event);
 	}
 
@@ -301,6 +531,48 @@ static bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
+static enum swa_image_format visual_to_format(const xcb_visualtype_t* v,
+		unsigned int depth) {
+	if(depth != 24 && depth != 32) {
+		return swa_image_format_none;
+	}
+
+	// this is not explicitly documented anywhere, but given that the fields
+	// of the visual type are called "<color>_mask" i assume that they assume
+	// the logical mask for <color>, i.e. the color format on a native word.
+	// We therefore first map the masks to a format in word order and
+	// then use toggle_byte_word below to get the byte order format.
+	static const struct {
+		uint32_t r, g, b, a;
+		enum swa_image_format format; // in word order
+	} formats[] = {
+		{ 0xFF000000u, 0x00FF0000u, 0x0000FF00u, 0x000000FFu, swa_image_format_rgba32 },
+		{ 0x0000FF00u, 0x00FF0000u, 0xFF000000u, 0x000000FFu, swa_image_format_bgra32 },
+		{ 0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0xFF000000u, swa_image_format_argb32 },
+		{ 0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0u, swa_image_format_rgb24 },
+		{ 0x000000FFu, 0x0000FF00u, 0x00FF0000u, 0u, swa_image_format_bgr24 },
+	};
+	const unsigned len = sizeof(formats) / sizeof(formats[0]);
+
+	// NOTE: this is hacky and we shouldn't depend on it.
+	// Usually works though
+	unsigned a = 0u;
+	if(depth == 32) {
+		a = 0xFFFFFFFFu & ~(v->red_mask | v->green_mask | v->blue_mask);
+	}
+
+	for(unsigned i = 0u; i < len; ++i) {
+		if(v->red_mask == formats[i].r &&
+				v->green_mask == formats[i].g &&
+				v->blue_mask == formats[i].b &&
+				a == formats[i].a) {
+			return swa_image_format_toggle_byte_word(formats[i].format);
+		}
+	}
+
+	return swa_image_format_none;
+}
+
 static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_x11* dpy = get_display_x11(base);
@@ -309,7 +581,115 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->base.impl = &window_impl;
 	win->base.listener = settings->listener;
 	win->dpy = dpy;
+
+	// link
+	win->next = dpy->window_list;
+	if(!dpy->window_list) {
+		dpy->window_list = win;
+	} else {
+		dpy->window_list->prev = win;
+	}
+
+	// find visual
+	xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator(dpy->screen);
+	for(; di.rem; xcb_depth_next(&di)) {
+		unsigned depth = di.data->depth;
+		xcb_visualtype_iterator_t vi = xcb_depth_visuals_iterator(di.data);
+		for(; vi.rem; xcb_visualtype_next(&vi)) {
+			if(vi.data->_class != XCB_VISUAL_CLASS_DIRECT_COLOR &&
+					vi.data->_class != XCB_VISUAL_CLASS_TRUE_COLOR) {
+				continue;
+			}
+
+			// TODO: rate by score and settings.transparent
+			enum swa_image_format fmt = visual_to_format(vi.data, depth);
+			if(depth >= 24 && fmt != swa_image_format_none) {
+				win->visualtype = vi.data;
+				win->depth = depth;
+				if(depth == 32) break;
+			}
+
+		}
+	}
+
+	if(!win->visualtype) {
+		dlg_error("Could not find valid visual");
+		return false;
+	}
+
+	unsigned x = 0;
+	unsigned y = 0;
+	win->width = settings->width == SWA_DEFAULT_SIZE ?
+		SWA_FALLBACK_WIDTH : settings->width;
+	win->height = settings->height == SWA_DEFAULT_SIZE ?
+		SWA_FALLBACK_HEIGHT : settings->height;
+	xcb_window_t xparent = dpy->screen->root;
+
+	win->colormap = xcb_generate_id(dpy->conn);
+	xcb_create_colormap(dpy->conn, XCB_COLORMAP_ALLOC_NONE, win->colormap,
+		dpy->screen->root, win->visualtype->visual_id);
+	uint32_t eventmask =
+		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+		XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE |
+		XCB_EVENT_MASK_BUTTON_PRESS | XCB_EVENT_MASK_BUTTON_RELEASE |
+		XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW |
+		XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_FOCUS_CHANGE;
+
+	// Setting the background pixel here may introduce flicker but may fix issues
+	// with creating opengl windows.
+	uint32_t valuemask = XCB_CW_BORDER_PIXEL | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
+	uint32_t valuelist[] = {0, eventmask, win->colormap};
+
+	win->window = xcb_generate_id(dpy->conn);
+	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn, win->depth,
+		win->window, xparent, x, y, win->width, win->height, 0,
+		XCB_WINDOW_CLASS_INPUT_OUTPUT, win->visualtype->visual_id,
+		valuemask, valuelist);
+	xcb_generic_error_t* err = xcb_request_check(dpy->conn, cookie);
+	if(err) {
+		handle_error(dpy, err, "xcb_create_window");
+		goto error;
+	}
+
+	if(!settings->hide) {
+		xcb_map_window(dpy->conn, win->window);
+	}
+
+	// set properties
+	// supported protocols
+	xcb_atom_t sup_prots[] = {
+		dpy->atoms.wm_delete_window,
+		dpy->ewmh._NET_WM_PING,
+	};
+	unsigned n_sup_prots = sizeof(sup_prots) / sizeof(sup_prots[0]);
+	xcb_change_property(dpy->conn, XCB_PROP_MODE_REPLACE, win->window,
+		dpy->ewmh.WM_PROTOCOLS, XCB_ATOM_ATOM, 32, n_sup_prots, sup_prots);
+
+	pid_t pid = getpid();
+	xcb_ewmh_set_wm_pid(&dpy->ewmh, win->window, pid);
+
+	// create surface
+	win->surface_type = settings->surface;
+	if(win->surface_type == swa_surface_buffer) {
+		win->buffer.gc = xcb_generate_id(dpy->conn);
+		uint32_t value[] = {0, 0};
+		xcb_void_cookie_t c = xcb_create_gc_checked(dpy->conn, win->buffer.gc,
+			win->window, XCB_GC_FOREGROUND, value);
+		xcb_generic_error_t* e = xcb_request_check(dpy->conn, c);
+		if(e) {
+			handle_error(dpy, e, "xcb_create_gc");
+			goto error;
+		}
+
+		win->buffer.format = visual_to_format(win->visualtype, win->depth);
+		dlg_assert(win->buffer.format != swa_image_format_none);
+	}
+
 	return &win->base;
+
+error:
+	win_destroy(&win->base);
+	return NULL;
 }
 
 static const struct swa_display_interface display_impl = {
@@ -330,135 +710,6 @@ static const struct swa_display_interface display_impl = {
 	.start_dnd = display_start_dnd,
 	.create_window = display_create_window,
 };
-
-static void win_destroy(struct swa_window* base) {
-	struct swa_window_x11* win = get_window_x11(base);
-    free(win);
-}
-
-static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
-	struct swa_window_x11* win = get_window_x11(base);
-    return win->dpy->ewmh_caps |
-		swa_window_cap_cursor |
-        swa_window_cap_minimize |
-        swa_window_cap_size |
-        swa_window_cap_position |
-        swa_window_cap_size_limits |
-        swa_window_cap_title |
-        swa_window_cap_visibility;
-}
-
-static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_show(struct swa_window* base, bool show) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_position(struct swa_window* base, int x, int y) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_refresh(struct swa_window* base) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_surface_frame(struct swa_window* base) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_state(struct swa_window* base, enum swa_window_state state) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_begin_move(struct swa_window* base) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_title(struct swa_window* base, const char* title) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static bool win_is_client_decorated(struct swa_window* base) {
-	return false;
-}
-
-static uint64_t win_get_vk_surface(struct swa_window* base) {
-	return false;
-}
-
-static bool win_gl_make_current(struct swa_window* base) {
-	return false;
-}
-
-static bool win_gl_swap_buffers(struct swa_window* base) {
-	return false;
-}
-
-static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
-	return false;
-}
-
-static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
-	return false;
-}
-
-static void win_apply_buffer(struct swa_window* base) {
-}
-
-static const struct swa_window_interface window_impl = {
-	.destroy = win_destroy,
-	.get_capabilities = win_get_capabilities,
-	.set_min_size = win_set_min_size,
-	.set_max_size = win_set_max_size,
-	.show = win_show,
-	.set_size = win_set_size,
-	.set_position = win_set_position,
-	.refresh = win_refresh,
-	.surface_frame = win_surface_frame,
-	.set_state = win_set_state,
-	.set_cursor = win_set_cursor,
-	.begin_move = win_begin_move,
-	.begin_resize = win_begin_resize,
-	.set_title = win_set_title,
-	.set_icon = win_set_icon,
-	.is_client_decorated = win_is_client_decorated,
-	.get_vk_surface = win_get_vk_surface,
-	.gl_make_current = win_gl_make_current,
-	.gl_swap_buffers = win_gl_swap_buffers,
-	.gl_set_swap_interval = win_gl_set_swap_interval,
-	.get_buffer = win_get_buffer,
-	.apply_buffer = win_apply_buffer
-};
-
-#define handle_error(dpy, err, txt) do {\
-	dlg_assert(err); \
-	char buf[256]; \
-	XGetErrorText(dpy->display, err->error_code, buf, sizeof(buf)); \
-	dlg_error(txt ": %s (%d)", buf, err->error_code); \
-	free(err); \
-} while(0)
 
 struct swa_display* swa_display_x11_create(void) {
 	// We start by opening a display since we need that for gl

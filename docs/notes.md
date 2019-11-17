@@ -24,7 +24,7 @@ general
 - further gl settings: api (gl/gles, also give way to query which
   api is used in context; then also give way to query function
   pointers to allow apps to support both dynamically), srgb,
-  debug, forward_compatible, compatibility (legacy), etc...
+  debug, forward_compatible, compatibility (legacy), depth, etc...
   hdr? i.e. color spaces/>8bit color output?
 - error checking. Make sure we cleanup everything?
 	- or don't do that in places where errors aren't expected?

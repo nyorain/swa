@@ -642,6 +642,10 @@ SWA_API bool swa_window_gl_set_swap_interval(struct swa_window*, int interval);
 // return the same image.
 // Returns false on error, in this case no valid image is returned
 // and `swa_window_apply_buffer` must not be called.
+// The returned image data is only valid until events are dispatched the
+// next time. Therefore, if this function returns succesfully
+// the caller must call swa_window_apply_buffer before dispatching
+// events again.
 SWA_API bool swa_window_get_buffer(struct swa_window*, struct swa_image*);
 
 // Only valid if the window was created with surface set to `buffer`.

@@ -11,14 +11,6 @@ extern "C" {
 
 // xlib/xcb forward declarations
 typedef struct _XDisplay Display;
-typedef struct xcb_connection_t xcb_connection_t;
-typedef struct xcb_visualtype_t xcb_visualtype_t;
-typedef struct xcb_screen_t xcb_screen_t;
-typedef uint32_t xcb_window_t;
-typedef uint32_t xcb_atom_t;
-typedef uint32_t xcb_timestamp_t;
-typedef uint32_t xcb_cursor_t;
-typedef uint32_t xcb_pixmap_t;
 
 struct swa_display_x11 {
     struct swa_display base;
@@ -41,7 +33,6 @@ struct swa_display_x11 {
 	} ext;
 
 	struct {
-		xcb_atom_t delete_window;
 		xcb_atom_t clipboard;
 		xcb_atom_t targets;
 		xcb_atom_t text;
@@ -76,6 +67,19 @@ struct swa_display_x11 {
 	} atoms;
 };
 
+struct swa_x11_buffer_surface {
+	void* bytes;
+	uint64_t n_bytes;
+
+	enum swa_image_format format;
+	xcb_gc_t gc;
+	bool active;
+
+ 	// when using shm
+	unsigned int shmid;
+	uint32_t shmseg;
+};
+
 struct swa_window_x11 {
     struct swa_window base;
     struct swa_display_x11* dpy;
@@ -85,10 +89,17 @@ struct swa_window_x11 {
 	struct swa_window_x11* prev;
 
 	xcb_window_t window;
+	xcb_colormap_t colormap;
 	xcb_visualtype_t* visualtype;
+	unsigned depth;
 
 	unsigned width;
 	unsigned height;
+
+	enum swa_surface_type surface_type;
+	union {
+		struct swa_x11_buffer_surface buffer;
+	};
 };
 
 struct swa_display* swa_display_x11_create(void);
