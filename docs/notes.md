@@ -1,23 +1,30 @@
 Notes
 =====
 
-- document that we ignore the meson default_library argument
-- when to use events and when just use plain parameters in window listener?
-- allow implementations to e.g. not track touch points or other input events
-  if the window has no listener at all or the listener doesn't implement
-  those functions?
-  	- what if the listener is changed during a touch point session though?
-
-todo wayland:
+wayland:
 
 - data exchange (probbaly move that to another file though)
 - better gl support, allow settings
 - check that everything is cleaned up correctly
+- always flush the display after wl_surface_commit or other visible
+  actions? we only flush it on (before) dispatch atm but some programs
+  might have long pauses between iterations. Guess the same
+  problem for x11
+
+x11:
+
+- [low] we could implement buffer surfaces using present pixmaps
+  more complicated though, we have to do maintain multiple
+  buffers (pixmaps)
 
 general
 
-- merge swa_default_{size, position} into swa_default?
-- only build pml as subproject when on unix
+- add swa_cursor_disable or something that allows to lock pointer
+  on wayland and grab the cursor on x11
+- interface to query platform phdev vulkan support, see glfw
+- figure out when to use events and when just use plain parameters in window listener?
+	- clean up touch events. Really include dx, dy in movement?
+	  would make some backend implementations *way* more complicated
 - gl transparency semantics. Does the platform use premultiplied alpha?
   e.g. on wayland we have to use premultiplied alpha, on other platforms
   probably not
@@ -38,6 +45,8 @@ general
 
 laster
 
+- optimization: don't track e.g. touch events for a window if
+  it has no touch event listener
 - integration with posix api (see docs/posix.h)
 	- nvm, android couldn't support it like this since inputs are tied
 	  to the looper and we can't retrieve looper fds.

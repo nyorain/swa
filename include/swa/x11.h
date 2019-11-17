@@ -4,6 +4,7 @@
 #include <swa/impl.h>
 #include <swa/xkb.h>
 #include <xcb/xcb_ewmh.h>
+#include <xcb/present.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -24,6 +25,7 @@ struct swa_display_x11 {
 	xcb_generic_event_t* next_event;
 	struct swa_xkb_context xkb;
 
+	xcb_window_t dummy_window;
 	struct swa_window_x11* window_list;
 
 	struct {
@@ -80,6 +82,11 @@ struct swa_x11_buffer_surface {
 	uint32_t shmseg;
 };
 
+struct swa_x11_vk_surface {
+	uint64_t instance;
+	uint64_t surface;
+};
+
 struct swa_window_x11 {
     struct swa_window base;
     struct swa_display_x11* dpy;
@@ -93,12 +100,23 @@ struct swa_window_x11 {
 	xcb_visualtype_t* visualtype;
 	unsigned depth;
 
+	// only when using present extension:
+	struct {
+		// whether we asked the server to notify us on vsync
+		bool pending;
+		// whether a redraw was requested an postponed because a
+		// present notify event was still pending
+		bool redraw;
+		xcb_present_event_t context;
+	} present;
+
 	unsigned width;
 	unsigned height;
 
 	enum swa_surface_type surface_type;
 	union {
 		struct swa_x11_buffer_surface buffer;
+		struct swa_x11_vk_surface vk;
 	};
 };
 

@@ -38,7 +38,7 @@ static void* wakeup_thread(void* data) {
 		wakeup = true;
 		clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
 		swa_display_wakeup(dpy);
-		sleep(5);
+		sleep(2);
 	}
 
 	return NULL;
@@ -85,10 +85,11 @@ int main() {
 		}
 	}
 
-	void* _;
-	pthread_join(wt, &_);
-
 	swa_window_destroy(win);
 	swa_display_destroy(dpy);
+
+	dlg_info("waiting for wakeup thread to join...");
+	void* _;
+	pthread_join(wt, &_);
 }
 

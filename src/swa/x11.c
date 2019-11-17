@@ -46,6 +46,33 @@ static struct swa_window_x11* get_window_x11(struct swa_window* base) {
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	// destroy surface buffer
+	if(win->surface_type == swa_surface_buffer) {
+		if(win->buffer.shmseg) xcb_shm_detach(win->dpy->conn, win->buffer.shmseg);
+		if(win->buffer.bytes) shmdt(win->buffer.bytes);
+		if(win->buffer.shmid) shmctl(win->buffer.shmid, IPC_RMID, 0);
+		if(win->buffer.gc) xcb_free_gc(win->dpy->conn, win->buffer.gc);
+	} else if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		if(win->vk.surface) {
+			dlg_assert(win->vk.instance);
+
+			VkInstance instance = (VkInstance) win->vk.instance;
+			VkSurfaceKHR surface = (VkSurfaceKHR) win->vk.surface;
+			PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
+				vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
+			if(fn) {
+				fn(instance, surface, NULL);
+			} else {
+				dlg_error("Failed to load 'vkDestroySurfaceKHR' function");
+			}
+		}
+#else
+		dlg_error("swa was compiled without vk support; invalid surface");
+#endif
+	}
+
 	if(win->dpy) {
 		struct swa_display_x11* dpy = win->dpy;
 		if(win->next) win->next->prev = win->prev;
@@ -56,7 +83,9 @@ static void win_destroy(struct swa_window* base) {
 
 		if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
 		if(win->window) xcb_destroy_window(dpy->conn, win->window);
+		xcb_flush(win->dpy->conn);
 	}
+
     free(win);
 }
 
@@ -104,14 +133,33 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
 
-	// TODO: use present extension
-	if(win->base.listener && win->base.listener->draw) {
-		win->base.listener->draw(base);
+	if(win->dpy->ext.xpresent && win->present.pending) {
+		win->present.redraw = true;
+		return;
 	}
+
+	xcb_expose_event_t ev = {0};
+	ev.response_type = XCB_EXPOSE;
+	ev.window = win->window;
+	xcb_send_event(win->dpy->conn, 0, win->window,
+		XCB_EVENT_MASK_EXPOSURE, (const char*)&ev);
 }
 
 static void win_surface_frame(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	if(win->dpy->ext.xpresent && !win->present.pending) {
+		if(!win->present.context) {
+			win->present.context = xcb_generate_id(win->dpy->conn);
+			xcb_present_select_input(win->dpy->conn, win->present.context,
+				win->window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
+		}
+
+		xcb_present_notify_msc(win->dpy->conn, win->window, 0, 0, 1, 0);
+		win->present.pending = true;
+	}
+
+	// no-op otherwise, nothing we can do
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
@@ -139,7 +187,18 @@ static bool win_is_client_decorated(struct swa_window* base) {
 }
 
 static uint64_t win_get_vk_surface(struct swa_window* base) {
-	return false;
+#ifdef SWA_WITH_VK
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->surface_type != swa_surface_vk) {
+		dlg_warn("can't get vulkan surface from non-vulkan window");
+		return 0;
+	}
+
+	return (uint64_t) win->vk.surface;
+#else
+	dlg_warn("swa was compiled without vulkan suport");
+	return 0;
+#endif
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
@@ -213,6 +272,8 @@ static void win_apply_buffer(struct swa_window* base) {
 		return;
 	}
 
+	win_surface_frame(base);
+
 	buf->active = false;
 	xcb_void_cookie_t cookie = xcb_shm_put_image_checked(win->dpy->conn,
 		win->window, buf->gc, win->width, win->height, 0, 0,
@@ -254,6 +315,9 @@ static const struct swa_window_interface window_impl = {
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
+	if(dpy->next_event) free(dpy->next_event);
+	if(dpy->display) XCloseDisplay(dpy->display);
+	xcb_ewmh_connection_wipe(&dpy->ewmh);
     free(dpy);
 }
 
@@ -270,7 +334,69 @@ static struct swa_window_x11* find_window(struct swa_display_x11* dpy,
 	return NULL;
 }
 
-static void process_event(struct swa_display_x11* dpy,
+static void handle_present_event(struct swa_display_x11* dpy,
+		xcb_present_generic_event_t* ev) {
+	switch(ev->evtype) {
+	case XCB_PRESENT_COMPLETE_NOTIFY: {
+		xcb_present_complete_notify_event_t* complete =
+			(xcb_present_complete_notify_event_t*) ev;
+		struct swa_window_x11* win = find_window(dpy, complete->window);
+		if(win) {
+			win->present.pending = false;
+			if(win->present.redraw) {
+				win->present.redraw = false;
+				if(win->base.listener->draw) {
+					win->base.listener->draw(&win->base);
+				}
+			}
+		}
+		break;
+	}
+	}
+}
+
+static void handle_xinput_event(struct swa_display_x11* dpy,
+		xcb_ge_generic_event_t* gev) {
+	struct swa_window_x11* win;
+	// no matter the event type, always has the same basic layout
+	xcb_input_touch_begin_event_t* tev =
+		(xcb_input_touch_begin_event_t*)(gev);
+	if((win = find_window(dpy, tev->event)) && win->base.listener) {
+		const float fp16 = 65536.f;
+		float x = tev->event_x / fp16;
+		float y = tev->event_y / fp16;
+		unsigned id = tev->detail;
+		switch(gev->event_type) {
+		case XCB_INPUT_TOUCH_BEGIN:
+			if(win->base.listener->touch_begin) {
+				struct swa_touch_begin_event ev = {
+					.id = id,
+					.x = x,
+					.y = y,
+				};
+				win->base.listener->touch_begin(&win->base, &ev);
+			} return;
+		case XCB_INPUT_TOUCH_UPDATE:
+			if(win->base.listener->touch_update) {
+				struct swa_touch_update_event ev = {
+					.id = id,
+					.x = x,
+					.y = y,
+					// TODO: dx, dy
+					// or remove them from the event?
+				};
+				win->base.listener->touch_update(&win->base, &ev);
+			}
+			return;
+		 case XCB_INPUT_TOUCH_END:
+			if(win->base.listener->touch_end)
+				win->base.listener->touch_end(&win->base, id);
+			return;
+	}
+	}
+}
+
+static void handle_event(struct swa_display_x11* dpy,
 		const xcb_generic_event_t* ev) {
 	unsigned type = ev->response_type & ~0x80;
 	struct swa_window_x11* win;
@@ -279,13 +405,9 @@ static void process_event(struct swa_display_x11* dpy,
 	case XCB_EXPOSE: {
 		xcb_expose_event_t* expose = (xcb_expose_event_t*) ev;
 		if((win = find_window(dpy, expose->window))) {
-			swa_window_refresh(&win->base);
-		}
-		break;
-	} case XCB_MAP_NOTIFY: {
-		xcb_map_notify_event_t* map = (xcb_map_notify_event_t*) ev;
-		if((win = find_window(dpy, map->window))) {
-			swa_window_refresh(&win->base);
+			if(win->base.listener->draw) {
+				win->base.listener->draw(&win->base);
+			}
 		}
 		break;
 	} case XCB_CONFIGURE_NOTIFY: {
@@ -295,6 +417,7 @@ static void process_event(struct swa_display_x11* dpy,
 			win->width = configure->width;
 			win->height = configure->height;
 		}
+		// we don't have to draw, the xserve will send an expose event
 		break;
 	} case XCB_CLIENT_MESSAGE: {
 		xcb_client_message_event_t* client = (xcb_client_message_event_t*) ev;
@@ -305,10 +428,19 @@ static void process_event(struct swa_display_x11* dpy,
 				client->data.data32[1]);
 		} else if(protocol == dpy->atoms.wm_delete_window) {
 			win = find_window(dpy, client->window);
-			if(win->base.listener && win->base.listener->close) {
+			if(win->base.listener->close) {
 				win->base.listener->close(&win->base);
 			}
 		}
+		break;
+	} case XCB_GE_GENERIC: {
+		xcb_ge_generic_event_t* gev = (xcb_ge_generic_event_t*)ev;
+		if(gev->extension == dpy->ext.xinput) {
+			handle_xinput_event(dpy, gev);
+		} else if(gev->extension == dpy->ext.xpresent) {
+			handle_present_event(dpy, (xcb_present_generic_event_t*) gev);
+		}
+
 		break;
 	} case 0u: {
 		int code = ((xcb_generic_error_t*)ev)->error_code;
@@ -319,71 +451,6 @@ static void process_event(struct swa_display_x11* dpy,
 	} default:
 		break;
 	}
-
-	// touch events
-	xcb_ge_generic_event_t* gev = (xcb_ge_generic_event_t*)ev;
-	if(dpy->ext.xinput && ev->response_type == XCB_GE_GENERIC &&
-			gev->extension == dpy->ext.xinput) {
-		// no matter the event type, always has the same basic layout
-		xcb_input_touch_begin_event_t* tev =
-			(xcb_input_touch_begin_event_t*)(gev);
-		if((win = find_window(dpy, tev->event)) && win->base.listener) {
-			const float fp16 = 65536.f;
-			float x = tev->event_x / fp16;
-			float y = tev->event_y / fp16;
-			unsigned id = tev->detail;
-			switch(gev->event_type) {
-				case XCB_INPUT_TOUCH_BEGIN:
-					if(win->base.listener->touch_begin) {
-						struct swa_touch_begin_event ev = {
-							.id = id,
-							.x = x,
-							.y = y,
-						};
-						win->base.listener->touch_begin(&win->base, &ev);
-					} return;
-				case XCB_INPUT_TOUCH_UPDATE:
-					if(win->base.listener->touch_update) {
-						struct swa_touch_update_event ev = {
-							.id = id,
-							.x = x,
-							.y = y,
-							// TODO: dx, dy
-							// or remove them from the event?
-						};
-						win->base.listener->touch_update(&win->base, &ev);
-					}
-					return;
-				 case XCB_INPUT_TOUCH_END:
-					if(win->base.listener->touch_end)
-						win->base.listener->touch_end(&win->base, id);
-					return;
-			}
-		}
-	}
-
-	// // present event
-	// if(presentOpcode_ && gev.response_type == XCB_GE_GENERIC &&
-	// 		gev.extension == presentOpcode_) {
-	// 	switch(gev.event_type) {
-	// 		case XCB_PRESENT_COMPLETE_NOTIFY: {
-	// 			auto pev = copyu<xcb_present_complete_notify_event_t>(gev);
-	// 			if(pev.window == xDummyWindow()) {
-	// 				for(auto& wc : present_) {
-	// 					wc->presentCompleteEvent(pev.serial);
-	// 				}
-	// 				present_.clear();
-	// 			} else {
-	// 				if(auto wc = windowContext(pev.window); wc) {
-	// 					wc->presentCompleteEvent(pev.serial);
-	// 				}
-	// 			}
-	// 			return;
-	// 		} case XCB_PRESENT_IDLE_NOTIFY:
-	// 		case XCB_PRESENT_CONFIGURE_NOTIFY:
-	// 			return;
-	// 	}
-	// }
 }
 
 static bool check_error(struct swa_display_x11* dpy) {
@@ -437,7 +504,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 		}
 
 		dpy->next_event = xcb_poll_for_event(dpy->conn);
-		process_event(dpy, event);
+		handle_event(dpy, event);
 		xcb_flush(dpy->conn);
 		free(event);
 	}
@@ -447,6 +514,12 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 
 static void display_wakeup(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
+
+	xcb_client_message_event_t ev = {0};
+	ev.response_type = XCB_CLIENT_MESSAGE;
+	ev.format = 8;
+	xcb_send_event(dpy->conn, 0, dpy->dummy_window, 0, (const char*) &ev);
+	xcb_flush(dpy->conn);
 }
 
 static enum swa_display_cap display_capabilities(struct swa_display* base) {
@@ -683,6 +756,40 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 		win->buffer.format = visual_to_format(win->visualtype, win->depth);
 		dlg_assert(win->buffer.format != swa_image_format_none);
+	} else if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		win->vk.instance = settings->surface_settings.vk.instance;
+		if(!win->vk.instance) {
+			dlg_error("Didn't set vulkan instance for vulkan window");
+			goto error;
+		}
+
+		VkXcbSurfaceCreateInfoKHR info = {0};
+		info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+		info.connection = win->dpy->conn;
+		info.window = win->window;
+
+		VkInstance instance = (VkInstance) win->vk.instance;
+		VkSurfaceKHR surface;
+
+		PFN_vkCreateXcbSurfaceKHR fn = (PFN_vkCreateXcbSurfaceKHR)
+			vkGetInstanceProcAddr(instance, "vkCreateXcbSurfaceKHR");
+		if(!fn) {
+			dlg_error("Failed to load 'vkCreateXcbSurfaceKHR' function");
+			goto error;
+		}
+
+		VkResult res = fn(instance, &info, NULL, &surface);
+		if(res != VK_SUCCESS) {
+			dlg_error("Failed to create vulkan surface: %d", res);
+			goto error;
+		}
+
+		win->vk.surface = (uint64_t)surface;
+#else
+		dlg_error("swa was compiled without vulkan support");
+		goto err;
+#endif
 	}
 
 	return &win->base;
@@ -716,6 +823,9 @@ struct swa_display* swa_display_x11_create(void) {
 	// Neither egl nor glx support xcb. And since xlib is implemented
 	// using xcb these days, we can get the xcb connection from the
 	// xlib display but not the other way around.
+	// We need multi threading since we implement display wakeup
+	// using an event.
+	XInitThreads();
 	Display* display = XOpenDisplay(NULL);
 	if(!display) {
 		return NULL;
@@ -729,6 +839,18 @@ struct swa_display* swa_display_x11_create(void) {
 
 	// make sure we can retrieve events using xcb
 	XSetEventQueueOwner(dpy->display, XCBOwnsEventQueue);
+
+	// create dummy window used for selections and wakeup
+	dpy->dummy_window = xcb_generate_id(dpy->conn);
+	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn,
+		XCB_COPY_FROM_PARENT, dpy->dummy_window,
+		dpy->screen->root, 0, 0, 1, 1, 0, XCB_WINDOW_CLASS_INPUT_ONLY,
+		XCB_COPY_FROM_PARENT, 0, NULL);
+	xcb_generic_error_t* err = xcb_request_check(dpy->conn, cookie);
+	if(err) {
+		handle_error(dpy, err, "xcb_create_window (dummy)");
+		goto err;
+	}
 
 	// load atoms
 	xcb_intern_atom_cookie_t* ewmh_cookie =
@@ -775,7 +897,6 @@ struct swa_display* swa_display_x11_create(void) {
 		atoms[i].cookie = xcb_intern_atom(dpy->conn, 0, len, atoms[i].name);
 	}
 
-	xcb_generic_error_t* err;
 	for(unsigned i = 0u; i < length; ++i) {
 		xcb_intern_atom_reply_t* reply = xcb_intern_atom_reply(dpy->conn,
 			atoms[i].cookie, &err);
@@ -897,4 +1018,8 @@ struct swa_display* swa_display_x11_create(void) {
 	free(sreply);
 
     return &dpy->base;
+
+err:
+	display_destroy(&dpy->base);
+	return NULL;
 }

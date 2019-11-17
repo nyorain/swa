@@ -1,19 +1,32 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <swa/swa.h>
 #include <swa/key.h>
 #include <dlg/dlg.h>
 #include <string.h>
+#include <time.h>
 
 static bool run = true;
+struct timespec last_redraw;
+
 static void window_draw(struct swa_window* win) {
 	struct swa_image img;
 	if(!swa_window_get_buffer(win, &img)) {
 		return;
 	}
 
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
+	ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
+	dlg_info("Time between redraws: %f", ms);
+	last_redraw = now;
+
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 	unsigned size = img.height * img.stride;
 	memset(img.data, 255, size);
 	swa_window_apply_buffer(win);
+	swa_window_refresh(win);
 }
 
 static const char* mime_utf8 = "text/plain;charset=utf-8";
@@ -89,6 +102,7 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, dpy);
+	clock_gettime(CLOCK_MONOTONIC, &last_redraw);
 
 	while(run) {
 		if(!swa_display_dispatch(dpy, true)) {

@@ -366,10 +366,6 @@ bool swa_window_get_buffer(struct swa_window* win, struct swa_image* img) {
 void swa_window_apply_buffer(struct swa_window* win) {
 	win->impl->apply_buffer(win);
 }
-void swa_window_set_listener(struct swa_window* win,
-		const struct swa_window_listener* listener) {
-	win->listener = listener;
-}
 const struct swa_window_listener* swa_window_get_listener(struct swa_window* win) {
 	return win->listener;
 }

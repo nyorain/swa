@@ -233,6 +233,9 @@ struct swa_window_settings {
     bool transparent; // allow transparency
     enum swa_window_state state;
     enum swa_preference client_decorate;
+
+	// The listener object must remain valid until it is changed or the window
+	// is destroyed. Must not be NULL.
 	const struct swa_window_listener* listener;
 };
 
@@ -556,7 +559,10 @@ SWA_API void swa_window_set_cursor(struct swa_window*, struct swa_cursor cursor)
 // roughly synchronize redrawing with the monitor/compositor.
 // This function will never call the draw handler itself but rather at
 // least defer the event. This means, it is safe to call this function
-// from the draw handler itself for continuous redrawing.
+// from the draw handler itself for continuous redrawing. But calling
+// this inside the draw handler *before* the surface contents were
+// changed (and swa_window_frame implicitly or explicitly triggered)
+// is an error.
 // If the window is currently hidden (e.g. on a
 // different workspace or minimized or below another window), no
 // draw event might be emitted at all.
@@ -564,13 +570,16 @@ SWA_API void swa_window_set_cursor(struct swa_window*, struct swa_cursor cursor)
 SWA_API void swa_window_refresh(struct swa_window*);
 
 // Notifies the window to perform redraw throttling.
-// When drawing on to window using vulkan or a platform-specific
+// When drawing on the window using vulkan or a platform-specific
 // method, it is important to call swa_window_surface_frame before
 // applying the new contents (i.e. presenting/commiting) to allow
 // the implementation to implement redraw throttling. Otherwise
 // the behavior of `swa_window_refresh` might be unexpected or suboptimal.
 // Calling this without presenting afterwards is an error.
 // If draw handlers aren't used, this isn't needed at all.
+// When applying surface contents via 'swa_window_apply_buffer' or
+// 'swa_window_gl_swap_buffers' this must not be called since those
+// functions will trigger it implicitly.
 SWA_API void swa_window_surface_frame(struct swa_window*);
 
 // Changes the window state.
@@ -609,10 +618,6 @@ SWA_API void swa_window_set_icon(struct swa_window*, const struct swa_image* ima
 // by default or because the window was explicitly created with client decorations
 // (and those are supported by the backend as well).
 SWA_API bool swa_window_is_client_decorated(struct swa_window*);
-
-// The listener object must remain valid until it is changed or the window is
-// destroyed.
-SWA_API void swa_window_set_listener(struct swa_window*, const struct swa_window_listener*);
 SWA_API const struct swa_window_listener* swa_window_get_listener(struct swa_window*);
 
 // Allows to set a word of custom data.

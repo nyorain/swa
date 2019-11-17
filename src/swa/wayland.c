@@ -306,7 +306,6 @@ static void buffer_finish(struct swa_wl_buffer* buf) {
 }
 
 static void cursor_render(struct swa_display_wl* dpy) {
-	dlg_trace("cursor_render");
 	dlg_assert(dpy->cursor.timer);
 	dlg_assert(dpy->cursor.active);
 
@@ -479,10 +478,8 @@ static void win_destroy(struct swa_window* base) {
 		if(win->vk.surface) {
 			dlg_assert(win->vk.instance);
 
-			VkInstance instance;
-			VkSurfaceKHR surface;
-			memcpy(&instance, &win->vk.instance, sizeof(instance));
-			memcpy(&surface, &win->vk.surface, sizeof(surface));
+			VkInstance instance = (VkInstance) win->vk.instance;
+			VkSurfaceKHR surface = (VkSurfaceKHR) win->vk.surface;
 			PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
 				vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
 			if(fn) {
@@ -633,21 +630,11 @@ static void refresh_cb(struct pml_defer* defer) {
 	struct swa_window_wl* win = pml_defer_get_data(defer);
 	win->redraw = false;
 
-	// TODO: move this here or after handler call?
-	// problem if draw handler calls win_refresh again
-	// *before* commiting (or calling win_frame).
-	// - make it an requirement to call refresh *after* the surface
-	//   contents were changed/frame was called? would make sense i guess
-	// - actively try to detect this situation in win_refresh and
-	//   wait there? but i guess the other backends would have similar
-	//   problems. Probably best to require in the interface that
-	//   'win_refresh should be called after window contents were changed
-	//   (via gl_swap_buffers or win_apply_buffer) or win_frame
-	//   was called to trigger a new frame. Calling win_refresh
-	//   inside the draw handler before that happened is undefined'.
+	// this must be done *before* calling the draw handler to allow
+	// it to potentially enable it again (e.g. when calling
+	// refresh without previous frame callback)
 	pml_defer_enable(defer, false);
-
-	if(win->base.listener && win->base.listener->draw) {
+	if(win->base.listener->draw) {
 		win->base.listener->draw(&win->base);
 	}
 }
@@ -656,6 +643,7 @@ static void win_refresh(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(!win->configured || win->frame_callback) {
 		win->redraw = true;
+		return;
 	}
 
 	if(!win->defer_redraw) {
@@ -673,7 +661,7 @@ static void win_frame_done(void* data, struct wl_callback* cb, uint32_t id) {
 
 	if(win->redraw) {
 		win->redraw = false;
-		if(win->base.listener && win->base.listener->draw) {
+		if(win->base.listener->draw) {
 			win->base.listener->draw(&win->base);
 		}
 	}
@@ -874,6 +862,11 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 
 static void win_apply_buffer(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
+	if(win->surface_type != swa_surface_buffer) {
+		dlg_error("Window doesn't have buffer surface");
+		return;
+	}
+
 	if(win->buffer.active < 0) {
 		dlg_error("No active buffer");
 		return;
@@ -1520,7 +1513,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		win->buffer.active = -1;
 	} else if(win->surface_type == swa_surface_vk) {
 #ifdef SWA_WITH_VK
-		win->vk.instance = win->vk.instance;
+		win->vk.instance = settings->surface_settings.vk.instance;
 		if(!win->vk.instance) {
 			dlg_error("Didn't set vulkan instance for vulkan window");
 			goto err;
@@ -1531,9 +1524,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		info.display = win->dpy->display;
 		info.surface = win->surface;
 
-		VkInstance instance;
+		VkInstance instance = (VkInstance) win->vk.instance;
 		VkSurfaceKHR surface;
-		memcpy(&instance, &win->vk.instance, sizeof(instance));
 
 		PFN_vkCreateWaylandSurfaceKHR fn = (PFN_vkCreateWaylandSurfaceKHR)
 			vkGetInstanceProcAddr(instance, "vkCreateWaylandSurfaceKHR");
@@ -1548,7 +1540,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			goto err;
 		}
 
-		memcpy(&win->vk.surface, &surface, sizeof(VkSurfaceKHR));
+		win->vk.surface = (uint64_t)surface;
 #else
 		dlg_error("swa was compiled without vulkan support");
 		goto err;
@@ -1708,7 +1700,7 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 			wl_egl_window_resize(win->gl.egl_window, width, height, 0, 0);
 		}
 
-		if(win->base.listener && win->base.listener->resize) {
+		if(win->base.listener->resize) {
 			win->base.listener->resize(&win->base, win->width, win->height);
 		}
 	}
@@ -1746,7 +1738,7 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 
 	if(state != win->state) {
 		win->state = state;
-		if(win->base.listener && win->base.listener->state) {
+		if(win->base.listener->state) {
 			win->base.listener->state(&win->base, state);
 		}
 	}
@@ -1754,7 +1746,7 @@ static void toplevel_configure(void *data, struct xdg_toplevel *xdg_toplevel,
 
 static void toplevel_close(void *data, struct xdg_toplevel *xdg_toplevel) {
 	struct swa_window_wl* win = data;
-	if(win->base.listener && win->base.listener->close) {
+	if(win->base.listener->close) {
 		win->base.listener->close(&win->base);
 	}
 }
@@ -1977,7 +1969,7 @@ static void pointer_enter(void* data, struct wl_pointer* wl_pointer,
 	dpy->mouse_x = wl_fixed_to_int(sx);
 	dpy->mouse_y = wl_fixed_to_int(sy);
 	dpy->last_serial = serial;
-	if(win->base.listener && win->base.listener->mouse_cross) {
+	if(win->base.listener->mouse_cross) {
 		struct swa_mouse_cross_event ev = {
 			.x = dpy->mouse_x,
 			.y = dpy->mouse_y,
@@ -2001,7 +1993,7 @@ static void pointer_leave(void *data, struct wl_pointer *wl_pointer,
 	dpy->mouse_over = NULL;
 
 	dpy->last_serial = serial;
-	if(win->base.listener && win->base.listener->mouse_cross) {
+	if(win->base.listener->mouse_cross) {
 		struct swa_mouse_cross_event ev = {
 			.x = dpy->mouse_x,
 			.y = dpy->mouse_y,
@@ -2206,7 +2198,7 @@ static void keyboard_enter(void* data, struct wl_keyboard* wl_keyboard,
 	dlg_assert(dpy->focus == NULL);
 	dpy->focus = win;
 
-	if(win->base.listener && win->base.listener->focus) {
+	if(win->base.listener->focus) {
 		win->base.listener->focus(&win->base, true);
 	}
 
@@ -2227,7 +2219,7 @@ static void keyboard_leave(void* data, struct wl_keyboard* wl_keyboard,
 
 	dlg_assert(dpy->focus == win);
 	dpy->focus = NULL;
-	if(win->base.listener && win->base.listener->focus) {
+	if(win->base.listener->focus) {
 		win->base.listener->focus(&win->base, false);
 	}
 
@@ -2265,7 +2257,7 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 	}
 
 	dpy->last_serial = serial;
-	if(dpy->focus->base.listener && dpy->focus->base.listener->key) {
+	if(dpy->focus->base.listener->key) {
 		struct swa_key_event ev = {
 			.keycode = key,
 			.pressed = pressed,
@@ -2313,7 +2305,7 @@ static void key_repeat_cb(struct pml_timer* timer) {
 	// set the serial of the original key press here again
 	dpy->last_serial = dpy->key_repeat.serial;
 	swa_xkb_key(&dpy->xkb, dpy->key_repeat.key + 8, &utf8, &canceled);
-	if(dpy->focus->base.listener && dpy->focus->base.listener->key) {
+	if(dpy->focus->base.listener->key) {
 		struct swa_key_event ev = {
 			.keycode = dpy->key_repeat.key,
 			.pressed = true,
