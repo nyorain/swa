@@ -5,21 +5,32 @@ project(
 	license: 'MIT',
 	meson_version: '>=0.48.0',
 	default_options: [
-		'c_std=c11',
+		'c_std=c99',
 		'warning_level=3',
 		'werror=true',
 	],
 )
 
 shared = get_option('shared')
-args = meson.get_compiler('c').get_supported_arguments([
+
+cc = meson.get_compiler('c')
+args = cc.get_supported_arguments([
+	# gcc/clang
 	'-Wno-unused-parameter',
 	'-Wundef',
 	'-Wvla',
+
+	# msvc
+	'/wd4127', # conditional expression is constant
+	'/wd4706', # assignment within conditional expression
+	'/wd4100', # unreferenced formal parameter
+
+	# c99 compat
+	'/wd4132', # const object should be initialized (for fwd decl)
+	'/wd4204', # non-constant aggregate initializer
 ])
 add_project_arguments(args, language: 'c')
 
-cc = meson.get_compiler('c')
 swa_src = files('src/swa/swa.c')
 
 source_root = '/'.join(meson.source_root().split('\\'))

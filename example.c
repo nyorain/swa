@@ -16,7 +16,8 @@ static void window_draw(struct swa_window* win) {
 	}
 
 	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
+	// clock_gettime(CLOCK_MONOTONIC, &now);
+	timespec_get(&now, TIME_UTC);
 	float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
 	ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
 	dlg_info("Time between redraws: %f", ms);
@@ -24,7 +25,18 @@ static void window_draw(struct swa_window* win) {
 
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 	unsigned size = img.height * img.stride;
-	memset(img.data, 255, size);
+
+	// memset(img.data, 255, size);
+	for(unsigned y = 0u; y < img.height; ++y) {
+		for(unsigned x = 0u; x < img.width; ++x) {
+			unsigned off = (y * img.stride + 4 * x);
+			img.data[off + 0] = 128; // b
+			img.data[off + 1] = 255 * ((float) y) / img.height; // g
+			img.data[off + 2] = 255 * ((float) x) / img.width; // r
+			img.data[off + 3] = 100; // a
+		}
+	}
+
 	swa_window_apply_buffer(win);
 	swa_window_refresh(win);
 }
@@ -34,7 +46,7 @@ static void clipboard_text(struct swa_data_offer* offer, const char* format,
 		struct swa_exchange_data data) {
 	dlg_assert(!strcmp(format, mime_utf8));
 	char buf[256];
-	unsigned size = data.size < 256 ? data.size : 256;
+	size_t size = (size_t) (data.size < 256 ? data.size : 256);
 	memcpy(buf, data.data, size);
 	dlg_info("clipboard:\n==== begin ====\n%s\n==== end ====", buf);
 
@@ -102,7 +114,8 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, dpy);
-	clock_gettime(CLOCK_MONOTONIC, &last_redraw);
+	// clock_gettime(CLOCK_MONOTONIC, &last_redraw);
+	timespec_get(&last_redraw, TIME_UTC);
 
 	while(run) {
 		if(!swa_display_dispatch(dpy, true)) {

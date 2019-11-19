@@ -25,10 +25,28 @@ struct swa_display_win {
     bool error;
 };
 
+struct swa_win_buffer_surface {
+    void* data;
+    unsigned width;
+    unsigned height;
+    HBITMAP bitmap;
+    bool active;
+    HDC wdc; // only set when buffer is active
+};
+
 struct swa_window_win {
     struct swa_window base;
     struct swa_display_win* dpy;
     HWND handle;
+
+    unsigned width, height;
+    unsigned min_width, min_height;
+    unsigned max_width, max_height;
+
+    enum swa_surface_type surface_type;
+    union {
+        struct swa_win_buffer_surface buffer;
+    };
 };
 
 struct swa_data_offer_win {

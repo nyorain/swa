@@ -37,7 +37,8 @@ struct swa_image;
 // This definition is consistent with OpenGL and Vulkan (when not
 // using packed formats) but different to SDL (uses native type),
 // cairo (uses native type) and wayland (uses little endian)
-// format definitions.
+// format definitions. You can use swa_image_format_toggle_byte_word
+// to get the equivalent format for another semantic.
 // https://github.com/afrantzis/pixel-format-guide is a useful tool
 // to understand pixel formats, swa is comparable to the non-packed
 // vulkan formats.
