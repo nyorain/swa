@@ -318,9 +318,6 @@ void swa_window_show(struct swa_window* win, bool show) {
 void swa_window_set_size(struct swa_window* win, unsigned w, unsigned h) {
 	win->impl->set_size(win, w, h);
 }
-void swa_window_set_position(struct swa_window* win, int x, int y) {
-	win->impl->set_position(win, x, y);
-}
 void swa_window_set_cursor(struct swa_window* win, struct swa_cursor cursor) {
 	win->impl->set_cursor(win, cursor);
 }

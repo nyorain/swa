@@ -556,9 +556,6 @@ static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 	// and redrawing, resulting in a larger buffer. Not sure.
 	dlg_warn("window doesn't have resize capability");
 }
-static void win_set_position(struct swa_window* base, int x, int y) {
-	dlg_warn("window doesn't have position capability");
-}
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	struct swa_window_wl* win = get_window_wl(base);
@@ -888,7 +885,6 @@ static const struct swa_window_interface window_impl = {
 	.set_max_size = win_set_max_size,
 	.show = win_show,
 	.set_size = win_set_size,
-	.set_position = win_set_position,
 	.refresh = win_refresh,
 	.surface_frame = win_surface_frame,
 	.set_state = win_set_state,

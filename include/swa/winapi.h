@@ -1,9 +1,9 @@
 #pragma once
+#define UNICODE
 
 #include <swa/swa.h>
 #include <swa/impl.h>
 
-#define UNICODE
 #include <windows.h>
 #include <winuser.h>
 #include <windowsx.h>
@@ -23,6 +23,9 @@ extern "C" {
 struct swa_display_win {
     struct swa_display base;
     bool error;
+
+    struct swa_window_win* focus;
+    struct swa_window_win* mouse_over;
 };
 
 struct swa_win_buffer_surface {
@@ -47,6 +50,11 @@ struct swa_window_win {
     union {
         struct swa_win_buffer_surface buffer;
     };
+
+    struct {
+        HCURSOR handle;
+        bool owned;
+    } cursor;
 };
 
 struct swa_data_offer_win {

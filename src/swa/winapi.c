@@ -6,6 +6,11 @@
 #include <vulkan/vulkan_win32.h>
 #endif
 
+// define constants that are sometimes not included
+#ifndef SC_DRAGMOVE
+ #define SC_DRAGMOVE 0xf012
+#endif
+
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 
@@ -31,6 +36,78 @@ static struct swa_window_win* get_window_win(struct swa_window* base) {
 	LocalFree(buffer); \
 } while(0)
 
+static const struct {
+	enum swa_edge edge;
+	unsigned int winapi_code;
+} edge_map[] = {
+	{swa_edge_top, 3u},
+	{swa_edge_bottom, 6u},
+	{swa_edge_left, 1u},
+	{swa_edge_right, 2u},
+	{swa_edge_top_left, 4u},
+	{swa_edge_bottom_left, 7u},
+	{swa_edge_top_right, 5u},
+	{swa_edge_bottom_right, 8u},
+};
+
+unsigned int edge_to_winapi(enum swa_edge edge) {
+	unsigned len = sizeof(edge_map) / sizeof(edge_map[0]);
+	for(unsigned i = 0u; i < len; ++i) {
+		if(edge_map[i].edge == edge) {
+			return edge_map[i].winapi_code;
+		}
+	}
+
+	return 0;
+}
+
+enum swa_edge winapi_to_edge(unsigned code) {
+	unsigned len = sizeof(edge_map) / sizeof(edge_map[0]);
+	for(unsigned i = 0u; i < len; ++i) {
+		if(edge_map[i].winapi_code == code) {
+			return edge_map[i].edge;
+		}
+	}
+
+	return swa_edge_none;
+}
+
+static const struct {
+	enum swa_cursor_type cursor;
+	const wchar_t* idc;
+} cursor_map[] = {
+	{swa_cursor_left_pointer, IDC_ARROW},
+	{swa_cursor_load, IDC_WAIT},
+	{swa_cursor_load_pointer, IDC_APPSTARTING},
+	{swa_cursor_right_pointer, IDC_ARROW},
+	{swa_cursor_hand, IDC_HAND},
+	{swa_cursor_grab, IDC_HAND},
+	{swa_cursor_crosshair, IDC_CROSS},
+	{swa_cursor_help, IDC_HELP},
+	{swa_cursor_beam, IDC_IBEAM},
+	{swa_cursor_forbidden, IDC_NO},
+	{swa_cursor_size, IDC_SIZEALL},
+	{swa_cursor_size_left, IDC_SIZEWE},
+	{swa_cursor_size_right, IDC_SIZEWE},
+	{swa_cursor_size_top, IDC_SIZENS},
+	{swa_cursor_size_bottom, IDC_SIZENS},
+	{swa_cursor_size_top_left, IDC_SIZENWSE},
+	{swa_cursor_size_bottom_right, IDC_SIZENWSE},
+	{swa_cursor_size_top_right, IDC_SIZENESW},
+	{swa_cursor_size_bottom_left, IDC_SIZENESW},
+};
+
+const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
+	unsigned len = sizeof(cursor_map) / sizeof(cursor_map[0]);
+	for(unsigned i = 0u; i < len; ++i) {
+		if(cursor_map[i].cursor == cursor) {
+			return cursor_map[i].idc;
+		}
+	}
+
+	return NULL;
+}
+
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
@@ -44,43 +121,98 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
         swa_window_cap_maximize |
         swa_window_cap_minimize |
         swa_window_cap_size |
-        swa_window_cap_position |
         swa_window_cap_size_limits |
+        swa_window_cap_begin_move |
+        swa_window_cap_begin_resize |
         swa_window_cap_title |
         swa_window_cap_visibility;
 }
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_win* win = get_window_win(base);
+	win->min_width = w;
+	win->min_height = h;
 }
 
 static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_win* win = get_window_win(base);
+	win->max_width = w;
+	win->max_height = h;
 }
 
 static void win_show(struct swa_window* base, bool show) {
 	struct swa_window_win* win = get_window_win(base);
+	ShowWindowAsync(win->handle, show ? SW_SHOW : SW_HIDE);
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_win* win = get_window_win(base);
-}
-
-static void win_set_position(struct swa_window* base, int x, int y) {
-	struct swa_window_win* win = get_window_win(base);
+	SetWindowPos(win->handle, HWND_TOP, 0, 0, w, h,
+		SWP_NOMOVE | SWP_ASYNCWINDOWPOS | SWP_NOZORDER);
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	struct swa_window_win* win = get_window_win(base);
+
+	bool owned = false;
+	HCURSOR handle = NULL;
+	if(cursor.type == swa_cursor_none) {
+		win->cursor.handle = NULL;
+		win->cursor.owned = false;
+	} else if(cursor.type == swa_cursor_image) {
+		// TODO: implement bitmap from window utility
+		// and then create owned cursor from bitmap
+		dlg_error("TODO: not implemented");
+		return;
+	} else {
+		const wchar_t* idc = cursor_to_winapi(cursor.type);
+		if(!idc) {
+			dlg_warn("Invalid/Unsupported cursor type: %d", (int) cursor.type);
+			return;
+		}
+
+		handle = LoadCursor(NULL, idc);
+		if(!handle) {
+			print_winapi_error("LoadCursor");
+			return;
+		}
+	}
+
+	// destroy previous cursor if needed
+	if(win->cursor.handle && win->cursor.owned) {
+		DestroyCursor(win->cursor.handle);
+	}
+
+	win->cursor.owned = owned;
+	win->cursor.handle = handle;
+
+	if(win->dpy->mouse_over == win) {
+		SetCursor(win->cursor.handle);
+	}
+
+	// Alternative way of setting the cursor, we would not
+	// have to handle WM_SETCURSOR messages when doing it like this.
+	// Might have problems with multiple windows (since it changes
+	// the window class), so we don't do it.
+	// SetClassLongPtr(win->handle, GCL_HCURSOR, (LONG_PTR)(win->cursor.handle));
 }
 
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
+
+	// TODO: just use InvalidateRect? use RDW_FRAME?
+	RedrawWindow(win->handle, NULL, NULL, RDW_INVALIDATE | RDW_NOERASE);
 }
 
 static void win_surface_frame(struct swa_window* base) {
     (void) base;
-    // no-op
+	// we might be able to hack something together using
+	// D3DKMTGetDWMVerticalBlankEvent
+	// (we can get the adapter using D3DKMTOpenAdapterFromHdc).
+	// Although it sounds like direct3d stuff, it actually
+	// sits in the gdi library.
+	// There are also blocking functions that just wait for
+	// the next vblank we could run in a new thread.
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
@@ -88,9 +220,14 @@ static void win_set_state(struct swa_window* base, enum swa_window_state state) 
 }
 
 static void win_begin_move(struct swa_window* base) {
+	struct swa_window_win* win = get_window_win(base);
+	PostMessage(win->handle, WM_SYSCOMMAND, SC_DRAGMOVE, 0);
 }
 
 static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
+	struct swa_window_win* win = get_window_win(base);
+	unsigned code = edge_to_winapi(edges);
+	PostMessage(win->handle, WM_SYSCOMMAND, SC_SIZE + code, 0);
 }
 
 static void win_set_title(struct swa_window* base, const char* title) {
@@ -149,7 +286,7 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 		BITMAPINFO bmi = {0};
 		bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);
 		bmi.bmiHeader.biWidth = win->buffer.width;
-		bmi.bmiHeader.biHeight = -win->buffer.height; // top down
+		bmi.bmiHeader.biHeight = -(int)win->buffer.height; // top down
 		bmi.bmiHeader.biPlanes = 1;
 		bmi.bmiHeader.biBitCount = 32;
 		bmi.bmiHeader.biCompression = BI_RGB;
@@ -228,7 +365,6 @@ static const struct swa_window_interface window_impl = {
 	.set_max_size = win_set_max_size,
 	.show = win_show,
 	.set_size = win_set_size,
-	.set_position = win_set_position,
 	.refresh = win_refresh,
 	.surface_frame = win_surface_frame,
 	.set_state = win_set_state,
@@ -382,6 +518,9 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
     	return DefWindowProc(hwnd, msg, wparam, lparam); 
 	}
 
+	// TODO:
+	// - WM_INPUTLANGCHANGE
+
 	LRESULT result = 0;
 	switch(msg) {
 		case WM_PAINT: {
@@ -392,13 +531,21 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			if(win->base.listener->draw) {
 				win->base.listener->draw(&win->base);
 			}
-			result = DefWindowProc(hwnd, msg, wparam, lparam); // to validate the window
-			break;
-		} case WM_DESTROY: {
+
+			// validate the window
+			// do this before rendering so refresh being called
+			// during rendering invalidates it again?
+			// but that might create infinite render loops, i.e.
+			// display_dispatch will not return at all anymore.
+			// we probably have to defer something
+			result = DefWindowProc(hwnd, msg, wparam, lparam);
+
+			return 0;
+		} case WM_CLOSE: {
 			if(win->base.listener->close) {
 				win->base.listener->close(&win->base);
 			}
-			break;
+			return 0;
 		} case WM_SIZE: {
 			unsigned width = LOWORD(lparam);
 			unsigned height = HIWORD(lparam);
@@ -412,7 +559,8 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			if(win->base.listener->resize) {
 				win->base.listener->resize(&win->base, width, height);
 			}
-			break;
+
+			return 0;
 		} case WM_SYSCOMMAND: {
 			enum swa_window_state state = swa_window_state_none;
 
@@ -437,7 +585,6 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 				win->base.listener->state(&win->base, state);
 			}
 
-			result = DefWindowProc(hwnd, msg, wparam, lparam);
 			break;
 		} case WM_GETMINMAXINFO: {
 			MINMAXINFO* mmi = (MINMAXINFO*)(lparam);
@@ -445,16 +592,19 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			mmi->ptMaxTrackSize.y = win->max_height;
 			mmi->ptMinTrackSize.x = win->min_width;
 			mmi->ptMinTrackSize.y = win->min_height;
-			break;
+			return 0;
 		} case WM_ERASEBKGND: {
-			result = 1; // prevent the background erase
+			return 1; // prevent the background erase
+		} case WM_SETCURSOR: {
+			if(LOWORD(lparam) == HTCLIENT) {
+				SetCursor(win->cursor.handle);
+				return 1;
+			}
 			break;
-		} default: {
-    		return DefWindowProc(hwnd, msg, wparam, lparam); 
 		}
 	}
 
-	return result;
+    return DefWindowProc(hwnd, msg, wparam, lparam); 
 }
 
 static wchar_t* widen(const char* utf8) {
@@ -528,6 +678,8 @@ struct swa_window* display_create_window(struct swa_display* base,
 	}
 
 	SetWindowLongPtr(win->handle, GWLP_USERDATA, (uintptr_t) win);
+	win_set_cursor(&win->base, settings->cursor);
+
 	ShowWindowAsync(win->handle, SW_SHOWDEFAULT);
 
 	// surface

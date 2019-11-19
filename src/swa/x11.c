@@ -95,7 +95,6 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 		swa_window_cap_cursor |
         swa_window_cap_minimize |
         swa_window_cap_size |
-        swa_window_cap_position |
         swa_window_cap_size_limits |
         swa_window_cap_title |
         swa_window_cap_visibility;
@@ -119,10 +118,6 @@ static void win_show(struct swa_window* base, bool show) {
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	struct swa_window_x11* win = get_window_x11(base);
-}
-
-static void win_set_position(struct swa_window* base, int x, int y) {
 	struct swa_window_x11* win = get_window_x11(base);
 }
 
@@ -293,7 +288,6 @@ static const struct swa_window_interface window_impl = {
 	.set_max_size = win_set_max_size,
 	.show = win_show,
 	.set_size = win_set_size,
-	.set_position = win_set_position,
 	.refresh = win_refresh,
 	.surface_frame = win_surface_frame,
 	.set_state = win_set_state,

@@ -114,14 +114,13 @@ enum swa_window_cap {
 	swa_window_cap_fullscreen = (1L << 2),
 	swa_window_cap_minimize = (1L << 3),
 	swa_window_cap_maximize = (1L << 4),
-	swa_window_cap_position = (1L << 5),
-	swa_window_cap_size_limits = (1L << 6),
-	swa_window_cap_icon = (1L << 7),
-	swa_window_cap_cursor = (1L << 8),
-	swa_window_cap_title = (1L << 9),
-	swa_window_cap_begin_move = (1L << 10),
-	swa_window_cap_begin_resize = (1L << 11),
-	swa_window_cap_visibility = (1L << 12),
+	swa_window_cap_size_limits = (1L << 5),
+	swa_window_cap_icon = (1L << 6),
+	swa_window_cap_cursor = (1L << 7),
+	swa_window_cap_title = (1L << 8),
+	swa_window_cap_begin_move = (1L << 9),
+	swa_window_cap_begin_resize = (1L << 10),
+	swa_window_cap_visibility = (1L << 11),
 };
 
 // Represents the current state of a window.
@@ -213,6 +212,8 @@ struct swa_gl_surface_settings {
 };
 
 // The instance must remain valid until the window is destroyed.
+// It must have furthermore been created with *all* extensions
+// returned by swa_display_get_vk_extensions.
 struct swa_vk_surface_settings {
     uint64_t instance; // type: VkInstance
 };
@@ -452,6 +453,8 @@ SWA_API const char** swa_display_vk_extensions(struct swa_display*, unsigned* co
 
 
 // Returns whether the given key is currently pressed.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'keyboard' capability.
 SWA_API bool swa_display_key_pressed(struct swa_display*, enum swa_key);
 
@@ -466,16 +469,22 @@ SWA_API bool swa_display_key_pressed(struct swa_display*, enum swa_key);
 SWA_API const char* swa_display_key_name(struct swa_display*, enum swa_key);
 
 // Returns all currently active keyboard modifiers.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'keyboard' capability.
 SWA_API enum swa_keyboard_mod swa_display_active_keyboard_mods(struct swa_display*);
 
 // Returns the `swa_window` that currently has keyboard focus or NULL
 // if there is none.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'keyboard' capability.
 SWA_API struct swa_window* swa_display_get_keyboard_focus(struct swa_display*);
 
 
 // Returns whether the given mouse button is currently pressed.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'mouse' capability.
 SWA_API bool swa_display_mouse_button_pressed(struct swa_display*, enum swa_mouse_button);
 
@@ -483,11 +492,15 @@ SWA_API bool swa_display_mouse_button_pressed(struct swa_display*, enum swa_mous
 // The window the mouse is currently over can be retrieved using
 // `swa_display_get_mouse_over`. The values are not changed if
 // the mouse is currently not over a swa_window.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'mouse' capability.
 SWA_API void swa_display_mouse_position(struct swa_display*, int* x, int* y);
 
 // Returns the `swa_window` that the mouse is currently over or NULL
 // if there is none.
+// Backends may implement this in an asynchronous manner, i.e. this may
+// return information for which no events were dispatched yet.
 // Only valid if the display has the 'mouse' capability.
 SWA_API struct swa_window* swa_display_get_mouse_over(struct swa_display*);
 
@@ -543,12 +556,6 @@ SWA_API void swa_window_show(struct swa_window*, bool show);
 // window is somehow hidden anyways).
 // Only valid if the window has the window has the 'size' capability.
 SWA_API void swa_window_set_size(struct swa_window*, unsigned w, unsigned h);
-
-// Changes the position of the window. The space of the given coordinates
-// are backend-dependent but will usually refer to a position on
-// the current output or desktop.
-// Only valid if the window has the window has the 'position' capability.
-SWA_API void swa_window_set_position(struct swa_window*, int x, int y);
 
 // If the given cursor is an image cursor, the stored image data
 // will be copied or otherwise used, it must not remain valid after this call.

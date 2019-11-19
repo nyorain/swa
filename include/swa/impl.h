@@ -34,7 +34,6 @@ struct swa_window_interface {
 	void (*show)(struct swa_window*, bool show);
 
 	void (*set_size)(struct swa_window*, unsigned w, unsigned h);
-	void (*set_position)(struct swa_window*, int x, int y);
 	void (*set_cursor)(struct swa_window*, struct swa_cursor cursor);
 	void (*refresh)(struct swa_window*);
 	void (*surface_frame)(struct swa_window*);

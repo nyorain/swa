@@ -24,18 +24,21 @@ static void window_draw(struct swa_window* win) {
 	last_redraw = now;
 
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
-	unsigned size = img.height * img.stride;
 
-	// memset(img.data, 255, size);
+	unsigned size = img.height * img.stride;
+	memset(img.data, 255, size);
+
+	/*
 	for(unsigned y = 0u; y < img.height; ++y) {
 		for(unsigned x = 0u; x < img.width; ++x) {
 			unsigned off = (y * img.stride + 4 * x);
 			img.data[off + 0] = 128; // b
-			img.data[off + 1] = 255 * ((float) y) / img.height; // g
-			img.data[off + 2] = 255 * ((float) x) / img.width; // r
+			img.data[off + 1] = (uint8_t) (255 * ((float) y) / img.height); // g
+			img.data[off + 2] = (uint8_t) (255 * ((float) x) / img.width); // r
 			img.data[off + 3] = 100; // a
 		}
 	}
+	*/
 
 	swa_window_apply_buffer(win);
 	swa_window_refresh(win);
@@ -100,12 +103,16 @@ int main() {
 		return EXIT_FAILURE;
 	}
 
+	struct swa_cursor cursor;
+	cursor.type = swa_cursor_beam;
+
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
 	settings.app_name = "swa-example";
 	settings.title = "swa-example-window";
 	settings.surface = swa_surface_buffer;
 	settings.listener = &window_listener;
+	settings.cursor = cursor;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");
