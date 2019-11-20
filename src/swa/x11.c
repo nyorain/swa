@@ -13,6 +13,9 @@
 #include <xcb/present.h>
 #include <xcb/xinput.h>
 #include <xcb/shm.h>
+#include <xcb/xkb.h>
+
+#include <xkbcommon/xkbcommon-x11.h>
 
 #ifdef SWA_WITH_VK
 #include <vulkan/vulkan.h>
@@ -390,6 +393,48 @@ static void handle_xinput_event(struct swa_display_x11* dpy,
 	}
 }
 
+static enum swa_mouse_button x11_to_button_and_wheel(unsigned detail,
+		float* wheel_x, float* wheel_y) {
+	switch(detail) {
+		case 1: return swa_mouse_button_left;
+		case 2: return swa_mouse_button_middle;
+		case 3: return swa_mouse_button_right;
+		case 4: *wheel_y = 1.f; return swa_mouse_button_none;
+		case 5: *wheel_y = -1.f; return swa_mouse_button_none;
+		case 6: *wheel_x = 1.f; return swa_mouse_button_none;
+		case 7: *wheel_x = -1.f; return swa_mouse_button_none;
+		case 8: return swa_mouse_button_custom1;
+		case 9: return swa_mouse_button_custom2;
+		default: return swa_mouse_button_none;
+	}
+}
+
+static bool init_keymap(struct swa_display_x11* dpy) {
+	int flags = XKB_KEYMAP_COMPILE_NO_FLAGS;
+	int32_t dev = dpy->keyboard.device_id;
+
+	struct xkb_keymap* keymap = xkb_x11_keymap_new_from_device(
+		dpy->keyboard.xkb.context, dpy->conn, dev, flags);
+	if(!keymap) {
+		dlg_error("xkb_x11_keymap_new_from_device failed");
+		return false;
+	}
+
+	struct xkb_state* state = xkb_x11_state_new_from_device(keymap,
+		dpy->conn, dev);
+	if(!state) {
+		dlg_error("xkb_x11_state_new_from_device failed");
+		return false;
+	}
+
+	struct swa_xkb_context* xkb = &dpy->keyboard.xkb;
+	if(xkb->keymap) xkb_keymap_unref(xkb->keymap);
+	if(xkb->state) xkb_state_unref(xkb->state);
+	xkb->keymap = keymap;
+	xkb->state = state;
+	return true;
+}
+
 static void handle_event(struct swa_display_x11* dpy,
 		const xcb_generic_event_t* ev) {
 	unsigned type = ev->response_type & ~0x80;
@@ -411,7 +456,7 @@ static void handle_event(struct swa_display_x11* dpy,
 			win->width = configure->width;
 			win->height = configure->height;
 		}
-		// we don't have to draw, the xserve will send an expose event
+		// we don't have to draw, the xserver will send an expose event
 		break;
 	} case XCB_CLIENT_MESSAGE: {
 		xcb_client_message_event_t* client = (xcb_client_message_event_t*) ev;
@@ -425,6 +470,198 @@ static void handle_event(struct swa_display_x11* dpy,
 			if(win->base.listener->close) {
 				win->base.listener->close(&win->base);
 			}
+		}
+		break;
+	} case XCB_MOTION_NOTIFY: {
+		xcb_motion_notify_event_t* motion = (xcb_motion_notify_event_t*) ev;
+		if((win = find_window(dpy, motion->event))) {
+			dlg_assert(win == dpy->mouse.over);
+			if(win->base.listener->mouse_move) {
+				struct swa_mouse_move_event lev;
+				lev.x = motion->event_x;
+				lev.y = motion->event_y;
+				lev.dx = lev.x - dpy->mouse.x;
+				lev.dy = lev.y - dpy->mouse.y;
+				win->base.listener->mouse_move(&win->base, &lev);
+			}
+			dpy->mouse.x = motion->event_x;
+			dpy->mouse.y = motion->event_y;
+		}
+		break;
+	} case XCB_BUTTON_PRESS: {
+		xcb_button_press_event_t* bev = (xcb_button_press_event_t*) ev;
+		if((win = find_window(dpy, bev->event))) {
+			dlg_assert(win == dpy->mouse.over);
+			float sx = 0.f;
+			float sy = 0.f;
+			enum swa_mouse_button button = x11_to_button_and_wheel(bev->detail,
+				&sx, &sy);
+			dpy->mouse.button_states |= (1ul << (unsigned) button);
+
+			if((sx != 0.f || sy != 0.f) && win->base.listener->mouse_wheel) {
+				win->base.listener->mouse_wheel(&win->base, sx, sy);
+			} else if(button != swa_mouse_button_none &&
+					win->base.listener->mouse_button) {
+				struct swa_mouse_button_event lev;
+				lev.button = button;
+				lev.pressed = true;
+				lev.x = bev->event_x;
+				lev.y = bev->event_y;
+				win->base.listener->mouse_button(&win->base, &lev);
+			}
+		}
+
+		break;
+	} case XCB_BUTTON_RELEASE: {
+		xcb_button_release_event_t* bev = (xcb_button_release_event_t*) ev;
+		if((win = find_window(dpy, bev->event))) {
+			dlg_assert(dpy->mouse.over == win);
+			float sx = 0.f;
+			float sy = 0.f;
+			enum swa_mouse_button button = x11_to_button_and_wheel(bev->detail,
+				&sx, &sy);
+			dpy->mouse.button_states &= ~(1ul << (unsigned) button);
+			if(button != swa_mouse_button_none &&
+					win->base.listener->mouse_button) {
+				struct swa_mouse_button_event lev;
+				lev.button = button;
+				lev.pressed = false;
+				lev.x = bev->event_x;
+				lev.y = bev->event_y;
+				win->base.listener->mouse_button(&win->base, &lev);
+			}
+		}
+
+		break;
+	} case XCB_ENTER_NOTIFY: {
+		xcb_enter_notify_event_t* eev = (xcb_enter_notify_event_t*) ev;
+		if(eev->mode == XCB_NOTIFY_MODE_GRAB ||
+				eev->mode == XCB_NOTIFY_MODE_UNGRAB) {
+			return;
+		}
+
+		dlg_assert(!dpy->mouse.over);
+		if((win = find_window(dpy, eev->event))) {
+			dpy->mouse.over = win;
+			if(win->base.listener->mouse_cross) {
+				struct swa_mouse_cross_event lev;
+				lev.entered = true;
+				lev.x = eev->event_x;
+				lev.y = eev->event_y;
+				win->base.listener->mouse_cross(&win->base, &lev);
+			}
+		}
+		break;
+	} case XCB_LEAVE_NOTIFY: {
+		xcb_leave_notify_event_t* eev = (xcb_leave_notify_event_t*) ev;
+		if(eev->mode == XCB_NOTIFY_MODE_GRAB ||
+				eev->mode == XCB_NOTIFY_MODE_UNGRAB) {
+			return;
+		}
+
+		if((win = find_window(dpy, eev->event))) {
+			dlg_assert(dpy->mouse.over == win);
+			dpy->mouse.over = NULL;
+			if(win->base.listener->mouse_cross) {
+				struct swa_mouse_cross_event lev;
+				lev.entered = false;
+				lev.x = eev->event_x;
+				lev.y = eev->event_y;
+				win->base.listener->mouse_cross(&win->base, &lev);
+			}
+		}
+		break;
+
+	} case XCB_FOCUS_IN: {
+		xcb_focus_in_event_t* fev = (xcb_focus_in_event_t*) ev;
+		if(fev->mode == XCB_NOTIFY_MODE_GRAB ||
+				fev->mode == XCB_NOTIFY_MODE_UNGRAB) {
+			return;
+		}
+
+		dlg_assert(!dpy->keyboard.focus);
+		if((win = find_window(dpy, fev->event))) {
+			dpy->keyboard.focus = win;
+			if(win->base.listener->focus) {
+				win->base.listener->focus(&win->base, true);
+			}
+		}
+		break;
+	} case XCB_FOCUS_OUT: {
+		xcb_focus_out_event_t* fev = (xcb_focus_out_event_t*) ev;
+		if(fev->mode == XCB_NOTIFY_MODE_GRAB ||
+				fev->mode == XCB_NOTIFY_MODE_UNGRAB) {
+			return;
+		}
+
+		if((win = find_window(dpy, fev->event))) {
+			dlg_assert(dpy->keyboard.focus == win);
+			dpy->keyboard.focus = NULL;
+			if(win->base.listener->focus) {
+				win->base.listener->focus(&win->base, false);
+			}
+		}
+		break;
+	} case XCB_KEY_PRESS: {
+		xcb_key_press_event_t* kev = (xcb_key_press_event_t*) ev;
+		if(!(win = find_window(dpy, kev->event))) {
+			dpy->keyboard.repeated = false;
+			break;
+		}
+
+		enum swa_key key = kev->detail - 8;
+
+		// store the key state in the local state
+		unsigned idx = key / 64;
+		unsigned bit = key % 64;
+		dpy->keyboard.key_states[idx] |= (uint64_t)(1 << bit);
+
+		char* utf8 = NULL;
+		bool canceled;
+		swa_xkb_key(&dpy->keyboard.xkb, kev->detail, &utf8, &canceled);
+
+		dlg_assert(win == dpy->keyboard.focus);
+		if(win->base.listener->key) {
+			struct swa_key_event lev = {
+				.keycode = key,
+				.pressed = true,
+				.utf8 = utf8,
+				.repeated = dpy->keyboard.repeated,
+				.modifiers = swa_xkb_modifiers(&dpy->keyboard.xkb),
+			};
+			win->base.listener->key(&win->base, &lev);
+		}
+
+		free(utf8);
+		dpy->keyboard.repeated = false;
+		break;
+	}
+	case XCB_KEY_RELEASE: {
+		xcb_key_release_event_t* kev = (xcb_key_release_event_t*) ev;
+		if(!(win = find_window(dpy, kev->event))) {
+			break;
+		}
+
+		// check for repeat
+		struct xcb_key_press_event_t* kp =
+			(struct xcb_key_press_event_t*) dpy->next_event;
+		if(kp && (kp->response_type & ~0x80) == XCB_KEY_PRESS) {
+			if(kp->time == kp->time && kp->detail == kp->detail) {
+				// just ignore this event
+				dpy->keyboard.repeated = true;
+				break;
+			}
+		}
+
+		if(win->base.listener->key) {
+			struct swa_key_event lev = {
+				.keycode = kev->detail,
+				.pressed = false,
+				.utf8 = NULL,
+				.repeated = false,
+				.modifiers = swa_xkb_modifiers(&dpy->keyboard.xkb),
+			};
+			win->base.listener->key(&win->base, &lev);
 		}
 		break;
 	} case XCB_GE_GENERIC: {
@@ -444,6 +681,43 @@ static void handle_event(struct swa_display_x11* dpy,
 		break;
 	} default:
 		break;
+	}
+
+	if(dpy->ext.xkb && ev->response_type == dpy->ext.xkb) {
+		union xkb_event {
+			struct {
+				uint8_t response_type;
+				uint8_t xkb_type;
+				uint16_t sequence;
+				xcb_timestamp_t time;
+				uint8_t device_id;
+			} any;
+			xcb_xkb_new_keyboard_notify_event_t new_keyboard_notify;
+			xcb_xkb_map_notify_event_t map_notify;
+			xcb_xkb_state_notify_event_t state_notify;
+		};
+
+		union xkb_event* xkbev = (union xkb_event*) ev;
+		dlg_assert(xkbev->any.device_id == dpy->keyboard.device_id);
+
+		switch(xkbev->any.xkb_type) {
+		case XCB_XKB_NEW_KEYBOARD_NOTIFY:
+			if(xkbev->new_keyboard_notify.changed & XCB_XKB_NKN_DETAIL_KEYCODES)
+				init_keymap(dpy);
+			break;
+		case XCB_XKB_MAP_NOTIFY:
+			init_keymap(dpy);
+			break;
+		case XCB_XKB_STATE_NOTIFY:
+			xkb_state_update_mask(dpy->keyboard.xkb.state,
+				xkbev->state_notify.baseMods,
+				xkbev->state_notify.latchedMods,
+				xkbev->state_notify.lockedMods,
+				xkbev->state_notify.baseGroup,
+				xkbev->state_notify.latchedGroup,
+				xkbev->state_notify.lockedGroup);
+			break;
+		}
 	}
 }
 
@@ -554,34 +828,45 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return false;
+	const unsigned n_bits = 8 * sizeof(dpy->keyboard.key_states);
+	if(key >= n_bits) {
+		dlg_warn("keycode not tracked (too high)");
+		return false;
+	}
+
+	unsigned idx = key / 64;
+	unsigned bit = key % 64;
+	return (dpy->keyboard.key_states[idx] & (1 << bit));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return NULL;
+	return swa_xkb_key_name(&dpy->keyboard.xkb, key);
 }
 
 static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return swa_keyboard_mod_none;
+	return swa_xkb_modifiers(&dpy->keyboard.xkb);
 }
 
 static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return NULL;
+    return &dpy->keyboard.focus->base;
 }
 
-static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
+static bool display_mouse_button_pressed(struct swa_display* base,
+		enum swa_mouse_button button) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return false;
+    return dpy->mouse.button_states & (1ul << (unsigned) button);
 }
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	struct swa_display_x11* dpy = get_display_x11(base);
+	*x = dpy->mouse.x;
+	*y = dpy->mouse.y;
 }
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return NULL;
+	return &dpy->mouse.over->base;
 }
 static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_x11* dpy = get_display_x11(base);
@@ -1010,6 +1295,72 @@ struct swa_display* swa_display_x11_create(void) {
 			sreply->shared_pixmaps);
 	}
 	free(sreply);
+
+	// xkb: we require this extension for keyboard support
+	// NOTE: instead of erroring out, we could simply not report
+	// the keyboard capability
+	uint16_t major, minor;
+	int ret = xkb_x11_setup_xkb_extension(dpy->conn,
+		XKB_X11_MIN_MAJOR_XKB_VERSION,
+		XKB_X11_MIN_MINOR_XKB_VERSION,
+		XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS,
+		&major, &minor, &dpy->ext.xkb, NULL);
+	if(!ret) {
+		dlg_error("Could not setup xkb");
+		goto err;
+	}
+
+	dpy->keyboard.device_id = xkb_x11_get_core_keyboard_device_id(dpy->conn);
+	struct swa_xkb_context* xkb = &dpy->keyboard.xkb;
+	xkb->context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	if(!xkb->context) {
+		dlg_error("xkb_context_new failed");
+		goto err;
+	}
+
+	if(!init_keymap(dpy)) {
+		goto err;
+	}
+
+	const int req_events =
+		XCB_XKB_EVENT_TYPE_NEW_KEYBOARD_NOTIFY |
+		XCB_XKB_EVENT_TYPE_MAP_NOTIFY |
+		XCB_XKB_EVENT_TYPE_STATE_NOTIFY;
+	const int req_nkn_details = XCB_XKB_NKN_DETAIL_KEYCODES;
+	const int req_map_parts =
+		XCB_XKB_MAP_PART_KEY_TYPES |
+		XCB_XKB_MAP_PART_KEY_SYMS |
+		XCB_XKB_MAP_PART_MODIFIER_MAP |
+		XCB_XKB_MAP_PART_EXPLICIT_COMPONENTS |
+		XCB_XKB_MAP_PART_KEY_ACTIONS |
+		XCB_XKB_MAP_PART_VIRTUAL_MODS |
+		XCB_XKB_MAP_PART_VIRTUAL_MOD_MAP;
+	const int req_state_details =
+		XCB_XKB_STATE_PART_MODIFIER_BASE |
+		XCB_XKB_STATE_PART_MODIFIER_LATCH |
+		XCB_XKB_STATE_PART_MODIFIER_LOCK |
+		XCB_XKB_STATE_PART_GROUP_BASE |
+		XCB_XKB_STATE_PART_GROUP_LATCH |
+		XCB_XKB_STATE_PART_GROUP_LOCK;
+
+	xcb_xkb_select_events_details_t details = {0};
+	details.affectNewKeyboard = req_nkn_details;
+	details.newKeyboardDetails = req_nkn_details;
+	details.affectState = req_state_details;
+	details.stateDetails = req_state_details;
+
+	xcb_void_cookie_t xkbc = xcb_xkb_select_events_aux_checked(dpy->conn,
+		dpy->keyboard.device_id, req_events, 0, 0,
+		req_map_parts, req_map_parts, &details);
+	err = xcb_request_check(dpy->conn, xkbc);
+	if(err) {
+		handle_error(dpy, err, "xcb_xkb_select_events_aux_checked");
+		goto err;
+	}
+
+	if(!swa_xkb_init_compose(xkb)) {
+		goto err;
+	}
 
     return &dpy->base;
 

@@ -23,14 +23,30 @@ struct swa_display_x11 {
 	xcb_screen_t* screen;
 	enum swa_window_cap ewmh_caps;
 	xcb_generic_event_t* next_event;
-	struct swa_xkb_context xkb;
 
 	xcb_window_t dummy_window;
 	struct swa_window_x11* window_list;
+	struct swa_window_x11* focus;
 
 	struct {
-		int xpresent;
-		int xinput;
+		unsigned x,y;
+		struct swa_window_x11* over;
+		uint64_t button_states; // bitset
+	} mouse;
+
+	struct {
+		struct swa_xkb_context xkb;
+		struct swa_window_x11* focus;
+		uint64_t key_states[16]; // bitset
+		bool repeated;
+		int32_t device_id;
+	} keyboard;
+
+	// event op-codes
+	struct {
+		uint8_t xpresent;
+		uint8_t xinput;
+		uint8_t xkb;
 		bool shm;
 	} ext;
 

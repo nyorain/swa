@@ -19,6 +19,8 @@ x11:
 
 general
 
+- x11 & wayland backends: make sure that key_states and button_states
+  are never access out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer
   on wayland and grab the cursor on x11
 - interface to query platform phdev vulkan support, see glfw

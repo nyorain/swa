@@ -41,7 +41,7 @@ static void window_draw(struct swa_window* win) {
 	*/
 
 	swa_window_apply_buffer(win);
-	swa_window_refresh(win);
+	// swa_window_refresh(win);
 }
 
 static const char* mime_utf8 = "text/plain;charset=utf-8";

@@ -2262,8 +2262,9 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 			.modifiers = swa_xkb_modifiers(&dpy->xkb),
 		};
 		dpy->focus->base.listener->key(&dpy->focus->base, &ev);
-		free(utf8);
 	}
+
+	free(utf8);
 
 	bool repeats = xkb_keymap_key_repeats(dpy->xkb.keymap, key + 8);
 	if(pressed && dpy->key_repeat.timer && repeats) {
