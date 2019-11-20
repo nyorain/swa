@@ -698,25 +698,25 @@ static void handle_event(struct swa_display_x11* dpy,
 		};
 
 		union xkb_event* xkbev = (union xkb_event*) ev;
-		dlg_assert(xkbev->any.device_id == dpy->keyboard.device_id);
-
-		switch(xkbev->any.xkb_type) {
-		case XCB_XKB_NEW_KEYBOARD_NOTIFY:
-			if(xkbev->new_keyboard_notify.changed & XCB_XKB_NKN_DETAIL_KEYCODES)
+		if(xkbev->any.device_id == dpy->keyboard.device_id) {
+			switch(xkbev->any.xkb_type) {
+			case XCB_XKB_NEW_KEYBOARD_NOTIFY:
+				if(xkbev->new_keyboard_notify.changed & XCB_XKB_NKN_DETAIL_KEYCODES)
+					init_keymap(dpy);
+				break;
+			case XCB_XKB_MAP_NOTIFY:
 				init_keymap(dpy);
-			break;
-		case XCB_XKB_MAP_NOTIFY:
-			init_keymap(dpy);
-			break;
-		case XCB_XKB_STATE_NOTIFY:
-			xkb_state_update_mask(dpy->keyboard.xkb.state,
-				xkbev->state_notify.baseMods,
-				xkbev->state_notify.latchedMods,
-				xkbev->state_notify.lockedMods,
-				xkbev->state_notify.baseGroup,
-				xkbev->state_notify.latchedGroup,
-				xkbev->state_notify.lockedGroup);
-			break;
+				break;
+			case XCB_XKB_STATE_NOTIFY:
+				xkb_state_update_mask(dpy->keyboard.xkb.state,
+					xkbev->state_notify.baseMods,
+					xkbev->state_notify.latchedMods,
+					xkbev->state_notify.lockedMods,
+					xkbev->state_notify.baseGroup,
+					xkbev->state_notify.latchedGroup,
+					xkbev->state_notify.lockedGroup);
+				break;
+			}
 		}
 	}
 }
@@ -1311,6 +1311,11 @@ struct swa_display* swa_display_x11_create(void) {
 	}
 
 	dpy->keyboard.device_id = xkb_x11_get_core_keyboard_device_id(dpy->conn);
+	if(dpy->keyboard.device_id == -1) {
+		dlg_error("Failed to get x11 core keyboard device id");
+		goto err;
+	}
+
 	struct swa_xkb_context* xkb = &dpy->keyboard.xkb;
 	xkb->context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
 	if(!xkb->context) {
