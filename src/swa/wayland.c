@@ -1833,7 +1833,7 @@ static void touch_up(void* data, struct wl_touch* wl_touch, uint32_t serial,
 }
 
 static void touch_motion(void* data, struct wl_touch* wl_touch, uint32_t time,
-		   int32_t id, wl_fixed_t sx, wl_fixed_t sy) {
+			int32_t id, wl_fixed_t sx, wl_fixed_t sy) {
 	struct swa_display_wl* dpy = data;
 	dlg_assert(dpy->touch == wl_touch);
 	unsigned i = 0u;

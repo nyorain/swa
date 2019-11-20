@@ -111,21 +111,21 @@ const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
-    free(win);
+	free(win);
 }
 
 static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
-    (void) base;
-    return swa_window_cap_cursor |
-        swa_window_cap_fullscreen |
-        swa_window_cap_maximize |
-        swa_window_cap_minimize |
-        swa_window_cap_size |
-        swa_window_cap_size_limits |
-        swa_window_cap_begin_move |
-        swa_window_cap_begin_resize |
-        swa_window_cap_title |
-        swa_window_cap_visibility;
+	(void) base;
+	return swa_window_cap_cursor |
+		swa_window_cap_fullscreen |
+		swa_window_cap_maximize |
+		swa_window_cap_minimize |
+		swa_window_cap_size |
+		swa_window_cap_size_limits |
+		swa_window_cap_begin_move |
+		swa_window_cap_begin_resize |
+		swa_window_cap_title |
+		swa_window_cap_visibility;
 }
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
@@ -205,7 +205,7 @@ static void win_refresh(struct swa_window* base) {
 }
 
 static void win_surface_frame(struct swa_window* base) {
-    (void) base;
+	(void) base;
 	// we might be able to hack something together using
 	// D3DKMTGetDWMVerticalBlankEvent
 	// (we can get the adapter using D3DKMTOpenAdapterFromHdc).
@@ -346,7 +346,7 @@ static void win_apply_buffer(struct swa_window* base) {
 	if(!res) {
 		print_winapi_error("BitBlt");
 	}
-	
+
 	SelectObject(bdc, prev);
 
 cleanup_bdc:
@@ -385,7 +385,7 @@ static const struct swa_window_interface window_impl = {
 // display api
 void display_destroy(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
-    free(dpy);
+	free(dpy);
 }
 
 static bool dispatch_one(void) {
@@ -401,30 +401,30 @@ static bool dispatch_one(void) {
 
 bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_win* dpy = get_display_win(base);
-    if(dpy->error) {
-        return false;
-    }
+	if(dpy->error) {
+		return false;
+	}
 
-    // wait for first message if we are allowed to block
-    if(block) {
-        MSG msg;
-        int ret = GetMessage(&msg, NULL, 0, 0);
-        if(ret == -1) {
-            // winapi documentation suggests that errors here are
-            // of critical nature and exiting the application is the
-            // usual strategy.
+	// wait for first message if we are allowed to block
+	if(block) {
+		MSG msg;
+		int ret = GetMessage(&msg, NULL, 0, 0);
+		if(ret == -1) {
+			// winapi documentation suggests that errors here are
+			// of critical nature and exiting the application is the
+			// usual strategy.
 			print_winapi_error("Critical error in GetMessage");
-            dpy->error = true;
-            return false;
-        } else {
-		    TranslateMessage(&msg);
-		    DispatchMessage(&msg);
-        }
-    }
+			dpy->error = true;
+			return false;
+		} else {
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+		}
+	}
 
-    // dispatch all messages
-    while(dispatch_one());
-    return true;
+	// dispatch all messages
+	while(dispatch_one());
+	return true;
 }
 
 void display_wakeup(struct swa_display* base) {
@@ -444,7 +444,7 @@ enum swa_display_cap display_capabilities(struct swa_display* base) {
 		swa_display_cap_keyboard |
 		swa_display_cap_mouse |
 		swa_display_cap_touch |
-        // TODO: implement data exchange
+		// TODO: implement data exchange
 		// swa_display_cap_dnd |
 		// swa_display_cap_clipboard |
 		swa_display_cap_buffer_surface;
@@ -468,38 +468,38 @@ const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 
 bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return false;
+	return false;
 }
 
 const char* display_key_name(struct swa_display* base, enum swa_key key) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return NULL;
+	return NULL;
 }
 
 enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return swa_keyboard_mod_none;
+	return swa_keyboard_mod_none;
 }
 
 struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return NULL;
+	return NULL;
 }
 
 bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return false;
+	return false;
 }
 void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	struct swa_display_win* dpy = get_display_win(base);
 }
 struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
-    return NULL;
+	return NULL;
 }
 struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_win* dpy = get_display_win(base);
-    return NULL;
+	return NULL;
 }
 bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source) {
@@ -515,7 +515,7 @@ bool display_start_dnd(struct swa_display* base,
 static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	struct swa_window_win* win = (struct swa_window_win*) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	if(!win) {
-    	return DefWindowProc(hwnd, msg, wparam, lparam); 
+		return DefWindowProc(hwnd, msg, wparam, lparam);
 	}
 
 	// TODO:
@@ -549,7 +549,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 		} case WM_SIZE: {
 			unsigned width = LOWORD(lparam);
 			unsigned height = HIWORD(lparam);
-			if((win->width == width && win->height == height) || 
+			if((win->width == width && win->height == height) ||
 					(width == 0 && height == 0)) {
 				break;
 			}
@@ -604,7 +604,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 		}
 	}
 
-    return DefWindowProc(hwnd, msg, wparam, lparam); 
+	return DefWindowProc(hwnd, msg, wparam, lparam);
 }
 
 static wchar_t* widen(const char* utf8) {
@@ -648,7 +648,7 @@ struct swa_window* display_create_window(struct swa_display* base,
 	wcx.hbrBackground = NULL;
 	wcx.lpszMenuName = NULL;
 	wcx.lpszClassName = L"MainWClass";
-	
+
 	if(!RegisterClassExW(&wcx)) {
 		print_winapi_error("RegisterClassEx");
 		goto error;
@@ -713,7 +713,7 @@ static const struct swa_display_interface display_impl = {
 };
 
 struct swa_display* swa_display_win_create(void) {
-    struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
-    dpy->base.impl = &display_impl;
-    return &dpy->base;
+	struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
+	dpy->base.impl = &display_impl;
+	return &dpy->base;
 }

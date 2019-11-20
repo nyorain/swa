@@ -15,8 +15,8 @@ typedef struct _XDisplay Display;
 typedef struct xcb_cursor_context_t xcb_cursor_context_t;
 
 struct swa_display_x11 {
-    struct swa_display base;
-    bool error;
+	struct swa_display base;
+	bool error;
 
 	Display* display;
 	xcb_connection_t* conn;
@@ -108,8 +108,8 @@ struct swa_x11_vk_surface {
 };
 
 struct swa_window_x11 {
-    struct swa_window base;
-    struct swa_display_x11* dpy;
+	struct swa_window base;
+	struct swa_display_x11* dpy;
 
 	// linked list
 	struct swa_window_x11* next;

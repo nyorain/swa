@@ -101,18 +101,18 @@ static void win_destroy(struct swa_window* base) {
 	if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
 	xcb_flush(win->dpy->conn);
 
-    free(win);
+	free(win);
 }
 
 static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
-    return win->dpy->ewmh_caps |
+	return win->dpy->ewmh_caps |
 		swa_window_cap_cursor |
-        swa_window_cap_minimize |
-        swa_window_cap_size |
-        swa_window_cap_size_limits |
-        swa_window_cap_title |
-        swa_window_cap_visibility;
+		swa_window_cap_minimize |
+		swa_window_cap_size |
+		swa_window_cap_size_limits |
+		swa_window_cap_title |
+		swa_window_cap_visibility;
 }
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
@@ -452,7 +452,7 @@ static void display_destroy(struct swa_display* base) {
 
 	if(dpy->conn) xcb_flush(dpy->conn);
 	if(dpy->display) XCloseDisplay(dpy->display);
-    free(dpy);
+	free(dpy);
 }
 
 static struct swa_window_x11* find_window(struct swa_display_x11* dpy,
@@ -953,7 +953,7 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 		swa_display_cap_server_decoration |
 		swa_display_cap_keyboard |
 		swa_display_cap_mouse |
-        // TODO: implement data exchange
+		// TODO: implement data exchange
 		// swa_display_cap_dnd |
 		// swa_display_cap_clipboard |
 		swa_display_cap_buffer_surface;
@@ -1001,13 +1001,13 @@ static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* ba
 
 static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return &dpy->keyboard.focus->base;
+	return &dpy->keyboard.focus->base;
 }
 
 static bool display_mouse_button_pressed(struct swa_display* base,
 		enum swa_mouse_button button) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-    return dpy->mouse.button_states & (1ul << (unsigned) button);
+	return dpy->mouse.button_states & (1ul << (unsigned) button);
 }
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	struct swa_display_x11* dpy = get_display_x11(base);
@@ -1020,7 +1020,7 @@ static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 }
 static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_x11* dpy = get_display_x11(base);
-    return NULL;
+	return NULL;
 }
 static bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source) {
@@ -1264,8 +1264,8 @@ struct swa_display* swa_display_x11_create(void) {
 		return NULL;
 	}
 
-    struct swa_display_x11* dpy = calloc(1, sizeof(*dpy));
-    dpy->base.impl = &display_impl;
+	struct swa_display_x11* dpy = calloc(1, sizeof(*dpy));
+	dpy->base.impl = &display_impl;
 	dpy->display = display;
 	dpy->conn = XGetXCBConnection(display);
 	dpy->screen = xcb_setup_roots_iterator(xcb_get_setup(dpy->conn)).data;
@@ -1522,7 +1522,7 @@ struct swa_display* swa_display_x11_create(void) {
 		goto err;
 	}
 
-    return &dpy->base;
+	return &dpy->base;
 
 err:
 	display_destroy(&dpy->base);

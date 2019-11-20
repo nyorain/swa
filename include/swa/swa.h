@@ -43,33 +43,33 @@ struct swa_image;
 // to understand pixel formats, swa is comparable to the non-packed
 // vulkan formats.
 enum swa_image_format {
-    swa_image_format_none = 0,
-    swa_image_format_a8,
-    swa_image_format_rgba32,
-    swa_image_format_argb32,
-    swa_image_format_xrgb32,
-    swa_image_format_rgb24,
+	swa_image_format_none = 0,
+	swa_image_format_a8,
+	swa_image_format_rgba32,
+	swa_image_format_argb32,
+	swa_image_format_xrgb32,
+	swa_image_format_rgb24,
 
-    swa_image_format_abgr32,
-    swa_image_format_bgra32,
-    swa_image_format_bgrx32,
-    swa_image_format_bgr24,
+	swa_image_format_abgr32,
+	swa_image_format_bgra32,
+	swa_image_format_bgrx32,
+	swa_image_format_bgr24,
 };
 
 // Describes the kind of render surface created for a window.
 enum swa_surface_type {
-    swa_surface_none = 0,
-    swa_surface_buffer,
-    swa_surface_gl,
-    swa_surface_vk,
+	swa_surface_none = 0,
+	swa_surface_buffer,
+	swa_surface_gl,
+	swa_surface_vk,
 };
 
 // Describes a 2 dimensional image.
 struct swa_image {
-    unsigned width, height;
-    unsigned stride; // in bytes
-    enum swa_image_format format;
-    uint8_t* data;
+	unsigned width, height;
+	unsigned stride; // in bytes
+	enum swa_image_format format;
+	uint8_t* data;
 };
 
 // Functional capability of a swa_display implementation.
@@ -79,28 +79,28 @@ struct swa_image {
 // using it to check whether a key is pressed will return an undefined
 // value that has no meaning.
 enum swa_display_cap {
-    swa_display_cap_none = 0,
-    swa_display_cap_gl = (1 << 0),
-    swa_display_cap_vk = (1 << 1),
-    swa_display_cap_buffer_surface = (1 << 2),
-    swa_display_cap_keyboard = (1 << 3),
-    swa_display_cap_mouse = (1 << 4),
-    swa_display_cap_touch = (1 << 5),
-    swa_display_cap_clipboard = (1 << 6),
-    swa_display_cap_dnd = (1 << 7),
+	swa_display_cap_none = 0,
+	swa_display_cap_gl = (1 << 0),
+	swa_display_cap_vk = (1 << 1),
+	swa_display_cap_buffer_surface = (1 << 2),
+	swa_display_cap_keyboard = (1 << 3),
+	swa_display_cap_mouse = (1 << 4),
+	swa_display_cap_touch = (1 << 5),
+	swa_display_cap_clipboard = (1 << 6),
+	swa_display_cap_dnd = (1 << 7),
 	swa_display_cap_client_decoration = (1 << 8),
 	swa_display_cap_server_decoration = (1 << 9)
 };
 
 // Keyboard modifier.
 enum swa_keyboard_mod {
-    swa_keyboard_mod_none = 0,
-    swa_keyboard_mod_shift = (1 << 0),
-    swa_keyboard_mod_ctrl = (1 << 1),
-    swa_keyboard_mod_alt = (1 << 2),
-    swa_keyboard_mod_super = (1 << 3), // aka "windows key"
-    swa_keyboard_mod_caps_lock = (1 << 4),
-    swa_keyboard_mod_num_lock = (1 << 5)
+	swa_keyboard_mod_none = 0,
+	swa_keyboard_mod_shift = (1 << 0),
+	swa_keyboard_mod_ctrl = (1 << 1),
+	swa_keyboard_mod_alt = (1 << 2),
+	swa_keyboard_mod_super = (1 << 3), // aka "windows key"
+	swa_keyboard_mod_caps_lock = (1 << 4),
+	swa_keyboard_mod_num_lock = (1 << 5)
 };
 
 // Functional capability of a swa_window implementation.
@@ -126,11 +126,11 @@ enum swa_window_cap {
 // Represents the current state of a window.
 // Note that this state is independent from the window's visibility.
 enum swa_window_state {
-    swa_window_state_none = 0,
-    swa_window_state_normal,
-    swa_window_state_maximized,
-    swa_window_state_minimized,
-    swa_window_state_fullscreen
+	swa_window_state_none = 0,
+	swa_window_state_normal,
+	swa_window_state_maximized,
+	swa_window_state_minimized,
+	swa_window_state_fullscreen
 };
 
 // The edge of a window. Needed for resizing.
@@ -178,21 +178,21 @@ enum swa_cursor_type {
 };
 
 enum swa_mouse_button {
-    swa_mouse_button_none = 0,
-    swa_mouse_button_left,
-    swa_mouse_button_right,
-    swa_mouse_button_middle,
-    swa_mouse_button_custom1, // often: back
-    swa_mouse_button_custom2, // often: forward
-    swa_mouse_button_custom3,
-    swa_mouse_button_custom4,
-    swa_mouse_button_custom5,
+	swa_mouse_button_none = 0,
+	swa_mouse_button_left,
+	swa_mouse_button_right,
+	swa_mouse_button_middle,
+	swa_mouse_button_custom1, // often: back
+	swa_mouse_button_custom2, // often: forward
+	swa_mouse_button_custom3,
+	swa_mouse_button_custom4,
+	swa_mouse_button_custom5,
 };
 
 enum swa_preference {
-    swa_preference_none = 0, // don't care, use default
-    swa_preference_yes,
-    swa_preference_no,
+	swa_preference_none = 0, // don't care, use default
+	swa_preference_yes,
+	swa_preference_no,
 };
 
 // Defines a cursor.
@@ -200,41 +200,41 @@ enum swa_preference {
 // The hotspot and image members are only relevant
 // when type is 'image'.
 struct swa_cursor {
-    enum swa_cursor_type type;
-    int hx, hy;
-    struct swa_image image;
+	enum swa_cursor_type type;
+	int hx, hy;
+	struct swa_image image;
 };
 
 // Settings for creating opengl surface and context.
 struct swa_gl_surface_settings {
 	// The requested context version
-    unsigned major, minor;
+	unsigned major, minor;
 };
 
 // The instance must remain valid until the window is destroyed.
 // It must have furthermore been created with *all* extensions
 // returned by swa_display_vk_extensions.
 struct swa_vk_surface_settings {
-    uint64_t instance; // type: VkInstance
+	uint64_t instance; // type: VkInstance
 };
 
 struct swa_window_settings {
-    unsigned width, height;
+	unsigned width, height;
 	const char* app_name;
-    const char* title;
-    struct swa_cursor cursor;
+	const char* title;
+	struct swa_cursor cursor;
 
-    enum swa_surface_type surface;
-    union {
+	enum swa_surface_type surface;
+	union {
 		// allow preferred format for buffer surface?
-        struct swa_gl_surface_settings gl;
-        struct swa_vk_surface_settings vk;
-    } surface_settings;
+	struct swa_gl_surface_settings gl;
+	struct swa_vk_surface_settings vk;
+	} surface_settings;
 
-    bool hide; // create the window in a hidden state
-    bool transparent; // allow transparency
-    enum swa_window_state state;
-    enum swa_preference client_decorate;
+	bool hide; // create the window in a hidden state
+	bool transparent; // allow transparency
+	enum swa_window_state state;
+	enum swa_preference client_decorate;
 
 	// The listener object must remain valid until it is changed or the window
 	// is destroyed. Must not be NULL.
@@ -243,42 +243,42 @@ struct swa_window_settings {
 
 struct swa_size_event {
 	// The new size (width and height) of the window.
-    unsigned width;
-    unsigned height;
+	unsigned width;
+	unsigned height;
 };
 
 struct swa_key_event {
 	// The text input this key event generated.
 	// May be NULL, usually this is the case for key release events
 	// or special keys such as escape.
-    const char* utf8;
+	const char* utf8;
 	// Keycode of the pressed or release key.
-    enum swa_key keycode;
+	enum swa_key keycode;
 	// Currently active keyboard modifiers
-    enum swa_keyboard_mod modifiers;
+	enum swa_keyboard_mod modifiers;
 	// Whether the key was pressed or released.
-    bool pressed;
+	bool pressed;
 	// Whether or not this is a repeated event.
 	// Usually only true for press events.
 	// In some cases it may be useful to ignore repeated events.
-    bool repeated;
+	bool repeated;
 };
 
 struct swa_mouse_button_event {
 	// The new mouse position in window-local coordinates.
-    int x, y;
+	int x, y;
 	// The button that was pressed or released.
-    enum swa_mouse_button button;
+	enum swa_mouse_button button;
 	// Whether the button was pressed or released.
-    bool pressed;
+	bool pressed;
 };
 
 struct swa_mouse_move_event {
 	// The new mouse position in window-local coordinates.
-    int x, y;
+	int x, y;
 	// The delta, i.e. the current mouse position minus the last
 	// known position in window-local cordinates.
-    int dx, dy;
+	int dx, dy;
 };
 
 struct swa_mouse_cross_event {
@@ -294,9 +294,9 @@ struct swa_dnd_event {
 	// When `dnd_drop` is called, ownership of this offer is transferred
 	// to the application, i.e. it must free it after being finished
 	// using it.
-    struct swa_data_offer* offer;
+	struct swa_data_offer* offer;
 	// Position of the dnd item in window-local coorindates.
-    int x, y;
+	int x, y;
 };
 
 struct swa_touch_begin_event {
@@ -327,26 +327,26 @@ struct swa_window_listener {
 	// or emitted in response to a call to `swa_window_refresh`.
 	// For newly created windows, this will usually be called, unless
 	// the window is hidden, minimized or otherwise not shown.
-    void (*draw)(struct swa_window*);
+	void (*draw)(struct swa_window*);
 	// Called when the systems signals that this window should be closed.
 	// Can be used to e.g. display a confirmation dialog or just destroy
 	// the window.
-    void (*close)(struct swa_window*);
+	void (*close)(struct swa_window*);
 	// Called when the corresponding `swa_window` was destroyed.
 	// Not further events will be emitted.
-    void (*destroyed)(struct swa_window*);
+	void (*destroyed)(struct swa_window*);
 
 	// Called when the window was resized by the system.
 	// For newly created windows, this will be emitted only when
 	// the initial window size was chosen to be different from the
 	// size passed in the `swa_window_settings`. When the settings
 	// used `SWA_DEFAULT_SIZE`, this event will always be emitted.
-    void (*resize)(struct swa_window*, unsigned width, unsigned height);
+	void (*resize)(struct swa_window*, unsigned width, unsigned height);
 	// Called when the window state changes.
 	// For newly created windows, this will be emitted only when
 	// the initial state chosen by the system is different than the
 	// state passed in `swa_window_settings`.
-    void (*state)(struct swa_window*, enum swa_window_state state);
+	void (*state)(struct swa_window*, enum swa_window_state state);
 
 	// Called when the window receives or loses focus.
 	// If the backend gives a newly created window immediately focus,
@@ -354,16 +354,16 @@ struct swa_window_listener {
 	// Note that the keys that are currently pressed while the window
 	// receives focus can't be known. No key events are generated
 	// and `swa_display_key_pressed` doesn't contain those keys.
-    void (*focus)(struct swa_window*, bool gained);
+	void (*focus)(struct swa_window*, bool gained);
 	// Called when a key is pressed or released while the window has focus.
-    void (*key)(struct swa_window*, const struct swa_key_event*);
+	void (*key)(struct swa_window*, const struct swa_key_event*);
 
 	// Called when the mouse enters or leaves the window.
-    void (*mouse_cross)(struct swa_window*, const struct swa_mouse_cross_event*);
+	void (*mouse_cross)(struct swa_window*, const struct swa_mouse_cross_event*);
 	// Called when the mouse moves over the window.
-    void (*mouse_move)(struct swa_window*, const struct swa_mouse_move_event*);
+	void (*mouse_move)(struct swa_window*, const struct swa_mouse_move_event*);
 	// Called when a mouse button is pressed inside the window.
-    void (*mouse_button)(struct swa_window*, const struct swa_mouse_button_event*);
+	void (*mouse_button)(struct swa_window*, const struct swa_mouse_button_event*);
 	// Called when the mouse wheel is used.
 	// dx describes the delta in horizontal direction (only != 0 for
 	// special horizontal mouse wheels) while dy describes the delta in
@@ -371,52 +371,52 @@ struct swa_window_listener {
 	// mouse wheels).
 	// A delta of 1 or -1 represents one "tick" in positive or negative
 	// direction, respectively.
-    void (*mouse_wheel)(struct swa_window*, float dx, float dy);
+	void (*mouse_wheel)(struct swa_window*, float dx, float dy);
 
 	// Called when a new touch point is created.
-    void (*touch_begin)(struct swa_window*, const struct swa_touch_begin_event*);
+	void (*touch_begin)(struct swa_window*, const struct swa_touch_begin_event*);
 	// Updates the position of a touch point.
-    void (*touch_update)(struct swa_window*, const struct swa_touch_update_event*);
+	void (*touch_update)(struct swa_window*, const struct swa_touch_update_event*);
 	// touch_end: ends a touch point. No further events for this
 	// touch point will be generated.
 	// id: the identification of the touch point as previously introduced
 	//   by `touch_begin`.
-    void (*touch_end)(struct swa_window*, unsigned id);
+	void (*touch_end)(struct swa_window*, unsigned id);
 	// Cancels all currently active touch points.
 	// Should be interpreted as a canceled gesture.
-    void (*touch_cancel)(struct swa_window*);
+	void (*touch_cancel)(struct swa_window*);
 
-    void (*dnd_enter)(struct swa_window*, const struct swa_dnd_event*);
-    void (*dnd_move)(struct swa_window*, const struct swa_dnd_event*);
-    void (*dnd_leave)(struct swa_window*, struct swa_data_offer*);
-    void (*dnd_drop)(struct swa_window*, const struct swa_dnd_event*);
+	void (*dnd_enter)(struct swa_window*, const struct swa_dnd_event*);
+	void (*dnd_move)(struct swa_window*, const struct swa_dnd_event*);
+	void (*dnd_leave)(struct swa_window*, struct swa_data_offer*);
+	void (*dnd_drop)(struct swa_window*, const struct swa_dnd_event*);
 
-    void (*surface_destroyed)(struct swa_window*);
-    void (*surface_created)(struct swa_window*);
+	void (*surface_destroyed)(struct swa_window*);
+	void (*surface_created)(struct swa_window*);
 };
 
 struct swa_exchange_data {
-    const char* data; // textual or raw data
+	const char* data; // textual or raw data
 	uint64_t size;
 };
 
 enum swa_data_action {
-    swa_data_action_none = 0,
-    swa_data_action_copy,
-    swa_data_action_move,
+	swa_data_action_none = 0,
+	swa_data_action_copy,
+	swa_data_action_move,
 };
 
 struct swa_data_source_interface {
-    void (*destroy)(struct swa_data_source*);
-    const char** (*formats)(struct swa_data_source*, unsigned* count);
-    struct swa_exchange_data (*data)(struct swa_data_source*, const char* format);
-    struct swa_image (*image)(struct swa_data_source*);
-    enum swa_data_action (*supported_actions)(struct swa_data_source*);
-    void (*selected_action)(struct swa_data_source*, enum swa_data_action);
+	void (*destroy)(struct swa_data_source*);
+	const char** (*formats)(struct swa_data_source*, unsigned* count);
+	struct swa_exchange_data (*data)(struct swa_data_source*, const char* format);
+	struct swa_image (*image)(struct swa_data_source*);
+	enum swa_data_action (*supported_actions)(struct swa_data_source*);
+	void (*selected_action)(struct swa_data_source*, enum swa_data_action);
 };
 
 struct swa_data_source {
-    struct swa_data_source_interface* impl;
+	struct swa_data_source_interface* impl;
 };
 
 // display api
