@@ -16,14 +16,26 @@ x11:
 - [low] we could implement buffer surfaces using present pixmaps
   more complicated though, we have to do maintain multiple
   buffers (pixmaps)
+- correct buffer surface bpp. Make sure it works for depth 24.
+  See comments in ny/use its fixes & workarounds. Document it
+  as clearly as possible
+	- implement buffer surfaces without shm? might be needed in
+	  some cases
+- remove checked versions in most places. Or only keep them in the
+  debug build somehow?
+
+winapi:
+
+- fix redraw/refresh loop
 
 general
 
 - x11 & wayland backends: make sure that key_states and button_states
-  are never access out of range, even for weird codes
+  are never accessed out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer
   on wayland and grab the cursor on x11
-- interface to query platform phdev vulkan support, see glfw
+- interface to query platform phdev vulkan support, see glfw and
+  example-vulkan.c
 - figure out when to use events and when just use plain parameters in window listener?
 	- clean up touch events. Really include dx, dy in movement?
 	  would make some backend implementations *way* more complicated
@@ -61,3 +73,24 @@ laster
 - allow to share gl contexts between windows
 	- or maybe not create one context per window? not important though,
 	  hundreds of windows isn't a priority usecase 
+
+## References and dev docs
+
+xkbcommon:
+Their whole test folder is really good as examples.
+Especially test/interactive-x11.c for xkb integration.
+
+xpresent extension:
+Keith's blog posts (e.g. https://keithp.com/blogs/Present, there are more
+and his blog. Some things seem slightly different now than described
+there though). And mesa's vulkan/wsi/wsi_common_x11.c which uses
+it extensively.
+
+x11 buffer surfaces:
+The list of sources i noted for ny:
+- https://github.com/freedesktop-unofficial-mirror/xcb__util-image/blob/master/image/xcb_image.c#L158
+- http://xcb.pdx.freedesktop.narkive.com/0u3XxxGY/xcb-put-image
+- https://github.com/freedesktop-unofficial-mirror/xcb__util-image/blob/master/image/xcb_image.h
+- https://www.x.org/releases/X11R7.6/doc/xproto/x11protocol.html#requests:PutImage
+- https://tronche.com/gui/x/xlib/graphics/XPutImage.html
+
