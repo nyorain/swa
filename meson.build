@@ -68,6 +68,7 @@ else
 
 	swa_src += files(
 		'src/swa/xkb.c',
+		'src/swa/xcursor.c',
 		'src/swa/wayland.c',
 		'src/swa/x11.c',
 		'src/swa/egl.c',
@@ -86,7 +87,6 @@ else
 		dep_xkbcommon,
 		dependency('x11', required: op_enable_x11),
 		dependency('x11-xcb', required: op_enable_x11),
-		dependency('xi', required: op_enable_x11),
 		dependency('xcursor', required: op_enable_x11),
 		dependency('xcb', required: op_enable_x11),
 		dependency('xcb-ewmh', required: op_enable_x11),
@@ -95,7 +95,6 @@ else
 		dependency('xcb-present', required: op_enable_x11),
 		dependency('xcb-xinput', required: op_enable_x11),
 		dependency('xcb-xkb', required: op_enable_x11),
-		dependency('xcb-xfixes', required: op_enable_x11),
 		dependency('xkbcommon-x11', required: op_enable_x11),
 	]
 

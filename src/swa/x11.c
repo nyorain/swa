@@ -8,8 +8,11 @@
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <X11/Xlib-xcb.h>
+#include <X11/Xcursor/Xcursor.h>
+#include <X11/cursorfont.h>
 
 #include <xcb/xcb.h>
+#include <xcb/xcb_icccm.h>
 #include <xcb/present.h>
 #include <xcb/xinput.h>
 #include <xcb/shm.h>
@@ -25,6 +28,9 @@
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 static const unsigned max_prop_length = 0x1fffffff;
+
+// from xcursor.c
+const char* const* swa_get_xcursor_names(enum swa_cursor_type type);
 
 // utility
 static struct swa_display_x11* get_display_x11(struct swa_display* base) {
@@ -90,8 +96,9 @@ static void win_destroy(struct swa_window* base) {
 	if(win->dpy->keyboard.focus == win) win->dpy->keyboard.focus = NULL;
 	if(win->dpy->mouse.over == win) win->dpy->mouse.over = NULL;
 
-	if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
 	if(win->window) xcb_destroy_window(dpy->conn, win->window);
+	if(win->cursor) xcb_free_cursor(dpy->conn, win->cursor);
+	if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
 	xcb_flush(win->dpy->conn);
 
     free(win);
@@ -110,10 +117,22 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	xcb_size_hints_t hints = {0};
+	hints.min_width = w;
+	hints.min_height = h;
+	hints.flags = XCB_ICCCM_SIZE_HINT_P_MIN_SIZE;
+	xcb_icccm_set_wm_normal_hints(win->dpy->conn, win->window, &hints);
 }
 
 static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	xcb_size_hints_t hints = {0};
+	hints.max_width = w;
+	hints.max_height = h;
+	hints.flags = XCB_ICCCM_SIZE_HINT_P_MAX_SIZE;
+	xcb_icccm_set_wm_normal_hints(win->dpy->conn, win->window, &hints);
 }
 
 static void win_show(struct swa_window* base, bool show) {
@@ -127,10 +146,106 @@ static void win_show(struct swa_window* base, bool show) {
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_x11* win = get_window_x11(base);
+	uint32_t data[] = {w, h};
+	xcb_configure_window(win->dpy->conn, win->window,
+		XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, data);
+}
+
+struct swa_x11_cursor {
+	enum swa_cursor_type type;
+	xcb_cursor_t cursor;
+};
+
+static xcb_cursor_t get_cursor(struct swa_display_x11* dpy,
+		enum swa_cursor_type type) {
+	for(unsigned i = 0u; i < dpy->n_cursors; ++dpy) {
+		if(dpy->cursors[i].type == type) {
+			return dpy->cursors[i].cursor;
+		}
+	}
+
+	xcb_cursor_t cursor = 0;
+	if(type == swa_cursor_none) {
+		xcb_pixmap_t pixmap = xcb_generate_id(dpy->conn);
+		xcb_create_pixmap(dpy->conn, 1, pixmap, dpy->dummy_window, 1, 1);
+		cursor = xcb_generate_id(dpy->conn);
+		xcb_create_cursor(dpy->conn, cursor, pixmap, pixmap,
+			0, 0, 0, 0, 0, 0, 0, 0);
+		xcb_free_pixmap(dpy->conn, pixmap);
+	} else {
+		// NOTE: the reason we use xcursor here (Xlib api) is because
+		// xcb would require us to use xcb_cursor and xcb_render (for custom
+		// image cursors). Both are probably not as widely
+		// available/installed as libxcursor.
+		// We should probably switch at some point though.
+		const char* const* names = swa_get_xcursor_names(type);
+		if(!names) {
+			dlg_warn("failed to convert cursor type %d to xcursor", type);
+			return cursor;
+		}
+
+		while(*names) {
+			cursor = XcursorLibraryLoadCursor(dpy->display, *names);
+			if(cursor) {
+				break;
+			} else {
+				dlg_debug("failed to retrieve xcursor %s", *names);
+			}
+		}
+	}
+
+	if(!cursor) {
+		dlg_warn("Failed to create cursor for cursor type %d", type);
+		return cursor;
+	}
+
+	++dpy->n_cursors;
+	dpy->cursors = realloc(dpy->cursors, dpy->n_cursors * sizeof(*dpy->cursors));
+
+	dpy->cursors[dpy->n_cursors - 1].cursor = cursor;
+	dpy->cursors[dpy->n_cursors - 1].type = type;
+	return dpy->cursors[dpy->n_cursors - 1].cursor;
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	// for swa_cursor_default we simply unset the cursor (set it to XCB_NONE)
+	// so that the parent cursor will be used
+	xcb_cursor_t xcursor = XCB_NONE;
+	bool owned = false;
+	if(cursor.type == swa_cursor_image) {
+		struct swa_image* img = &cursor.image;
+		XcursorImage* xcimage = XcursorImageCreate(img->width, img->height);
+		xcimage->xhot = cursor.hx;
+		xcimage->yhot = cursor.hy;
+
+		struct swa_image dst = {
+			.width = img->width,
+			.height = img->height,
+			.stride = 4 * img->width,
+			.data = (uint8_t*) xcimage->pixels,
+			.format = swa_image_format_toggle_byte_word(swa_image_format_argb32),
+		};
+
+		swa_convert_image(img, &dst);
+		xcursor = XcursorImageLoadCursor(win->dpy->display, xcimage);
+		if(!xcursor) {
+			dlg_warn("XcursorImageLoadCursor failed");
+		}
+
+		XcursorImageDestroy(xcimage);
+		owned = true;
+	} else if(cursor.type != swa_cursor_default) {
+		xcursor = get_cursor(win->dpy, cursor.type);
+	}
+
+	if(win->cursor) {
+		xcb_free_cursor(win->dpy->conn, win->cursor);
+	}
+	dlg_info("set cursor: %d", xcursor);
+	xcb_change_window_attributes(win->dpy->conn, win->window,
+		XCB_CW_CURSOR, &xcursor);
 }
 
 static void win_refresh(struct swa_window* base) {
@@ -318,13 +433,25 @@ static const struct swa_window_interface window_impl = {
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-	dlg_assertm(!dpy->window_list, "Still windows left");
+	if(!dpy->display) {
+		free(dpy);
+		return;
+	}
 
+	dlg_assertm(!dpy->window_list, "Still windows left");
+	dlg_assert(dpy->conn || !dpy->n_cursors);
+
+	for(unsigned i = 0u; i < dpy->n_cursors; ++i) {
+		xcb_free_cursor(dpy->conn, dpy->cursors[i].cursor);
+	}
+
+	free(dpy->cursors);
 	swa_xkb_finish(&dpy->keyboard.xkb);
-	if(dpy->conn) xcb_flush(dpy->conn);
 	if(dpy->next_event) free(dpy->next_event);
-	if(dpy->display) XCloseDisplay(dpy->display);
 	xcb_ewmh_connection_wipe(&dpy->ewmh);
+
+	if(dpy->conn) xcb_flush(dpy->conn);
+	if(dpy->display) XCloseDisplay(dpy->display);
     free(dpy);
 }
 
@@ -1042,6 +1169,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	pid_t pid = getpid();
 	xcb_ewmh_set_wm_pid(&dpy->ewmh, win->window, pid);
+
+	if(settings->cursor.type != swa_cursor_default) {
+		win_set_cursor(&win->base, settings->cursor);
+	}
 
 	// create surface
 	win->surface_type = settings->surface;

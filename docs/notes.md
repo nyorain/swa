@@ -23,6 +23,7 @@ x11:
 	  some cases
 - remove checked versions in most places. Or only keep them in the
   debug build somehow?
+- todo: touch input
 
 winapi:
 

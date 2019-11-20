@@ -42,6 +42,9 @@ static const struct wl_callback_listener cursor_frame_listener;
 
 static char* last_wl_log = NULL;
 
+// from xcursor.c
+const char* const* swa_get_xcursor_names(enum swa_cursor_type type);
+
 // utility
 static struct swa_display_wl* get_display_wl(struct swa_display* base) {
 	dlg_assert(base->impl == &display_impl);
@@ -406,41 +409,6 @@ static void set_cursor(struct swa_display_wl* dpy, struct swa_window_wl* win) {
 	wl_surface_commit(dpy->cursor.surface);
 }
 
-static const struct {
-	enum swa_cursor_type cursor;
-	const char* name;
-} cursor_map[] = {
-	{swa_cursor_left_pointer, "left_ptr"},
-	{swa_cursor_load, "watch"},
-	{swa_cursor_load_pointer, "left_ptr_watch"},
-	{swa_cursor_right_pointer, "right_ptr"},
-	{swa_cursor_hand, "pointer"},
-	{swa_cursor_grab, "grab"},
-	{swa_cursor_crosshair, "cross"},
-	{swa_cursor_help, "question_arrow"},
-	{swa_cursor_beam, "xterm"},
-	{swa_cursor_forbidden, "crossed_circle"},
-	{swa_cursor_size, "bottom_left_corner"},
-	{swa_cursor_size_bottom, "bottom_side"},
-	{swa_cursor_size_bottom_left, "bottom_left_corner"},
-	{swa_cursor_size_bottom_right, "bottom_right_corner"},
-	{swa_cursor_size_top, "top_side"},
-	{swa_cursor_size_top_left, "top_left_corner"},
-	{swa_cursor_size_top_right, "top_right_corner"},
-	{swa_cursor_size_left, "left_side"},
-	{swa_cursor_size_right, "right_side"},
-};
-
-static const char* cursor_name(enum swa_cursor_type type) {
-	const unsigned count = sizeof(cursor_map) / sizeof(cursor_map[0]);
-	for(unsigned i = 0u; i < count; ++i) {
-		if(cursor_map[i].cursor == type) {
-			return cursor_map[i].name;
-		}
-	}
-
-	return NULL;
-}
 
 // window api
 static void win_destroy(struct swa_window* base) {
@@ -570,6 +538,12 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	}
 
 	enum swa_cursor_type type = cursor.type;
+
+	// There is no concept of a "default" cursor type on wayland.
+	// Note that unsetting the cursor (i.e. not actively setting any
+	// cursor on pointer enter) is *not* what we want since then the
+	// previous cursor will just be shown (which may be anything, depending
+	// on the window we come from).
 	if(type == swa_cursor_default) {
 		type = swa_cursor_left_pointer;
 	}
@@ -602,18 +576,29 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		};
 		swa_convert_image(&cursor.image, &dst);
 	} else {
-		const char* cname = cursor_name(type);
-		if(!cname) {
+		const char* const* names = swa_get_xcursor_names(type);
+		if(!names) {
 			dlg_warn("failed to convert cursor type %d to xcursor", type);
-			cname = cursor_name(swa_cursor_left_pointer);
-		}
-
-		win->cursor.native = wl_cursor_theme_get_cursor( win->dpy->cursor.theme, cname);
-		if(!win->cursor.native) {
-			dlg_warn("failed to retrieve cursor %s", cname);
 			return;
 		}
 
+		struct wl_cursor* cursor = NULL;
+		while(*names) {
+			struct wl_cursor* cursor = wl_cursor_theme_get_cursor(
+				win->dpy->cursor.theme, *names);
+			if(cursor) {
+				break;
+			} else {
+				dlg_debug("failed to retrieve cursor %s", *names);
+			}
+		}
+
+		if(!win->cursor.native) {
+			dlg_warn("Failed to get any cursor for cursor type %d", type);
+			return;
+		}
+
+		win->cursor.native = cursor;
 		buffer_finish(&win->cursor.buffer);
 	}
 

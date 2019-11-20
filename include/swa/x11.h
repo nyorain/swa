@@ -12,6 +12,7 @@ extern "C" {
 
 // xlib/xcb forward declarations
 typedef struct _XDisplay Display;
+typedef struct xcb_cursor_context_t xcb_cursor_context_t;
 
 struct swa_display_x11 {
     struct swa_display base;
@@ -27,6 +28,9 @@ struct swa_display_x11 {
 	xcb_window_t dummy_window;
 	struct swa_window_x11* window_list;
 	struct swa_window_x11* focus;
+
+	unsigned n_cursors;
+	struct swa_x11_cursor* cursors;
 
 	struct {
 		unsigned x,y;
@@ -114,6 +118,7 @@ struct swa_window_x11 {
 	xcb_window_t window;
 	xcb_colormap_t colormap;
 	xcb_visualtype_t* visualtype;
+	xcb_cursor_t cursor;
 	unsigned depth;
 
 	// only when using present extension:

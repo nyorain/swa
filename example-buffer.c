@@ -54,7 +54,7 @@ int main() {
 	}
 
 	struct swa_cursor cursor;
-	cursor.type = swa_cursor_beam;
+	cursor.type = swa_cursor_right_pointer;
 
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
