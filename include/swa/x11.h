@@ -124,6 +124,8 @@ struct swa_window_x11 {
 		// present notify event was still pending
 		bool redraw;
 		xcb_present_event_t context;
+		// the msc (counter) we want to get notified for redrawing
+		uint64_t target_msc;
 	} present;
 
 	unsigned width;

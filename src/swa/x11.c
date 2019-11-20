@@ -49,6 +49,10 @@ static struct swa_window_x11* get_window_x11(struct swa_window* base) {
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
+	if(!win->dpy) {
+		free(win);
+		return;
+	}
 
 	// destroy surface buffer
 	if(win->surface_type == swa_surface_buffer) {
@@ -76,18 +80,19 @@ static void win_destroy(struct swa_window* base) {
 #endif
 	}
 
-	if(win->dpy) {
-		struct swa_display_x11* dpy = win->dpy;
-		if(win->next) win->next->prev = win->prev;
-		if(win->prev) win->prev->next = win->next;
-		if(win->dpy->window_list == win) {
-			win->dpy->window_list = NULL;
-		}
-
-		if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
-		if(win->window) xcb_destroy_window(dpy->conn, win->window);
-		xcb_flush(win->dpy->conn);
+	struct swa_display_x11* dpy = win->dpy;
+	if(win->next) win->next->prev = win->prev;
+	if(win->prev) win->prev->next = win->next;
+	if(win->dpy->window_list == win) {
+		win->dpy->window_list = NULL;
 	}
+
+	if(win->dpy->keyboard.focus == win) win->dpy->keyboard.focus = NULL;
+	if(win->dpy->mouse.over == win) win->dpy->mouse.over = NULL;
+
+	if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
+	if(win->window) xcb_destroy_window(dpy->conn, win->window);
+	xcb_flush(win->dpy->conn);
 
     free(win);
 }
@@ -153,7 +158,8 @@ static void win_surface_frame(struct swa_window* base) {
 				win->window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
 		}
 
-		xcb_present_notify_msc(win->dpy->conn, win->window, 0, 0, 1, 0);
+		xcb_present_notify_msc(win->dpy->conn, win->window, 0,
+			win->present.target_msc, 1, 0);
 		win->present.pending = true;
 	}
 
@@ -312,6 +318,10 @@ static const struct swa_window_interface window_impl = {
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
+	dlg_assertm(!dpy->window_list, "Still windows left");
+
+	swa_xkb_finish(&dpy->keyboard.xkb);
+	if(dpy->conn) xcb_flush(dpy->conn);
 	if(dpy->next_event) free(dpy->next_event);
 	if(dpy->display) XCloseDisplay(dpy->display);
 	xcb_ewmh_connection_wipe(&dpy->ewmh);
@@ -339,6 +349,13 @@ static void handle_present_event(struct swa_display_x11* dpy,
 			(xcb_present_complete_notify_event_t*) ev;
 		struct swa_window_x11* win = find_window(dpy, complete->window);
 		if(win) {
+			dlg_assert(win->present.context == complete->event);
+			dlg_debug("%lu, %lu", complete->msc, win->present.target_msc);
+			if(complete->msc < win->present.target_msc) {
+				break;
+			}
+
+			win->present.target_msc = complete->msc + 1; // for next frame
 			win->present.pending = false;
 			if(win->present.redraw) {
 				win->present.redraw = false;
@@ -452,9 +469,15 @@ static void handle_event(struct swa_display_x11* dpy,
 	} case XCB_CONFIGURE_NOTIFY: {
 		xcb_configure_notify_event_t* configure =
 			(xcb_configure_notify_event_t*) ev;
+		// TODO: reload states
 		if((win = find_window(dpy, configure->window))) {
-			win->width = configure->width;
-			win->height = configure->height;
+			if(win->width != configure->width || win->height != configure->height) {
+				win->width = configure->width;
+				win->height = configure->height;
+				if(win->base.listener->resize) {
+					win->base.listener->resize(&win->base, win->width, win->height);
+				}
+			}
 		}
 		// we don't have to draw, the xserver will send an expose event
 		break;
@@ -646,7 +669,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		struct xcb_key_press_event_t* kp =
 			(struct xcb_key_press_event_t*) dpy->next_event;
 		if(kp && (kp->response_type & ~0x80) == XCB_KEY_PRESS) {
-			if(kp->time == kp->time && kp->detail == kp->detail) {
+			if(kev->time == kp->time && kev->detail == kp->detail) {
 				// just ignore this event
 				dpy->keyboard.repeated = true;
 				break;
@@ -1229,6 +1252,7 @@ struct swa_display* swa_display_x11_create(void) {
 			if(max_horz && max_vert) dpy->ewmh_caps |= swa_window_cap_maximize;
 			if(fullscreen) dpy->ewmh_caps |= swa_window_cap_fullscreen;
 		}
+		free(reply);
 	} else {
 		handle_error(dpy, err, "get_property on _NET_SUPPORTED");
 	}

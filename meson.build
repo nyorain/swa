@@ -196,6 +196,18 @@ executable('example',
 	'example.c',
 	dependencies: [swa_dep, dep_dlg])
 
+executable('example-buffer',
+	'example-buffer.c',
+	dependencies: [swa_dep, dep_dlg])
+
+executable('example-exchange',
+	'example-exchange.c',
+	dependencies: [swa_dep, dep_dlg])
+
+executable('example-vulkan',
+	'example-vulkan.c',
+	dependencies: [swa_dep, dep_dlg, dep_vulkan])
+
 executable('example-gl',
 	'example-gl.c',
 	dependencies: [swa_dep, dep_dlg, dependency('gl', required: true)])

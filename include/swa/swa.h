@@ -213,7 +213,7 @@ struct swa_gl_surface_settings {
 
 // The instance must remain valid until the window is destroyed.
 // It must have furthermore been created with *all* extensions
-// returned by swa_display_get_vk_extensions.
+// returned by swa_display_vk_extensions.
 struct swa_vk_surface_settings {
     uint64_t instance; // type: VkInstance
 };
@@ -449,6 +449,7 @@ SWA_API enum swa_display_cap swa_display_capabilities(struct swa_display*);
 // create vulkan surfaces.
 // - count: the number of required extensions, i.e. the size of the
 //   returned array pointer. Must not be NULL
+// The returned array must not be freed, neither must the strings in it.
 SWA_API const char** swa_display_vk_extensions(struct swa_display*, unsigned* count);
 
 
