@@ -35,6 +35,7 @@ struct swa_display_wl {
 
 	struct swa_xkb_context xkb;
 
+	const char* appname;
 	int wakeup_pipe_w, wakeup_pipe_r;
 	struct pml_io* wakeup_io;
 	uint64_t key_states[16]; // bitset
@@ -182,7 +183,7 @@ struct swa_data_offer_wl {
 	} data;
 };
 
-struct swa_display* swa_display_wl_create(void);
+struct swa_display* swa_display_wl_create(const char* appname);
 
 #ifdef __cplusplus
 }

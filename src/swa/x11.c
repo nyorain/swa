@@ -108,6 +108,7 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
 	return win->dpy->ewmh_caps |
 		swa_window_cap_cursor |
+		swa_window_cap_icon |
 		swa_window_cap_minimize |
 		swa_window_cap_size |
 		swa_window_cap_size_limits |
@@ -243,7 +244,8 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	if(win->cursor) {
 		xcb_free_cursor(win->dpy->conn, win->cursor);
 	}
-	dlg_info("set cursor: %d", xcursor);
+
+	win->cursor = owned ? xcursor : 0;
 	xcb_change_window_attributes(win->dpy->conn, win->window,
 		XCB_CW_CURSOR, &xcursor);
 }
@@ -283,26 +285,135 @@ static void win_surface_frame(struct swa_window* base) {
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	// first remove all relevant state atoms.
+	// restoring an unminimized window isn't that easy. Seems to
+	// usually work by setting _NET_ACTIVE_WINDOW but that might be
+	// unexpected as well. Not sure what expected behavior is. We simply
+	// don't support explicit restoring of windows.
+	xcb_ewmh_wm_state_action_t action = (state == swa_window_state_fullscreen) ?
+		XCB_EWMH_WM_STATE_REMOVE :
+		XCB_EWMH_WM_STATE_ADD;
+	xcb_ewmh_request_change_wm_state(&win->dpy->ewmh, 0, win->window, action,
+		win->dpy->ewmh._NET_WM_STATE_FULLSCREEN, 0,
+		XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+
+	action = (state == swa_window_state_maximized) ?
+		XCB_EWMH_WM_STATE_REMOVE :
+		XCB_EWMH_WM_STATE_ADD;
+	xcb_ewmh_request_change_wm_state(&win->dpy->ewmh, 0, win->window, action,
+		win->dpy->ewmh._NET_WM_STATE_MAXIMIZED_HORZ,
+		win->dpy->ewmh._NET_WM_STATE_MAXIMIZED_VERT,
+		XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+
+	// minimize = iconify
+	// we could use XIconifyWindow, it does just this
+	if(state == swa_window_state_minimized) {
+		xcb_client_message_event_t event = {0};
+		event.response_type = XCB_CLIENT_MESSAGE;
+		event.window = win->window;
+		event.type = win->dpy->atoms.wm_change_state;
+		event.format = 32;
+		event.data.data32[0] = XCB_ICCCM_WM_STATE_ICONIC;
+
+		xcb_event_mask_t mask = XCB_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+			XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+		xcb_window_t root = win->dpy->screen->root;
+		xcb_send_event(win->dpy->conn, false, root, mask, (const char*) &event);
+	}
 }
 
 static void win_begin_move(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
+	xcb_button_index_t index = XCB_BUTTON_INDEX_ANY;
+
+	// if the display has an active mouse button set, this function was
+	// called during the handling of a button press or release event.
+	// We therefore ungrab the pointer since on button presses, we
+	// get an implicit grab that prevents the moveresize action.
+	if(win->dpy->mouse.button) {
+		index = win->dpy->mouse.button;
+		xcb_ungrab_pointer(win->dpy->conn, XCB_TIME_CURRENT_TIME);
+	}
+
+	xcb_ewmh_request_wm_moveresize(&win->dpy->ewmh, 0, win->window,
+		win->dpy->mouse.x, win->dpy->mouse.y, XCB_EWMH_WM_MOVERESIZE_MOVE,
+		index, XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+}
+
+static xcb_ewmh_moveresize_direction_t edge_to_x11(enum swa_edge edge) {
+	switch(edge) {
+		case swa_edge_top: return XCB_EWMH_WM_MOVERESIZE_SIZE_TOP;
+		case swa_edge_bottom: return XCB_EWMH_WM_MOVERESIZE_SIZE_BOTTOM;
+		case swa_edge_right: return XCB_EWMH_WM_MOVERESIZE_SIZE_RIGHT;
+		case swa_edge_left: return XCB_EWMH_WM_MOVERESIZE_SIZE_LEFT;
+		case swa_edge_top_right: return XCB_EWMH_WM_MOVERESIZE_SIZE_TOPRIGHT;
+		case swa_edge_top_left: return XCB_EWMH_WM_MOVERESIZE_SIZE_TOPLEFT;
+		case swa_edge_bottom_left: return XCB_EWMH_WM_MOVERESIZE_SIZE_BOTTOMLEFT;
+		case swa_edge_bottom_right: return XCB_EWMH_WM_MOVERESIZE_SIZE_BOTTOMRIGHT;
+		default: return 0;
+	}
 }
 
 static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 	struct swa_window_x11* win = get_window_x11(base);
+	xcb_ewmh_moveresize_direction_t action = edge_to_x11(edges);
+	if(!action) {
+		dlg_warn("Invalid edge: %d", edges);
+		return;
+	}
+
+	xcb_button_index_t index = XCB_BUTTON_INDEX_ANY;
+
+	// if the display has an active mouse button set, this function was
+	// called during the handling of a button press or release event.
+	// We therefore ungrab the pointer since on button presses, we
+	// get an implicit grab that prevents the moveresize action.
+	if(win->dpy->mouse.button) {
+		index = win->dpy->mouse.button;
+		xcb_ungrab_pointer(win->dpy->conn, XCB_TIME_CURRENT_TIME);
+	}
+
+	xcb_ewmh_request_wm_moveresize(&win->dpy->ewmh, 0, win->window,
+		win->dpy->mouse.x, win->dpy->mouse.y, action,
+		index, XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
 }
 
 static void win_set_title(struct swa_window* base, const char* title) {
 	struct swa_window_x11* win = get_window_x11(base);
+	xcb_ewmh_set_wm_name(&win->dpy->ewmh, win->window, strlen(title), title);
 }
 
 static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
 	struct swa_window_x11* win = get_window_x11(base);
+	if(img && img->data) {
+		size_t count = 2 + img->width * img->height * 4;
+		uint32_t* data = malloc(count);
+		data[0] = img->width;
+		data[1] = img->height;
+
+		struct swa_image dst = {
+			.width = img->width,
+			.height = img->height,
+			.stride = 4 * img->width,
+			.data = (uint8_t*) (data + 2),
+			.format = swa_image_format_toggle_byte_word(swa_image_format_rgba32),
+		};
+
+		swa_convert_image(img, &dst);
+		xcb_ewmh_set_wm_icon(&win->dpy->ewmh, XCB_PROP_MODE_REPLACE,
+			win->window, count, data);
+		free(data);
+	} else {
+		uint32_t buffer[2] = {0};
+		xcb_ewmh_set_wm_icon(&win->dpy->ewmh, XCB_PROP_MODE_REPLACE,
+			win->window, 2, buffer);
+	}
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {
-	return false;
+	struct swa_window_x11* win = get_window_x11(base);
+	return win->client_decorated;
 }
 
 static uint64_t win_get_vk_surface(struct swa_window* base) {
@@ -349,7 +460,12 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 
 	// check if we have to recreate the buffer
 	unsigned fmt_size = swa_image_format_size(win->buffer.format);
-	uint64_t n_bytes = win->width * win->height * fmt_size;
+	unsigned stride = win->width * fmt_size;
+	unsigned m = stride % win->buffer.scanline_align;
+	if(m) {
+		stride += (win->buffer.scanline_align - m);
+	}
+	uint64_t n_bytes = win->height * stride;
 	if(n_bytes > win->buffer.n_bytes) {
 		buf->n_bytes = n_bytes * 4; // overallocate for resizing
 		if(win->dpy->ext.shm) {
@@ -373,7 +489,7 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 	img->format = buf->format;
 	img->width = win->width;
 	img->height = win->height;
-	img->stride = fmt_size * win->width;
+	img->stride = stride;
 
 	return true;
 }
@@ -477,7 +593,8 @@ static void handle_present_event(struct swa_display_x11* dpy,
 		struct swa_window_x11* win = find_window(dpy, complete->window);
 		if(win) {
 			dlg_assert(win->present.context == complete->event);
-			dlg_debug("%lu, %lu", complete->msc, win->present.target_msc);
+			dlg_debug("complete.msc: %lu, target_msc: %lu",
+				complete->msc, win->present.target_msc);
 			if(complete->msc < win->present.target_msc) {
 				break;
 			}
@@ -588,6 +705,18 @@ static void handle_event(struct swa_display_x11* dpy,
 	case XCB_EXPOSE: {
 		xcb_expose_event_t* expose = (xcb_expose_event_t*) ev;
 		if((win = find_window(dpy, expose->window))) {
+			// When we receive the first expose even for this window
+			// we just assume that no resize event - forcing it into
+			// a different size - will come.
+			// This is just a guess and no guarantee.
+			if(win->init_size_pending) {
+				win->init_size_pending = false;
+				if(win->base.listener->resize) {
+					win->base.listener->resize(&win->base,
+						win->width, win->height);
+				}
+			}
+
 			if(win->base.listener->draw) {
 				win->base.listener->draw(&win->base);
 			}
@@ -596,9 +725,12 @@ static void handle_event(struct swa_display_x11* dpy,
 	} case XCB_CONFIGURE_NOTIFY: {
 		xcb_configure_notify_event_t* configure =
 			(xcb_configure_notify_event_t*) ev;
-		// TODO: reload states
+		// TODO: check states and send state event if needed?
 		if((win = find_window(dpy, configure->window))) {
-			if(win->width != configure->width || win->height != configure->height) {
+			if(win->init_size_pending ||
+					win->width != configure->width ||
+					win->height != configure->height) {
+				win->init_size_pending = false;
 				win->width = configure->width;
 				win->height = configure->height;
 				if(win->base.listener->resize) {
@@ -652,12 +784,15 @@ static void handle_event(struct swa_display_x11* dpy,
 				win->base.listener->mouse_wheel(&win->base, sx, sy);
 			} else if(button != swa_mouse_button_none &&
 					win->base.listener->mouse_button) {
+				// See begin_move and begin_resize functions
+				dpy->mouse.button = bev->detail;
 				struct swa_mouse_button_event lev;
 				lev.button = button;
 				lev.pressed = true;
 				lev.x = bev->event_x;
 				lev.y = bev->event_y;
 				win->base.listener->mouse_button(&win->base, &lev);
+				dpy->mouse.button = 0;
 			}
 		}
 
@@ -673,12 +808,15 @@ static void handle_event(struct swa_display_x11* dpy,
 			dpy->mouse.button_states &= ~(1ul << (unsigned) button);
 			if(button != swa_mouse_button_none &&
 					win->base.listener->mouse_button) {
+				// See begin_move and begin_resize functions
+				dpy->mouse.button = bev->detail;
 				struct swa_mouse_button_event lev;
 				lev.button = button;
 				lev.pressed = false;
 				lev.x = bev->event_x;
 				lev.y = bev->event_y;
 				win->base.listener->mouse_button(&win->base, &lev);
+				dpy->mouse.button = 0;
 			}
 		}
 
@@ -949,7 +1087,9 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 #ifdef SWA_WITH_VK
 		swa_display_cap_vk |
 #endif
-		swa_display_cap_client_decoration | // TODO: depends on wm i guess
+		// TODO: only depends this if wm supports motif wm hints?
+		// would depend on hardcoded list of wms though, can't be queried...
+		swa_display_cap_client_decoration |
 		swa_display_cap_server_decoration |
 		swa_display_cap_keyboard |
 		swa_display_cap_mouse |
@@ -1033,9 +1173,22 @@ static bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
+// The difference between depth and bpp (bits per pixel):
+// bits per pixel describes how many bits each pixel occupies in
+// memory while depth describes how many of those hold meaningful
+// values.
 static enum swa_image_format visual_to_format(const xcb_visualtype_t* v,
-		unsigned int depth) {
+		unsigned int depth, unsigned int bpp) {
+	// We only handle the following cases:
+	// - depth = bpp = 24: rgb 8-bit format
+	// - depth = bpp = 32: rgba 8-bit format
+	// - depth = 24, bpp = 32: rgbx 8-bit format
+	// These cover all formats in swa_image_format
 	if(depth != 24 && depth != 32) {
+		return swa_image_format_none;
+	}
+
+	if(depth != bpp && (depth != 24 || bpp != 32)) {
 		return swa_image_format_none;
 	}
 
@@ -1044,20 +1197,26 @@ static enum swa_image_format visual_to_format(const xcb_visualtype_t* v,
 	// the logical mask for <color>, i.e. the color format on a native word.
 	// We therefore first map the masks to a format in word order and
 	// then use toggle_byte_word below to get the byte order format.
+	const uint32_t b1 = 0xFF000000u;
+	const uint32_t b2 = 0x00FF0000u;
+	const uint32_t b3 = 0x0000FF00u;
+	const uint32_t b4 = 0x000000FFu;
 	static const struct {
+		uint32_t bpp;
 		uint32_t r, g, b, a;
 		enum swa_image_format format; // in word order
 	} formats[] = {
-		{ 0xFF000000u, 0x00FF0000u, 0x0000FF00u, 0x000000FFu, swa_image_format_rgba32 },
-		{ 0x0000FF00u, 0x00FF0000u, 0xFF000000u, 0x000000FFu, swa_image_format_bgra32 },
-		{ 0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0xFF000000u, swa_image_format_argb32 },
-		{ 0x00FF0000u, 0x0000FF00u, 0x000000FFu, 0u, swa_image_format_rgb24 },
-		{ 0x000000FFu, 0x0000FF00u, 0x00FF0000u, 0u, swa_image_format_bgr24 },
+		{32, b1, b2, b3, b4, swa_image_format_rgba32},
+		{32, b3, b2, b1, b4, swa_image_format_bgra32},
+		{32, b2, b3, b4, b1, swa_image_format_argb32},
+		{24, b1, b2, b3, 0u, swa_image_format_rgb24},
+		{24, b3, b2, b1, 0u, swa_image_format_bgr24},
+		{32, b3, b2, b1, 0u, swa_image_format_bgrx32},
+		{32, b2, b3, b4, 0u, swa_image_format_xrgb32},
 	};
 	const unsigned len = sizeof(formats) / sizeof(formats[0]);
 
-	// NOTE: this is hacky and we shouldn't depend on it.
-	// Usually works though
+	// NOTE: this is kinda hacky and we shouldn't depend on it.
 	unsigned a = 0u;
 	if(depth == 32) {
 		a = 0xFFFFFFFFu & ~(v->red_mask | v->green_mask | v->blue_mask);
@@ -1067,12 +1226,57 @@ static enum swa_image_format visual_to_format(const xcb_visualtype_t* v,
 		if(v->red_mask == formats[i].r &&
 				v->green_mask == formats[i].g &&
 				v->blue_mask == formats[i].b &&
-				a == formats[i].a) {
+				a == formats[i].a &&
+				bpp == formats[i].bpp) {
 			return swa_image_format_toggle_byte_word(formats[i].format);
 		}
 	}
 
 	return swa_image_format_none;
+}
+
+// Returns the score of the visual.
+// If the score is negative, the visual is already perfect.
+static int rate_visual(struct swa_display_x11* dpy,
+		const struct swa_window_settings* settings, xcb_visualtype_t* visual,
+		enum swa_image_format format, unsigned depth) {
+	int s = 1; // baseline
+	bool perfect = true;
+	if(visual->_class == XCB_VISUAL_CLASS_DIRECT_COLOR ||
+			visual->_class == XCB_VISUAL_CLASS_TRUE_COLOR) {
+		s += (1 << 4);
+	} else {
+		perfect = false;
+	}
+
+	bool known_format = format != swa_image_format_none;
+	if(known_format) {
+		if(settings->surface == swa_surface_buffer) {
+			s += (1 << 3);
+			enum swa_image_format pref =
+				settings->surface_settings.buffer.preferred_format;
+			if(format == pref) {
+				s += (1 << 5);
+				dlg_assertlm(dlg_level_warn,
+					settings->transparent == (depth == 32),
+					"Preferred buffer format and 'transparent' don't match");
+			} else if(pref != swa_image_format_none) {
+				perfect = false;
+			}
+		} else {
+			s += (1 << 1); // always nice to have a common format
+		}
+	} else {
+		perfect = false;
+	}
+
+	if(settings->transparent == (depth == 32)) {
+		s += (1 << 2);
+	} else {
+		perfect = false;
+	}
+
+	return perfect ? -s : s;
 }
 
 static struct swa_window* display_create_window(struct swa_display* base,
@@ -1083,6 +1287,9 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->base.impl = &window_impl;
 	win->base.listener = settings->listener;
 	win->dpy = dpy;
+	win->init_size_pending =
+		(settings->width == SWA_DEFAULT_SIZE) ||
+		(settings->height == SWA_DEFAULT_SIZE);
 
 	// link
 	win->next = dpy->window_list;
@@ -1094,23 +1301,61 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// find visual
 	xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator(dpy->screen);
+
+	const xcb_setup_t* setup = xcb_get_setup(dpy->conn);
+	xcb_format_t* formats = xcb_setup_pixmap_formats(setup);
+	unsigned fmtcount = xcb_setup_pixmap_formats_length(setup);
+	int best = 0;
+
+	// data for later when using buffer surface
+	unsigned visual_scanline_pad;
+	enum swa_image_format visual_format;
+
 	for(; di.rem; xcb_depth_next(&di)) {
 		unsigned depth = di.data->depth;
 		xcb_visualtype_iterator_t vi = xcb_depth_visuals_iterator(di.data);
-		for(; vi.rem; xcb_visualtype_next(&vi)) {
-			if(vi.data->_class != XCB_VISUAL_CLASS_DIRECT_COLOR &&
-					vi.data->_class != XCB_VISUAL_CLASS_TRUE_COLOR) {
-				continue;
-			}
+		bool done = false;
 
-			// TODO: rate by score and settings.transparent
-			enum swa_image_format fmt = visual_to_format(vi.data, depth);
-			if(depth >= 24 && fmt != swa_image_format_none) {
+		// find matching bpp for given depth
+		// bpp and depth are different concepts. See visual_to_format
+		// for more details
+		unsigned fmt;
+		for(fmt = 0u; fmt < fmtcount; ++fmt) {
+			if(formats[fmt].depth == depth) {
+				break;
+			}
+		}
+
+		if(fmt == fmtcount) {
+			dlg_warn("Couldn't find xcb pixmap format for depth");
+			continue;
+		}
+
+		unsigned bpp = formats[fmt].bits_per_pixel;
+		for(; vi.rem; xcb_visualtype_next(&vi)) {
+			enum swa_image_format fmti = visual_to_format(vi.data, depth, bpp);
+			int score = rate_visual(dpy, settings, vi.data, fmti, depth);
+			if(score < 0) { // perfect visual
+				visual_scanline_pad = formats[fmt].scanline_pad;
+				visual_format = fmti;
 				win->visualtype = vi.data;
 				win->depth = depth;
-				if(depth == 32) break;
+				best = score;
+				done = true;
+				break;
 			}
 
+			if(score > best) {
+				visual_scanline_pad = formats[fmt].scanline_pad;
+				visual_format = fmti;
+				win->visualtype = vi.data;
+				win->depth = depth;
+				best = score;
+			}
+		}
+
+		if(done) {
+			break;
 		}
 	}
 
@@ -1119,8 +1364,12 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		return false;
 	}
 
+	dlg_info("visual: %d, score %d, depth %d", win->visualtype->visual_id, best, win->depth);
+
 	unsigned x = 0;
 	unsigned y = 0;
+
+	// there is no concept for default size on x11
 	win->width = settings->width == SWA_DEFAULT_SIZE ?
 		SWA_FALLBACK_WIDTH : settings->width;
 	win->height = settings->height == SWA_DEFAULT_SIZE ?
@@ -1153,11 +1402,20 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		goto error;
 	}
 
-	if(!settings->hide) {
-		xcb_map_window(dpy->conn, win->window);
+	// set properties
+	if(settings->state != swa_window_state_none &&
+			settings->state != swa_window_state_normal) {
+		win_set_state(&win->base, settings->state);
 	}
 
-	// set properties
+	if(settings->title) {
+		win_set_title(&win->base, settings->title);
+	}
+
+	if(settings->cursor.type != swa_cursor_default) {
+		win_set_cursor(&win->base, settings->cursor);
+	}
+
 	// supported protocols
 	xcb_atom_t sup_prots[] = {
 		dpy->atoms.wm_delete_window,
@@ -1170,13 +1428,64 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	pid_t pid = getpid();
 	xcb_ewmh_set_wm_pid(&dpy->ewmh, win->window, pid);
 
-	if(settings->cursor.type != swa_cursor_default) {
-		win_set_cursor(&win->base, settings->cursor);
+	// register for touch xinput events
+	// we only need touch events if the window listener implements it
+	struct {
+		xcb_input_event_mask_t info;
+		xcb_input_xi_event_mask_t events;
+	} mask;
+
+	// NOTE: not sure how to test this but we might want to listen
+	// for TOUCH_OWNERSHIP events. See
+	// https://lwn.net/Articles/475886/
+	// https://lwn.net/Articles/485484/
+	const struct swa_window_listener* l = win->base.listener;
+	mask.info.deviceid = XCB_INPUT_DEVICE_ALL_MASTER; // or ALL?
+	mask.info.mask_len = sizeof(mask.events) / sizeof(uint32_t);
+	mask.events =
+		(l->touch_begin ? XCB_INPUT_XI_EVENT_MASK_TOUCH_BEGIN : 0) |
+		(l->touch_end ? XCB_INPUT_XI_EVENT_MASK_TOUCH_END : 0) |
+		(l->touch_update ? XCB_INPUT_XI_EVENT_MASK_TOUCH_UPDATE : 0);
+	if(mask.events) {
+		xcb_input_xi_select_events(win->dpy->conn, win->window, 1, &mask.info);
+	}
+
+	if(settings->client_decorate == swa_preference_yes) {
+		// Motif WM hints are legacy stuff and shouldn't really be
+		// used anymore. But it's the only way we can try really.
+		// ewmh has _NET_WM_WINDOW_TYPE but that's not what this is
+		// about.
+		typedef struct {
+			unsigned long flags;
+			unsigned long functions;
+			unsigned long decorations;
+			long input_mode;
+			unsigned long status;
+		} MotifWmHints;
+
+		MotifWmHints hints = {0};
+		hints.flags = 2u;
+		hints.decorations = 0u;
+
+		unsigned len = sizeof(hints) / sizeof(uint32_t);
+		xcb_change_property(win->dpy->conn, XCB_PROP_MODE_REPLACE,
+			win->window, win->dpy->atoms.motif_wm_hints,
+			win->dpy->atoms.motif_wm_hints, 32, len, &hints);
+		win->client_decorated = true;
+	}
+
+	if(!settings->hide) {
+		xcb_map_window(dpy->conn, win->window);
 	}
 
 	// create surface
 	win->surface_type = settings->surface;
 	if(win->surface_type == swa_surface_buffer) {
+		if(visual_format == swa_image_format_none) {
+			dlg_error("Couldn't find visual with known format");
+			goto error;
+		}
+
 		win->buffer.gc = xcb_generate_id(dpy->conn);
 		uint32_t value[] = {0, 0};
 		xcb_void_cookie_t c = xcb_create_gc_checked(dpy->conn, win->buffer.gc,
@@ -1187,8 +1496,9 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			goto error;
 		}
 
-		win->buffer.format = visual_to_format(win->visualtype, win->depth);
-		dlg_assert(win->buffer.format != swa_image_format_none);
+		dlg_assert(visual_scanline_pad % 8 == 0);
+		win->buffer.format = visual_format;
+		win->buffer.scanline_align = visual_scanline_pad / 8;
 	} else if(win->surface_type == swa_surface_vk) {
 #ifdef SWA_WITH_VK
 		win->vk.instance = settings->surface_settings.vk.instance;
@@ -1251,7 +1561,9 @@ static const struct swa_display_interface display_impl = {
 	.create_window = display_create_window,
 };
 
-struct swa_display* swa_display_x11_create(void) {
+struct swa_display* swa_display_x11_create(const char* appname) {
+	(void) appname;
+
 	// We start by opening a display since we need that for gl
 	// Neither egl nor glx support xcb. And since xlib is implemented
 	// using xcb these days, we can get the xcb connection from the
@@ -1316,6 +1628,7 @@ struct swa_display* swa_display_x11_create(void) {
 		{&dpy->atoms.file_name, "FILE_NAME", {0}},
 
 		{&dpy->atoms.wm_delete_window, "WM_DELETE_WINDOW", {0}},
+		{&dpy->atoms.wm_change_state, "WM_CHANGE_STATE", {0}},
 		{&dpy->atoms.motif_wm_hints, "_MOTIF_WM_HINTS", {0}},
 
 		{&dpy->atoms.mime.text, "text/plain", {0}},

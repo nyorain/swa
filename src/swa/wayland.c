@@ -1431,11 +1431,12 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	if(settings->title) {
 		xdg_toplevel_set_title(win->xdg_toplevel, settings->title);
 	}
-	if(settings->app_name) {
-		xdg_toplevel_set_app_id(win->xdg_toplevel, settings->app_name);
+	if(dpy->appname) {
+		xdg_toplevel_set_app_id(win->xdg_toplevel, dpy->appname);
 	}
 
-	if(settings->state != swa_window_state_normal) {
+	if(settings->state != swa_window_state_normal &&
+			settings->state != swa_window_state_none) {
 		win_set_state(&win->base, settings->state);
 	}
 
@@ -1536,6 +1537,13 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			}
 		}
 
+		// TODO: maybe wait with creation until we received the first
+		// configure event for the toplevel window?
+		// if make current is called before that we could just fail
+		// (or output a warning and create it with the fallback size).
+		// But i guess if buffers are swapped before the first configure
+		// event, it's an error anyways since that will attach an buffer
+		// and commit.
 		unsigned width = win->width == SWA_DEFAULT_SIZE ?
 			SWA_FALLBACK_WIDTH : win->width;
 		unsigned height = win->height == SWA_DEFAULT_SIZE ?
@@ -2502,7 +2510,7 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 	}
 }
 
-struct swa_display* swa_display_wl_create(void) {
+struct swa_display* swa_display_wl_create(const char* appname) {
 	struct wl_display* wld = wl_display_connect(NULL);
 	if(!wld) {
 		return NULL;
@@ -2514,6 +2522,7 @@ struct swa_display* swa_display_wl_create(void) {
 	dpy->base.impl = &display_impl;
 	dpy->display = wld;
 	dpy->pml = pml_new();
+	dpy->appname = appname;
 	dpy->io_source = pml_io_new(dpy->pml, wl_display_get_fd(wld),
 		POLLIN, dispatch_display);
 	pml_io_set_data(dpy->io_source, dpy);

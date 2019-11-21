@@ -23,13 +23,18 @@ static void window_draw(struct swa_window* win) {
 
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 
+	unsigned fmt_size = swa_image_format_size(img.format);
 	for(unsigned y = 0u; y < img.height; ++y) {
 		for(unsigned x = 0u; x < img.width; ++x) {
-			unsigned off = (y * img.stride + 4 * x);
-			img.data[off + 0] = 128; // b
-			img.data[off + 1] = (uint8_t) (255 * ((float) y) / img.height); // g
-			img.data[off + 2] = (uint8_t) (255 * ((float) x) / img.width); // r
-			img.data[off + 3] = 100; // a
+			struct swa_pixel pixel = {
+				.r = (uint8_t) (255 * ((float) x) / img.width),
+				.g = (uint8_t) (255 * ((float) y) / img.height),
+				.b = 128,
+				.a = 100,
+			};
+
+			unsigned off = (y * img.stride + x * fmt_size);
+			swa_write_pixel(&img.data[off], img.format, pixel);
 		}
 	}
 
@@ -47,22 +52,22 @@ static const struct swa_window_listener window_listener = {
 };
 
 int main() {
-	struct swa_display* dpy = swa_display_autocreate();
+	struct swa_display* dpy = swa_display_autocreate("swa example-buffer");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
 		return EXIT_FAILURE;
 	}
 
 	struct swa_cursor cursor;
-	cursor.type = swa_cursor_right_pointer;
+	cursor.type = swa_cursor_load;
 
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
-	settings.app_name = "swa-example";
 	settings.title = "swa-example-window";
 	settings.surface = swa_surface_buffer;
 	settings.listener = &window_listener;
 	settings.cursor = cursor;
+	settings.transparent = true;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");

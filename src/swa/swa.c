@@ -14,16 +14,16 @@
  #include <swa/x11.h>
 #endif
 
-struct swa_display* swa_display_autocreate(void) {
+struct swa_display* swa_display_autocreate(const char* appname) {
 	struct swa_display* dpy;
 #ifdef SWA_WITH_WL
-	if((dpy = swa_display_wl_create())) return dpy;
+	if((dpy = swa_display_wl_create(appname))) return dpy;
 #endif
 #ifdef SWA_WITH_X11
-	if((dpy = swa_display_x11_create())) return dpy;
+	if((dpy = swa_display_x11_create(appname))) return dpy;
 #endif
 #ifdef SWA_WITH_WIN
-	if((dpy = swa_display_win_create())) return dpy;
+	if((dpy = swa_display_win_create(appname))) return dpy;
 #endif
 	return NULL;
 }
@@ -31,8 +31,7 @@ struct swa_display* swa_display_autocreate(void) {
 void swa_window_settings_default(struct swa_window_settings* settings) {
 	memset(settings, 0, sizeof(*settings));
 	settings->cursor.type = swa_cursor_default;
-	settings->app_name = "swapplication";
-	settings->title = "swa_window";
+	settings->title = "Default Window Title (swa)";
 	settings->state = swa_window_state_normal;
 	settings->width = settings->height = SWA_DEFAULT_SIZE;
 }
@@ -80,12 +79,8 @@ struct swa_image swa_convert_image_new(const struct swa_image* src,
 	return dst;
 }
 
-struct pixel {
-	uint8_t r, g, b, a;
-};
-
-static void write_pixel(uint8_t* data, enum swa_image_format fmt,
-		struct pixel pixel) {
+void swa_write_pixel(uint8_t* data, enum swa_image_format fmt,
+		struct swa_pixel pixel) {
 	switch(fmt) {
 		case swa_image_format_rgba32:
 			data[0] = pixel.r;
@@ -143,34 +138,34 @@ static void write_pixel(uint8_t* data, enum swa_image_format fmt,
 	}
 }
 
-static struct pixel read_pixel(const uint8_t* data, enum swa_image_format fmt) {
+struct swa_pixel swa_read_pixel(const uint8_t* data, enum swa_image_format fmt) {
 	switch(fmt) {
 		case swa_image_format_rgba32:
-			return (struct pixel){data[0], data[1], data[2], data[3]};
+			return (struct swa_pixel){data[0], data[1], data[2], data[3]};
 		case swa_image_format_rgb24:
-			return (struct pixel){data[0], data[1], data[2], 255};
+			return (struct swa_pixel){data[0], data[1], data[2], 255};
 		case swa_image_format_bgr24:
-			return (struct pixel){data[2], data[1], data[0], 255};
+			return (struct swa_pixel){data[2], data[1], data[0], 255};
 		case swa_image_format_xrgb32:
-			return (struct pixel){data[1], data[2], data[3], 255};
+			return (struct swa_pixel){data[1], data[2], data[3], 255};
 		case swa_image_format_argb32:
-			return (struct pixel){data[1], data[2], data[3], data[0]};
+			return (struct swa_pixel){data[1], data[2], data[3], data[0]};
 		case swa_image_format_abgr32:
-			return (struct pixel){data[3], data[2], data[1], data[0]};
+			return (struct swa_pixel){data[3], data[2], data[1], data[0]};
 		case swa_image_format_bgra32:
-			return (struct pixel){data[2], data[1], data[0], data[3]};
+			return (struct swa_pixel){data[2], data[1], data[0], data[3]};
 		case swa_image_format_bgrx32:
-			return (struct pixel){data[2], data[1], data[0], 255};
+			return (struct swa_pixel){data[2], data[1], data[0], 255};
 		case swa_image_format_a8:
-			return (struct pixel){data[0], data[0], data[0], data[0]};
+			return (struct swa_pixel){data[0], data[0], data[0], data[0]};
 		case swa_image_format_none:
-			return (struct pixel){0, 0, 0, 0};
+			return (struct swa_pixel){0, 0, 0, 0};
 	}
 
 	// unreachable for valid formats
 	// dont' put it in default so we get warnings about unhandled enum values
 	dlg_error("Invalid image format %d", fmt);
-	return (struct pixel){0, 0, 0, 0};
+	return (struct swa_pixel){0, 0, 0, 0};
 }
 
 void swa_convert_image(const struct swa_image* src, const struct swa_image* dst) {
@@ -184,8 +179,8 @@ void swa_convert_image(const struct swa_image* src, const struct swa_image* dst)
 	uint8_t* dst_data = dst->data;
 	for(unsigned y = 0u; y < src->height; ++y) {
 		for(unsigned x = 0u; x < src->width; ++x) {
-			struct pixel pixel = read_pixel(src_data, src->format);
-			write_pixel(dst_data, src->format, pixel);
+			struct swa_pixel pixel = swa_read_pixel(src_data, src->format);
+			swa_write_pixel(dst_data, src->format, pixel);
 			src_data += src_size;
 			dst_data += dst_size;
 		}

@@ -4,6 +4,7 @@
 #include <limits.h>
 #include <stdbool.h>
 #include <swa/config.h>
+#include <swa/image.h>
 #include <swa/key.h>
 
 #ifdef __cplusplus
@@ -16,45 +17,21 @@ struct swa_window;
 struct swa_data_offer;
 struct swa_data_source;
 struct swa_window_listener;
-struct swa_image;
 
 // When this value are specified as size in swa_window_settings,
 // the system default will be used.
 // If the system has no default, will use the SWA_FALLBACK_* values.
+// The main advantage of using SWA_DEFAULT_SIZE is that swa will
+// always generate a size event as soon as the window is visible
+// and has a fixed size and applications that have to create size-dependent
+// resources (additional render buffers/swapchain) can postpone
+// that until the first size event and have therefore no need for
+// the initial resize handling on platforms where the window can't
+// be created with the requested size.
 #define SWA_DEFAULT_SIZE 0
 
 #define SWA_FALLBACK_WIDTH 800
 #define SWA_FALLBACK_HEIGHT 500
-
-// Describes the layout of pixel color values in the data
-// buffer of a swa_image. The format always describes the ordering
-// of bytes in memory, not in logical words.
-// Example: rgba32 means that a pixel uses 32 bits (4 bytes),
-// where the first byte in memory contain the 'red' value.
-// This means the representation is independent from the endianess
-// of the system, but extracting the components from a pixel word using
-// logical C operations requires knowledge about the endianess.
-// This definition is consistent with OpenGL and Vulkan (when not
-// using packed formats) but different to SDL (uses native type),
-// cairo (uses native type) and wayland (uses little endian)
-// format definitions. You can use swa_image_format_toggle_byte_word
-// to get the equivalent format for another semantic.
-// https://github.com/afrantzis/pixel-format-guide is a useful tool
-// to understand pixel formats, swa is comparable to the non-packed
-// vulkan formats.
-enum swa_image_format {
-	swa_image_format_none = 0,
-	swa_image_format_a8,
-	swa_image_format_rgba32,
-	swa_image_format_argb32,
-	swa_image_format_xrgb32,
-	swa_image_format_rgb24,
-
-	swa_image_format_abgr32,
-	swa_image_format_bgra32,
-	swa_image_format_bgrx32,
-	swa_image_format_bgr24,
-};
 
 // Describes the kind of render surface created for a window.
 enum swa_surface_type {
@@ -62,14 +39,6 @@ enum swa_surface_type {
 	swa_surface_buffer,
 	swa_surface_gl,
 	swa_surface_vk,
-};
-
-// Describes a 2 dimensional image.
-struct swa_image {
-	unsigned width, height;
-	unsigned stride; // in bytes
-	enum swa_image_format format;
-	uint8_t* data;
 };
 
 // Functional capability of a swa_display implementation.
@@ -218,23 +187,42 @@ struct swa_vk_surface_settings {
 	uint64_t instance; // type: VkInstance
 };
 
-struct swa_window_settings {
-	unsigned width, height;
-	const char* app_name;
-	const char* title;
-	struct swa_cursor cursor;
+struct swa_buffer_surface_settings {
+	// Only a hint for optimization, backends don't have to returns
+	// images with this format.
+	// Applications can use swa_write_pixel or swa_convert_image to modify
+	// the returned buffer regardless which image format it has.
+	enum swa_image_format preferred_format;
+};
 
-	enum swa_surface_type surface;
+struct swa_window_settings {
+	// The initial window size. Can be SWA_DEFAULT_SIZE in which case
+	// the system's default (or SWA_FALLBACK_{WIDTH, HEIGHT} if there isn't any)
+	// will be chosen. Note that the backend might not be able to create
+	// a window with exactly this size. In that case a resize event
+	// will be generated though. If SWA_DEFAULT_SIZE was specified,
+	// a resize event will always be generated (for visible windows).
+	unsigned width, height;
+	const char* title; // Title of the window, optional
+	struct swa_cursor cursor; // Initial window cursor
+
+	enum swa_surface_type surface; // Render surface to be created
 	union {
 		// allow preferred format for buffer surface?
-	struct swa_gl_surface_settings gl;
-	struct swa_vk_surface_settings vk;
+		struct swa_gl_surface_settings gl;
+		struct swa_vk_surface_settings vk;
+		struct swa_buffer_surface_settings buffer;
 	} surface_settings;
 
+	// Whether transparency is needed.
+	// On some backends this has a performance impact and should therefore
+	// only be enabled when needed. Even when set to false, the window
+	// might allow transparency.
+	// Not possible on all backends.
+	bool transparent;
 	bool hide; // create the window in a hidden state
-	bool transparent; // allow transparency
-	enum swa_window_state state;
-	enum swa_preference client_decorate;
+	enum swa_window_state state; // initial window state
+	enum swa_preference client_decorate; // prefer client decorations?
 
 	// The listener object must remain valid until it is changed or the window
 	// is destroyed. Must not be NULL.
@@ -423,7 +411,9 @@ struct swa_data_source {
 // Automatically chooses a backend and creates a display for it.
 // Returns NULL on error. The returned display must be destroyed using
 // `swa_display_destroy`.
-SWA_API struct swa_display* swa_display_autocreate(void);
+// The given `appname` will be used to identify the application with
+// the backend's display server and can be NULL.
+SWA_API struct swa_display* swa_display_autocreate(const char* appname);
 
 // Destroys and frees the passed display. It must not be used after this.
 SWA_API void swa_display_destroy(struct swa_display*);
@@ -725,39 +715,6 @@ SWA_API void* swa_data_offer_get_userdata(struct swa_data_offer*);
 // to SWA_DEFAULT_POSITION. Will otherwise memset the settings
 // to 0. Will not specify any surface to create.
 SWA_API void swa_window_settings_default(struct swa_window_settings*);
-
-// Returns the size of one pixel in the given formats in bytes.
-SWA_API unsigned swa_image_format_size(enum swa_image_format);
-
-// Converts the format of the given image.
-// Can also be used to create an image with a different stride.
-// If `new_stride` is zero, will tightly pack the image.
-// The data in the returned image must be freed.
-SWA_API struct swa_image swa_convert_image_new(const struct swa_image* src,
-	enum swa_image_format format, unsigned new_stride);
-
-// Converts an image in place.
-// Expects `src` to be a valid image.
-// Expects `dst` to already have enough data allocated and width, height,
-// stride and format set which will be used for conversion.
-// Width and height of the both images must match.
-SWA_API void swa_convert_image(const struct swa_image* src, const struct swa_image* dst);
-
-// Returns the corresponding image format with reversed component order.
-// Example: argb32 will be mapped to bgra32.
-SWA_API enum swa_image_format swa_image_format_reversed(enum swa_image_format);
-
-// Computes the corresponding image format to the given one
-// with toggled byte/word order semantics.
-// In practice this simply means:
-// On big endian systems it just returns the given format while
-// on little endian systems it returns the reversed format.
-// This is useful when translating between swa_image_format and another
-// pixel format definition that is given in word order instead of
-// swa_image_format's byte order.
-// Note how only one function is needed since translating from byte
-// to word and from word to byte order is the same operation.
-SWA_API enum swa_image_format swa_image_format_toggle_byte_word(enum swa_image_format);
 
 #ifdef __cplusplus
 }

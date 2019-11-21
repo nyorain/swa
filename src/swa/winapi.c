@@ -712,7 +712,9 @@ static const struct swa_display_interface display_impl = {
 	.create_window = display_create_window,
 };
 
-struct swa_display* swa_display_win_create(void) {
+struct swa_display* swa_display_win_create(const char* appname) {
+	(void) appname;
+
 	struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	return &dpy->base;

@@ -36,6 +36,7 @@ struct swa_display_x11 {
 		unsigned x,y;
 		struct swa_window_x11* over;
 		uint64_t button_states; // bitset
+		xcb_button_index_t button; // See win_begin_{move,resize}
 	} mouse;
 
 	struct {
@@ -61,6 +62,7 @@ struct swa_display_x11 {
 		xcb_atom_t utf8_string;
 		xcb_atom_t file_name;
 		xcb_atom_t wm_delete_window;
+		xcb_atom_t wm_change_state;
 		xcb_atom_t motif_wm_hints;
 
 		struct {
@@ -94,6 +96,8 @@ struct swa_x11_buffer_surface {
 	uint64_t n_bytes;
 
 	enum swa_image_format format;
+	unsigned bytes_per_pixel;
+	unsigned scanline_align; // in bytes
 	xcb_gc_t gc;
 	bool active;
 
@@ -120,6 +124,8 @@ struct swa_window_x11 {
 	xcb_visualtype_t* visualtype;
 	xcb_cursor_t cursor;
 	unsigned depth;
+	bool client_decorated;
+	bool init_size_pending;
 
 	// only when using present extension:
 	struct {
@@ -143,7 +149,7 @@ struct swa_window_x11 {
 	};
 };
 
-struct swa_display* swa_display_x11_create(void);
+struct swa_display* swa_display_x11_create(const char* appname);
 
 #ifdef __cplusplus
 }

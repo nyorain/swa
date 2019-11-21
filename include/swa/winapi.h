@@ -62,7 +62,7 @@ struct swa_data_offer_win {
 	struct swa_display_win* dpy;
 };
 
-struct swa_display* swa_display_win_create(void);
+struct swa_display* swa_display_win_create(const char* appname);
 
 #ifdef __cplusplus
 }

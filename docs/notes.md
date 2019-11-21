@@ -13,17 +13,16 @@ wayland:
 
 x11:
 
+- send state change events
+- remove checked versions in most places. Or only keep them in the
+  debug build somehow?
+- todo: touch input. Should test on device
 - [low] we could implement buffer surfaces using present pixmaps
   more complicated though, we have to do maintain multiple
   buffers (pixmaps)
-- correct buffer surface bpp. Make sure it works for depth 24.
-  See comments in ny/use its fixes & workarounds. Document it
-  as clearly as possible
-	- implement buffer surfaces without shm? might be needed in
-	  some cases
-- remove checked versions in most places. Or only keep them in the
-  debug build somehow?
-- todo: touch input
+- [low] check/test which wm's support motif wm hints and only
+  report the client_decoration display cap on those (we can query
+  which wm is active)
 
 winapi:
 
@@ -88,6 +87,11 @@ there though). And mesa's vulkan/wsi/wsi_common_x11.c which uses
 it extensively.
 
 x11 buffer surfaces:
+- https://tronche.com/gui/x/xlib/graphics/images.html
+- https://tronche.com/gui/x/xlib/display/image-format-macros.html
+- https://www.x.org/releases/X11R7.5/doc/x11proto/proto.pdf
+  the spec documents what scanline_pad is. It's not really a padding
+  but an alignment requirement
 The list of sources i noted for ny:
 - https://github.com/freedesktop-unofficial-mirror/xcb__util-image/blob/master/image/xcb_image.c#L158
 - http://xcb.pdx.freedesktop.narkive.com/0u3XxxGY/xcb-put-image
@@ -95,3 +99,6 @@ The list of sources i noted for ny:
 - https://www.x.org/releases/X11R7.6/doc/xproto/x11protocol.html#requests:PutImage
 - https://tronche.com/gui/x/xlib/graphics/XPutImage.html
 
+x11 touch events and ownership
+https://lwn.net/Articles/475886/
+https://lwn.net/Articles/485484/

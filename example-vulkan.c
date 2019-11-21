@@ -210,7 +210,7 @@ static const struct swa_window_listener window_listener = {
 // used SWA_DEFAULT_SIZE.
 int main() {
 	int ret = EXIT_SUCCESS;
-	struct swa_display* dpy = swa_display_autocreate();
+	struct swa_display* dpy = swa_display_autocreate("swa example-vulkan");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
 		return EXIT_FAILURE;
@@ -241,7 +241,6 @@ int main() {
 	// create window for vulkan surface
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
-	settings.app_name = "swa-example";
 	settings.title = "swa-example-window";
 	settings.surface = swa_surface_vk;
 	settings.surface_settings.vk.instance = (uint64_t) state.instance;
@@ -260,6 +259,7 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, &state);
+	timespec_get(&last_redraw, TIME_UTC);
 
 	// main loop
 	while(run) {
