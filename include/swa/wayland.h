@@ -2,13 +2,15 @@
 
 #include <swa/impl.h>
 #include <swa/xkb.h>
-#include <swa/egl.h>
 #include <stdint.h>
 #include <time.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef void* EGLSurface;
+typedef void* EGLContext;
 
 struct swa_display_wl {
 	struct swa_display base;

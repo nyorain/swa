@@ -2,6 +2,7 @@
 
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+#include <stdbool.h>
 
 // fwd decls from egl.h
 typedef void* EGLDisplay;
@@ -29,6 +30,7 @@ struct swa_egl_context {
 
 struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* dpy);
 void swa_egl_display_destroy(struct swa_egl_display*);
+bool swa_egl_find_ext(const char* exts, const char* ext);
 
 #ifdef __cplusplus
 }

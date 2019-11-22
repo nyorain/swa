@@ -4,7 +4,7 @@
 
 static const struct {
 	enum swa_cursor_type cursor;
-	const char* name[5];
+	const char* name[5]; // must be NULL terminated!
 } cursor_map[] = {
 	{swa_cursor_left_pointer, {"left_ptr"}},
 	{swa_cursor_load, {"watch"}},
@@ -27,6 +27,7 @@ static const struct {
 	{swa_cursor_size_right, {"right_side"}},
 };
 
+// Returns a NULL-terminated list of cursor names
 const char* const* swa_get_xcursor_names(enum swa_cursor_type type) {
 	dlg_assert(type != swa_cursor_unknown);
 	dlg_assert(type != swa_cursor_default);

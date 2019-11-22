@@ -583,9 +583,8 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		}
 
 		struct wl_cursor* cursor = NULL;
-		while(*names) {
-			struct wl_cursor* cursor = wl_cursor_theme_get_cursor(
-				win->dpy->cursor.theme, *names);
+		for(; *names; ++names) {
+			cursor = wl_cursor_theme_get_cursor(win->dpy->cursor.theme, *names);
 			if(cursor) {
 				break;
 			} else {
@@ -593,7 +592,7 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 			}
 		}
 
-		if(!win->cursor.native) {
+		if(!cursor) {
 			dlg_warn("Failed to get any cursor for cursor type %d", type);
 			return;
 		}
@@ -1555,10 +1554,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
 			// TODO: only since egl 1.4
 			// EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-			EGL_RED_SIZE, 8,
-			EGL_GREEN_SIZE, 8,
-			EGL_BLUE_SIZE, 8,
-			EGL_ALPHA_SIZE, 8,
+			EGL_RED_SIZE, 1,
+			EGL_GREEN_SIZE, 1,
+			EGL_BLUE_SIZE, 1,
+			EGL_ALPHA_SIZE, settings->transparent ? 1 : 0,
 			EGL_NONE,
 		};
 
@@ -1587,7 +1586,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		// create context
 		const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
 		EGLint context_attribs[5];
-		if(strstr(exts, "EGL_KHR_create_context")) {
+		if(swa_egl_find_ext(exts, "EGL_KHR_create_context")) {
 			context_attribs[0] = EGL_CONTEXT_MAJOR_VERSION;
 			context_attribs[1] = settings->surface_settings.gl.major;
 			context_attribs[2] = EGL_CONTEXT_MINOR_VERSION;

@@ -18,6 +18,9 @@ static void window_draw(struct swa_window* win) {
 	glClearColor(alpha * 0.9, alpha * 1.0, alpha * 0.85, alpha);
 	glClear(GL_COLOR_BUFFER_BIT);
 	swa_window_gl_swap_buffers(win);
+
+	// for continous redrawing:
+	// swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -56,6 +59,7 @@ int main() {
 	settings.surface_settings.gl.minor = 0;
 	settings.listener = &window_listener;
 	settings.cursor = cursor;
+	settings.transparent = true;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");

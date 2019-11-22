@@ -10,6 +10,9 @@
 extern "C" {
 #endif
 
+typedef void* EGLSurface;
+typedef void* EGLContext;
+
 // xlib/xcb forward declarations
 typedef struct _XDisplay Display;
 typedef struct xcb_cursor_context_t xcb_cursor_context_t;
@@ -31,6 +34,7 @@ struct swa_display_x11 {
 
 	unsigned n_cursors;
 	struct swa_x11_cursor* cursors;
+	struct swa_egl_display* egl;
 
 	struct {
 		unsigned x,y;
@@ -111,6 +115,11 @@ struct swa_x11_vk_surface {
 	uint64_t surface;
 };
 
+struct swa_x11_gl_surface {
+	EGLSurface surface;
+	EGLContext context;
+};
+
 struct swa_window_x11 {
 	struct swa_window base;
 	struct swa_display_x11* dpy;
@@ -137,7 +146,11 @@ struct swa_window_x11 {
 		xcb_present_event_t context;
 		// the msc (counter) we want to get notified for redrawing
 		uint64_t target_msc;
+		uint32_t serial;
 	} present;
+
+	bool send_draw;
+	bool send_resize;
 
 	unsigned width;
 	unsigned height;
@@ -146,6 +159,7 @@ struct swa_window_x11 {
 	union {
 		struct swa_x11_buffer_surface buffer;
 		struct swa_x11_vk_surface vk;
+		struct swa_x11_gl_surface gl;
 	};
 };
 

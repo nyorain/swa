@@ -3,33 +3,54 @@ Notes
 
 wayland:
 
-- data exchange (probbaly move that to another file though)
+- implement gl swap interval
+- implement missing data exchange (probbaly move that to another file though)
 - better gl support, allow settings
 - check that everything is cleaned up correctly
+- cleaner, more advanced gl surfaces
+  don't create with fallback size (-> see TODO there)
 - always flush the display after wl_surface_commit or other visible
   actions? we only flush it on (before) dispatch atm but some programs
   might have long pauses between iterations. Guess the same
   problem for x11
 
 x11:
+the ones with [low] are probably not worth it.
+We should evaluate and document the reasons.
+
+known issues:
+- currently, egl transparency is broken with mesa (because of a year-long bug)
+  see https://bugs.freedesktop.org/show_bug.cgi?id=67676.
+  The MR (https://gitlab.freedesktop.org/mesa/mesa/merge_requests/1185) that
+  fixes it was merged and will probably be in mesa 20.
+  Workarounds require significant amount of work
 
 - send state change events
+- implement gl swap interval
+- implement data exchange stuff
 - remove checked versions in most places. Or only keep them in the
   debug build somehow?
-- todo: touch input. Should test on device
+- test touch input on device. ask fritz or get chromebook to work again?
 - [low] we could implement buffer surfaces using present pixmaps
   more complicated though, we have to do maintain multiple
   buffers (pixmaps)
 - [low] check/test which wm's support motif wm hints and only
   report the client_decoration display cap on those (we can query
   which wm is active)
+- [low] use glx instead of egl. Could egl not be available anywhere?
 
 winapi:
+[not implemented yet at all]
 
 - fix redraw/refresh loop
 
 general
 
+- further gl settings: api (gl/gles, also give way to query which
+  api is used in context; then also give way to query function
+  pointers to allow apps to support both dynamically), srgb,
+  debug, forward_compatible, compatibility (legacy), depth, etc...
+  hdr? i.e. color spaces/>8bit color output?
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer
@@ -42,11 +63,6 @@ general
 - gl transparency semantics. Does the platform use premultiplied alpha?
   e.g. on wayland we have to use premultiplied alpha, on other platforms
   probably not
-- further gl settings: api (gl/gles, also give way to query which
-  api is used in context; then also give way to query function
-  pointers to allow apps to support both dynamically), srgb,
-  debug, forward_compatible, compatibility (legacy), depth, etc...
-  hdr? i.e. color spaces/>8bit color output?
 - error checking. Make sure we cleanup everything?
 	- or don't do that in places where errors aren't expected?
 	  tradeoff maintainability and possibly usability here i guess?
@@ -57,8 +73,13 @@ general
   allowed to call data_offer_destroy in data offer callback?
   etc
 
-laster
+laster/low prio
 
+- evaluate once again whether/where deferred events make sense.
+  They can be useful for resizing/redrawing (i.e. don't handle
+  all resize events directly but rather process all currently
+  available events and no matter how many resize/draw events are
+  in there, only handle the last one)
 - optimization: don't track e.g. touch events for a window if
   it has no touch event listener
 - integration with posix api (see docs/posix.h)
@@ -70,6 +91,7 @@ laster
 	  using handles instead of file descriptors. Maybe just make this
 	  part of the cross platform api somehow?
 - option to load vkGetInstanceProcAddr dynamically
+	- cache loaded procs instead of loading them everytime
 - allow to share gl contexts between windows
 	- or maybe not create one context per window? not important though,
 	  hundreds of windows isn't a priority usecase 

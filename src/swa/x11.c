@@ -25,6 +25,11 @@
 #include <vulkan/vulkan_xcb.h>
 #endif
 
+#ifdef SWA_WITH_GL
+#include <swa/egl.h>
+#include <EGL/egl.h>
+#endif
+
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 static const unsigned max_prop_length = 0x1fffffff;
@@ -185,7 +190,7 @@ static xcb_cursor_t get_cursor(struct swa_display_x11* dpy,
 			return cursor;
 		}
 
-		while(*names) {
+		for(; *names; ++names) {
 			cursor = XcursorLibraryLoadCursor(dpy->display, *names);
 			if(cursor) {
 				break;
@@ -275,7 +280,9 @@ static void win_surface_frame(struct swa_window* base) {
 				win->window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
 		}
 
-		xcb_present_notify_msc(win->dpy->conn, win->window, 0,
+		dlg_debug("present_notify for target %lu", win->present.target_msc);
+		xcb_present_notify_msc(win->dpy->conn, win->window,
+			++win->present.serial,
 			win->present.target_msc, 1, 0);
 		win->present.pending = true;
 	}
@@ -432,11 +439,30 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
-	return false;
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+	return eglMakeCurrent(win->dpy->egl->display, win->gl.surface,
+		win->gl.surface, win->gl.context);
 }
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
-	return false;
+	struct swa_window_x11* win = get_window_x11(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+
+	win_surface_frame(&win->base);
+	return eglSwapBuffers(win->dpy->egl->display, win->gl.surface);
 }
 
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
@@ -592,10 +618,18 @@ static void handle_present_event(struct swa_display_x11* dpy,
 			(xcb_present_complete_notify_event_t*) ev;
 		struct swa_window_x11* win = find_window(dpy, complete->window);
 		if(win) {
-			dlg_assert(win->present.context == complete->event);
+			if(win->present.context != complete->event) {
+				break;
+			}
+
 			dlg_debug("complete.msc: %lu, target_msc: %lu",
 				complete->msc, win->present.target_msc);
 			if(complete->msc < win->present.target_msc) {
+				break;
+			}
+
+			// Older event or doesn't come from us but from another api
+			if(complete->serial != win->present.serial) {
 				break;
 			}
 
@@ -718,7 +752,12 @@ static void handle_event(struct swa_display_x11* dpy,
 			}
 
 			if(win->base.listener->draw) {
-				win->base.listener->draw(&win->base);
+				if(win->present.pending) {
+					win->present.redraw = true;
+				} else {
+					win->present.redraw = false;
+					win->base.listener->draw(&win->base);
+				}
 			}
 		}
 		break;
@@ -1046,6 +1085,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 	if(block && !dpy->next_event) {
 		dpy->next_event = xcb_wait_for_event(dpy->conn);
 		if(!dpy->next_event) {
+			dlg_warn("xcb_wait_for_event failed");
 			return !check_error(dpy);
 		}
 	}
@@ -1279,37 +1319,16 @@ static int rate_visual(struct swa_display_x11* dpy,
 	return perfect ? -s : s;
 }
 
-static struct swa_window* display_create_window(struct swa_display* base,
-		const struct swa_window_settings* settings) {
-	struct swa_display_x11* dpy = get_display_x11(base);
-	struct swa_window_x11* win = calloc(1, sizeof(*win));
-
-	win->base.impl = &window_impl;
-	win->base.listener = settings->listener;
-	win->dpy = dpy;
-	win->init_size_pending =
-		(settings->width == SWA_DEFAULT_SIZE) ||
-		(settings->height == SWA_DEFAULT_SIZE);
-
-	// link
-	win->next = dpy->window_list;
-	if(!dpy->window_list) {
-		dpy->window_list = win;
-	} else {
-		dpy->window_list->prev = win;
-	}
-
-	// find visual
+static void find_visual(struct swa_window_x11* win,
+		const struct swa_window_settings* settings,
+		unsigned* scanline_pad, enum swa_image_format* format) {
+	struct swa_display_x11* dpy = win->dpy;
 	xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator(dpy->screen);
 
 	const xcb_setup_t* setup = xcb_get_setup(dpy->conn);
 	xcb_format_t* formats = xcb_setup_pixmap_formats(setup);
 	unsigned fmtcount = xcb_setup_pixmap_formats_length(setup);
 	int best = 0;
-
-	// data for later when using buffer surface
-	unsigned visual_scanline_pad;
-	enum swa_image_format visual_format;
 
 	for(; di.rem; xcb_depth_next(&di)) {
 		unsigned depth = di.data->depth;
@@ -1336,8 +1355,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			enum swa_image_format fmti = visual_to_format(vi.data, depth, bpp);
 			int score = rate_visual(dpy, settings, vi.data, fmti, depth);
 			if(score < 0) { // perfect visual
-				visual_scanline_pad = formats[fmt].scanline_pad;
-				visual_format = fmti;
+				*scanline_pad = formats[fmt].scanline_pad;
+				*format = fmti;
 				win->visualtype = vi.data;
 				win->depth = depth;
 				best = score;
@@ -1346,8 +1365,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			}
 
 			if(score > best) {
-				visual_scanline_pad = formats[fmt].scanline_pad;
-				visual_format = fmti;
+				*scanline_pad = formats[fmt].scanline_pad;
+				*format = fmti;
 				win->visualtype = vi.data;
 				win->depth = depth;
 				best = score;
@@ -1358,13 +1377,136 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			break;
 		}
 	}
+}
+
+static struct swa_window* display_create_window(struct swa_display* base,
+		const struct swa_window_settings* settings) {
+	struct swa_display_x11* dpy = get_display_x11(base);
+	struct swa_window_x11* win = calloc(1, sizeof(*win));
+
+	win->base.impl = &window_impl;
+	win->base.listener = settings->listener;
+	win->dpy = dpy;
+	win->init_size_pending =
+		(settings->width == SWA_DEFAULT_SIZE) ||
+		(settings->height == SWA_DEFAULT_SIZE);
+
+	// link
+	win->next = dpy->window_list;
+	if(!dpy->window_list) {
+		dpy->window_list = win;
+	} else {
+		dpy->window_list->prev = win;
+	}
+
+	// find visual
+	// data for later when using buffer surface
+	unsigned visual_scanline_pad;
+	enum swa_image_format visual_format;
+
+#ifdef SWA_WITH_GL
+	EGLConfig egl_config = {0};
+#endif
+
+	if(settings->surface == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		if(!dpy->egl) {
+			dpy->egl = swa_egl_display_create(EGL_PLATFORM_X11_EXT,
+				dpy->display);
+			if(!dpy->egl) {
+				goto error;
+			}
+		}
+
+		EGLDisplay edpy = dpy->egl->display;
+		EGLint config_attribs[] = {
+			EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
+			// TODO: only since egl 1.4
+			// EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
+			EGL_RED_SIZE, 1,
+			EGL_GREEN_SIZE, 1,
+			EGL_BLUE_SIZE, 1,
+			EGL_ALPHA_SIZE, settings->transparent ? 1 : 0,
+			EGL_NONE,
+		};
+
+		EGLint count;
+		EGLBoolean ret = eglChooseConfig(edpy, config_attribs,
+			&egl_config, 1, &count);
+		if(ret == EGL_FALSE) {
+			dlg_error("eglChooseConfig returned false");
+			goto error;
+		}
+
+		// in this case we couldn't find any configs
+		// try again, just choose any config
+		if(count == 0) {
+			dlg_debug("Couldn't find 32-bit rgba egl config");
+			config_attribs[3] = EGL_NONE;
+			ret = eglChooseConfig(edpy, config_attribs, &egl_config, 1, &count);
+
+			if(count == 0) {
+				dlg_error("Couldn't find any egl config");
+				goto error;
+			}
+		}
+
+		// create context
+		const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
+		EGLint context_attribs[5];
+		if(swa_egl_find_ext(exts, "EGL_KHR_create_context")) {
+			context_attribs[0] = EGL_CONTEXT_MAJOR_VERSION;
+			context_attribs[1] = settings->surface_settings.gl.major;
+			context_attribs[2] = EGL_CONTEXT_MINOR_VERSION;
+			context_attribs[3] = settings->surface_settings.gl.minor;
+			context_attribs[4] = EGL_NONE;
+		} else {
+			context_attribs[0] = EGL_CONTEXT_CLIENT_VERSION;
+			context_attribs[1] = settings->surface_settings.gl.major;
+			context_attribs[2] = EGL_NONE;
+		}
+
+		win->gl.context = eglCreateContext(edpy, egl_config,
+			NULL, context_attribs);
+		if(!win->gl.context) {
+			dlg_error("eglCreateContext failed");
+			goto error;
+		}
+
+		EGLint visualid;
+		if(!eglGetConfigAttrib(edpy, egl_config, EGL_NATIVE_VISUAL_ID, &visualid)) {
+			dlg_error("eglGetConfigAttrib failed");
+			goto error;
+		}
+
+		// find the visualtype for this egl config
+		// we have to do this to find the depth for window creation
+		xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator(dpy->screen);
+		for (; di.rem; xcb_depth_next (&di)) {
+			xcb_visualtype_iterator_t vi = xcb_depth_visuals_iterator(di.data);
+			for(; vi.rem; xcb_visualtype_next(&vi)) {
+				if((int) vi.data->visual_id == visualid) {
+					win->visualtype = vi.data;
+					win->depth = di.data->depth;
+					break;
+				}
+			}
+	    }
+#else
+		dlg_error("swa was compiled without GL support");
+		goto err;
+#endif
+	} else {
+		find_visual(win, settings, &visual_scanline_pad, &visual_format);
+	}
 
 	if(!win->visualtype) {
 		dlg_error("Could not find valid visual");
 		return false;
 	}
 
-	dlg_info("visual: %d, score %d, depth %d", win->visualtype->visual_id, best, win->depth);
+	dlg_debug("visualid: %d, depth: %d", win->visualtype->visual_id,
+		win->depth);
 
 	unsigned x = 0;
 	unsigned y = 0;
@@ -1499,6 +1641,18 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		dlg_assert(visual_scanline_pad % 8 == 0);
 		win->buffer.format = visual_format;
 		win->buffer.scanline_align = visual_scanline_pad / 8;
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		win->gl.surface = dpy->egl->api.createPlatformWindowSurface(
+			win->dpy->egl->display, egl_config, &win->window, NULL);
+		if(!win->gl.surface) {
+			dlg_error("eglCreatePlatformWindowSurface failed");
+			goto error;
+		}
+#else
+		// we already excluded that case above
+		dlg_fatal("unreachable");
+#endif
 	} else if(win->surface_type == swa_surface_vk) {
 #ifdef SWA_WITH_VK
 		win->vk.instance = settings->surface_settings.vk.instance;

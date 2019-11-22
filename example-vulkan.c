@@ -75,7 +75,7 @@ static void window_draw(struct swa_window* win) {
 	// acquire image
 	uint32_t id;
 	res = vkAcquireNextImageKHR(state->device, state->swapchain,
-		0xFFFFFFFF, state->acquire_sem, VK_NULL_HANDLE, &id);
+		UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
 	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
 		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
 			dlg_warn("Got out of date swapchain (acquire)");
@@ -139,7 +139,7 @@ static void window_close(struct swa_window* win) {
 
 static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	struct state* state = swa_window_get_userdata(win);
-	dlg_info("resized to %d %d", w, h);
+	// dlg_info("resized to %d %d", w, h);
 
 	// make sure all previous rendering has finished since we will
 	// destroy rendering resources
@@ -159,7 +159,7 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 		state->swapchain_info.imageExtent.width = w;
 		state->swapchain_info.imageExtent.height = h;
 	} else {
-		dlg_info("  fixed swapchain size: %d %d", w, h);
+		// dlg_info("  fixed swapchain size: %d %d", w, h);
 		state->swapchain_info.imageExtent.width = caps.currentExtent.width;
 		state->swapchain_info.imageExtent.height = caps.currentExtent.height;
 	}
@@ -300,14 +300,26 @@ static VkBool32 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 	((void) type);
 
 	// we ignore some of the non-helpful warnings
-	// static const char *const ignored[] = {};
-	// if (debug_data->pMessageIdName) {
-	// 	for (unsigned i = 0; i < sizeof(ignored) / sizeof(ignored[0]); ++i) {
-	// 		if (!strcmp(debug_data->pMessageIdName, ignored[i])) {
-	// 			return false;
-	// 		}
-	// 	}
-	// }
+	static const char *const ignored[] = {
+		// Error when we create a swapchain with "invalid" imageExtent.
+		// On X11 there is a data race and this therefore triggers
+		// randomly. Not the fault of swa or this application but
+		// rather a bug in the validation layers/x11 or badly
+		// specified in vulkan spec.
+		// See:
+		// - https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/624
+		// - https://github.com/KhronosGroup/Vulkan-ValidationLayers/pull/1015
+		//   that pr introduced the behavior in the validation layers
+		"VUID-VkSwapchainCreateInfoKHR-imageExtent-01274"
+	};
+
+	if (debug_data->pMessageIdName) {
+		for (unsigned i = 0; i < sizeof(ignored) / sizeof(ignored[0]); ++i) {
+			if (!strcmp(debug_data->pMessageIdName, ignored[i])) {
+				return false;
+			}
+		}
+	}
 
 	switch(severity) {
 		case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
@@ -582,7 +594,7 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	}
 
 	// debug callback
-	VkDebugUtilsMessengerEXT messenger;
+	VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
 	if(has_debug) {
 		state->api.createDebugUtilsMessengerEXT =
 			(PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
@@ -751,22 +763,6 @@ bool init_renderer(struct state* state) {
 	info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
 	info.surface = state->surface;
 
-	VkSurfaceCapabilitiesKHR caps;
-	res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
-		state->surface, &caps);
-	if(res != VK_SUCCESS) {
-		vk_error(res, "failed retrieve surface caps");
-		return false;
-	}
-
-	if(caps.currentExtent.width == (uint32_t)-1) {
-		info.imageExtent.width = 800;
-		info.imageExtent.height = 500;
-	} else {
-		info.imageExtent.width = caps.currentExtent.width;
-		info.imageExtent.height = caps.currentExtent.height;
-	}
-
 	// format
 	uint32_t formats_count;
 	res = vkGetPhysicalDeviceSurfaceFormatsKHR(state->phdev,
@@ -811,7 +807,7 @@ bool init_renderer(struct state* state) {
 	// this mode is required to be supported
 	info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
 
-	bool vsync = true;
+	bool vsync = false;
 	if(!vsync) {
 		for (size_t i = 0; i < present_mode_count; i++) {
 			if (present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
@@ -824,6 +820,14 @@ bool init_renderer(struct state* state) {
 	}
 
 	free(present_modes);
+
+	VkSurfaceCapabilitiesKHR caps;
+	res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
+		state->surface, &caps);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "failed retrieve surface caps");
+		return false;
+	}
 
 	uint32_t pref_image_count = caps.minImageCount + 1;
 	if((caps.maxImageCount > 0) && (pref_image_count > caps.maxImageCount)) {
@@ -851,6 +855,14 @@ bool init_renderer(struct state* state) {
 			alpha = alpha_flags[i];
 			break;
 		}
+	}
+
+	if(caps.currentExtent.width == 0xFFFFFFFFu) {
+		info.imageExtent.width = 800;
+		info.imageExtent.height = 500;
+	} else {
+		info.imageExtent.width = caps.currentExtent.width;
+		info.imageExtent.height = caps.currentExtent.height;
 	}
 
 	// usage
