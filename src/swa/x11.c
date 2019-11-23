@@ -1108,6 +1108,10 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 	return !check_error(dpy);
 }
 
+// We can implement this function simply using an xserver roundtrip
+// and xcb since the library is threadsafe by design.
+// Would be slightly more efficient using an eventfd and a custom
+// mainloop (we could do that using pml) though.
 static void display_wakeup(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
 
@@ -1115,6 +1119,9 @@ static void display_wakeup(struct swa_display* base) {
 	ev.response_type = XCB_CLIENT_MESSAGE;
 	ev.format = 8;
 	xcb_send_event(dpy->conn, 0, dpy->dummy_window, 0, (const char*) &ev);
+
+	// flushing here is important, if the main thread is sleeping
+	// it won't be doing it
 	xcb_flush(dpy->conn);
 }
 

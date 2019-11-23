@@ -3,11 +3,12 @@
 #include <dlg/dlg.h>
 #include <string.h>
 #include <time.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <unistd.h>
 
-static bool run = true;
-static bool wakeup = false;
+static atomic_bool run = true;
+static atomic_bool wakeup = false;
 static struct timespec wakeup_time;
 
 static void window_draw(struct swa_window* win) {
@@ -23,7 +24,7 @@ static void window_draw(struct swa_window* win) {
 }
 
 static void window_close(struct swa_window* win) {
-	run = false;
+	atomic_store(&run, false);
 }
 
 static const struct swa_window_listener window_listener = {
@@ -33,11 +34,15 @@ static const struct swa_window_listener window_listener = {
 
 static void* wakeup_thread(void* data) {
 	struct swa_display* dpy = (struct swa_display*) data;
-	while(run) {
-		dlg_assert(!wakeup); // 5 secs should be enough to clear it
-		wakeup = true;
-		clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
-		swa_display_wakeup(dpy);
+	while(atomic_load(&run)) {
+		bool lwakeup = atomic_exchange(&wakeup, true);
+		if(!lwakeup) {
+			clock_gettime(CLOCK_MONOTONIC, &wakeup_time);
+			swa_display_wakeup(dpy);
+		} else {
+			dlg_error("Main thread takes too long to clear wakeup flag");
+		}
+
 		sleep(2);
 	}
 
@@ -68,27 +73,28 @@ int main() {
 	pthread_t wt;
 	pthread_create(&wt, NULL, wakeup_thread, dpy);
 
-	while(run) {
+	while(atomic_load(&run)) {
 		if(!swa_display_dispatch(dpy, true)) {
+			atomic_store(&run, false);
 			break;
 		}
 
-		if(wakeup) {
+		if(atomic_load(&wakeup)) {
 			struct timespec now;
 			clock_gettime(CLOCK_MONOTONIC, &now);
 			int64_t ns = now.tv_nsec - wakeup_time.tv_nsec;
 			ns += (1000 * 1000 * 1000) * (now.tv_sec - wakeup_time.tv_sec);
-			dlg_assert(ns < 1000 * 1000); // 1 ms is way too much
+			dlg_assert(ns < 10 * 1000 * 1000); // 10 ms is way too much
 			dlg_info("Took %ld ns to receive wakeup", ns);
-			wakeup = false;
+			atomic_store(&wakeup, false);
 		}
 	}
 
 	swa_window_destroy(win);
-	swa_display_destroy(dpy);
 
 	dlg_info("waiting for wakeup thread to join...");
 	void* _;
 	pthread_join(wt, &_);
+	swa_display_destroy(dpy);
 }
 
