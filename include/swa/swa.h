@@ -18,6 +18,8 @@ struct swa_data_offer;
 struct swa_data_source;
 struct swa_window_listener;
 
+typedef void (*swa_gl_proc)(void);
+
 // When this value are specified as size in swa_window_settings,
 // the system default will be used.
 // If the system has no default, will use the SWA_FALLBACK_* values.
@@ -164,6 +166,11 @@ enum swa_preference {
 	swa_preference_no,
 };
 
+enum swa_api {
+	swa_api_gl,
+	swa_api_gles,
+};
+
 // Defines a cursor.
 // hx, hy define the cursor hotspot in local coordinates.
 // The hotspot and image members are only relevant
@@ -178,6 +185,18 @@ struct swa_cursor {
 struct swa_gl_surface_settings {
 	// The requested context version
 	unsigned major, minor;
+	// Hard constraint. One can use swa_display_get_default_api.
+	// But then you have to get all function pointers using
+	// swa_display_get_gl_proc_addr and link with neither OpenGL
+	// nor OpenGLES.
+	enum swa_api api;
+	bool forward_compatible;
+	bool compatibility;
+	bool srgb;
+	bool debug;
+	unsigned depth;
+	unsigned stencil;
+	unsigned samples;
 };
 
 // The instance must remain valid until the window is destroyed.
@@ -520,6 +539,24 @@ SWA_API bool swa_display_set_clipboard(struct swa_display*, struct swa_data_sour
 // dispatched event, i.e. you want to call this directly from within
 // the callback of the event that triggers this behavior.
 SWA_API bool swa_display_start_dnd(struct swa_display*, struct swa_data_source*);
+
+// Returns the default gl/gles api used on this display.
+// Other values may be supported though.
+// E.g. for an android backend this would return swa_api_gles (and context
+// creation with swa_api_gl will fail) but on desktop swa_api_gl,
+// even though on most linux system context creation with swa_api_gles
+// will work as well.
+// Only valid if the display has the 'gl' capability.
+SWA_API enum swa_api swa_display_get_default_api(struct swa_display*);
+
+// Returns the gl/gles proc address for the function with the given name.
+// Must only be called while a context is current (see
+// `swa_window_gl_make_current`) and the returned proc address may
+// only be used with the current context.
+// Returns NULL on failure.
+// Only valid if the display has the 'gl' capability.
+SWA_API swa_gl_proc swa_display_get_gl_proc_addr(struct swa_display*,
+		const char* name);
 
 // Creates a new window with the specified settings.
 // To use the default settings, you probably want to initialize them

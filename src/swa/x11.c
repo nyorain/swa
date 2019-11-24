@@ -1386,6 +1386,16 @@ static void find_visual(struct swa_window_x11* win,
 	}
 }
 
+static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base,
+		const char* name) {
+#ifdef SWA_WITH_GL
+	return (swa_gl_proc) eglGetProcAddress(name);
+#else
+	dlg_error("swa was built without gl support");
+	return NULL;
+#endif
+}
+
 static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_x11* dpy = get_display_x11(base);
@@ -1425,69 +1435,22 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			}
 		}
 
-		EGLDisplay edpy = dpy->egl->display;
-		EGLint config_attribs[] = {
-			EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
-			// TODO: only since egl 1.4
-			// EGL_RENDERABLE_TYPE, EGL_OPENGL_BIT,
-			EGL_RED_SIZE, 1,
-			EGL_GREEN_SIZE, 1,
-			EGL_BLUE_SIZE, 1,
-			EGL_ALPHA_SIZE, settings->transparent ? 1 : 0,
-			EGL_NONE,
-		};
-
-		EGLint count;
-		EGLBoolean ret = eglChooseConfig(edpy, config_attribs,
-			&egl_config, 1, &count);
-		if(ret == EGL_FALSE) {
-			dlg_error("eglChooseConfig returned false");
-			goto error;
-		}
-
-		// in this case we couldn't find any configs
-		// try again, just choose any config
-		if(count == 0) {
-			dlg_debug("Couldn't find 32-bit rgba egl config");
-			config_attribs[3] = EGL_NONE;
-			ret = eglChooseConfig(edpy, config_attribs, &egl_config, 1, &count);
-
-			if(count == 0) {
-				dlg_error("Couldn't find any egl config");
-				goto error;
-			}
-		}
-
-		// create context
-		const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
-		EGLint context_attribs[5];
-		if(swa_egl_find_ext(exts, "EGL_KHR_create_context")) {
-			context_attribs[0] = EGL_CONTEXT_MAJOR_VERSION;
-			context_attribs[1] = settings->surface_settings.gl.major;
-			context_attribs[2] = EGL_CONTEXT_MINOR_VERSION;
-			context_attribs[3] = settings->surface_settings.gl.minor;
-			context_attribs[4] = EGL_NONE;
-		} else {
-			context_attribs[0] = EGL_CONTEXT_CLIENT_VERSION;
-			context_attribs[1] = settings->surface_settings.gl.major;
-			context_attribs[2] = EGL_NONE;
-		}
-
-		win->gl.context = eglCreateContext(edpy, egl_config,
-			NULL, context_attribs);
-		if(!win->gl.context) {
-			dlg_error("eglCreateContext failed");
-			goto error;
-		}
-
-		EGLint visualid;
-		if(!eglGetConfigAttrib(edpy, egl_config, EGL_NATIVE_VISUAL_ID, &visualid)) {
-			dlg_error("eglGetConfigAttrib failed");
+		const struct swa_gl_surface_settings* gls = &settings->surface_settings.gl;
+		bool alpha = settings->transparent;
+		EGLContext* ctx = &win->gl.context;
+		if(!swa_egl_init_context(dpy->egl, gls, alpha, &egl_config, ctx)) {
 			goto error;
 		}
 
 		// find the visualtype for this egl config
 		// we have to do this to find the depth for window creation
+		EGLint visualid;
+		if(!eglGetConfigAttrib(dpy->egl->display, egl_config,
+				EGL_NATIVE_VISUAL_ID, &visualid)) {
+			dlg_error("eglGetConfigAttrib failed");
+			goto error;
+		}
+
 		xcb_depth_iterator_t di = xcb_screen_allowed_depths_iterator(dpy->screen);
 		for (; di.rem; xcb_depth_next (&di)) {
 			xcb_visualtype_iterator_t vi = xcb_depth_visuals_iterator(di.data);
@@ -1650,10 +1613,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		win->buffer.scanline_align = visual_scanline_pad / 8;
 	} else if(win->surface_type == swa_surface_gl) {
 #ifdef SWA_WITH_GL
-		win->gl.surface = dpy->egl->api.createPlatformWindowSurface(
-			win->dpy->egl->display, egl_config, &win->window, NULL);
-		if(!win->gl.surface) {
-			dlg_error("eglCreatePlatformWindowSurface failed");
+		if(!(win->gl.surface = swa_egl_create_surface(dpy->egl, &win->window,
+				egl_config, settings->surface_settings.gl.srgb))) {
 			goto error;
 		}
 #else
@@ -1719,6 +1680,7 @@ static const struct swa_display_interface display_impl = {
 	.get_clipboard = display_get_clipboard,
 	.set_clipboard = display_set_clipboard,
 	.start_dnd = display_start_dnd,
+	.get_gl_proc_addr = display_get_gl_proc_addr,
 	.create_window = display_create_window,
 };
 
