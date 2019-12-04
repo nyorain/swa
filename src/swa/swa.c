@@ -287,6 +287,10 @@ bool swa_display_start_dnd(struct swa_display* dpy,
 		struct swa_data_source* source) {
 	return dpy->impl->start_dnd(dpy, source);
 }
+swa_gl_proc swa_display_get_gl_proc_addr(struct swa_display* dpy,
+		const char* name) {
+	return dpy->impl->get_gl_proc_addr(dpy, name);
+}
 struct swa_window* swa_display_create_window(struct swa_display* dpy,
 		const struct swa_window_settings* settings) {
 	return dpy->impl->create_window(dpy, settings);

@@ -9,13 +9,12 @@
 #include <GL/gl.h>
 
 static bool run = true;
-static void window_draw(struct swa_window* win) {
-	if(!swa_window_gl_make_current(win)) {
-		return;
-	}
+static bool premult = false;
 
-	float alpha = 0.2;
-	glClearColor(alpha * 0.9, alpha * 1.0, alpha * 0.85, alpha);
+static void window_draw(struct swa_window* win) {
+	float alpha = 0.1;
+	float mult = premult ? alpha : 1.f;
+	glClearColor(mult * 0.8, mult * 0.6, mult * 0.3, alpha);
 	glClear(GL_COLOR_BUFFER_BIT);
 	swa_window_gl_swap_buffers(win);
 
@@ -54,12 +53,15 @@ int main() {
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
 	settings.title = "swa-example-window";
-	settings.surface = swa_surface_gl;
-	settings.surface_settings.gl.major = 4;
-	settings.surface_settings.gl.minor = 0;
 	settings.listener = &window_listener;
 	settings.cursor = cursor;
 	settings.transparent = true;
+	settings.surface = swa_surface_gl;
+	settings.surface_settings.gl.major = 4;
+	settings.surface_settings.gl.minor = 0;
+	settings.surface_settings.gl.srgb = true;
+	settings.surface_settings.gl.debug = true;
+	settings.surface_settings.gl.compatibility = false;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");
@@ -68,6 +70,14 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, dpy);
+
+	if(!swa_window_gl_make_current(win)) {
+		dlg_fatal("Could not make gl window current");
+		return EXIT_FAILURE;
+	}
+
+	dlg_info("OpenGL version: %s", glGetString(GL_VERSION));
+	glEnable(GL_FRAMEBUFFER_SRGB);
 
 	while(run) {
 		if(!swa_display_dispatch(dpy, true)) {

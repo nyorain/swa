@@ -28,7 +28,7 @@ known issues:
 - send state change events
 - implement gl swap interval
 - implement data exchange stuff
-- remove checked versions in most places. Or only keep them in the
+- remove xcb_*_checked versions in most places. Or only keep them in the
   debug build somehow?
 - test touch input on device. ask fritz or get chromebook to work again?
 - [low] we could implement buffer surfaces using present pixmaps
@@ -37,7 +37,7 @@ known issues:
 - [low] check/test which wm's support motif wm hints and only
   report the client_decoration display cap on those (we can query
   which wm is active)
-- [low] use glx instead of egl. Could egl not be available anywhere?
+- [low] use glx instead of egl? Could egl not be available anywhere?
 
 winapi:
 [not implemented yet at all]
@@ -46,11 +46,6 @@ winapi:
 
 general
 
-- further gl settings: api (gl/gles, also give way to query which
-  api is used in context; then also give way to query function
-  pointers to allow apps to support both dynamically), srgb,
-  debug, forward_compatible, compatibility (legacy), depth, etc...
-  hdr? i.e. color spaces/>8bit color output?
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer
@@ -75,6 +70,8 @@ general
 
 laster/low prio
 
+- further gl settings: accum buffer, color buffer depth,
+  robustness/reset strategy
 - evaluate once again whether/where deferred events make sense.
   They can be useful for resizing/redrawing (i.e. don't handle
   all resize events directly but rather process all currently

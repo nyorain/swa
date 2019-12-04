@@ -83,7 +83,7 @@ else
 	dep_wl_client = dependency('wayland-client', required: true)
 	dep_wl_cursor = dependency('wayland-cursor', required: true)
 	dep_wl_egl = dependency('wayland-egl', required: true)
-	dep_egl = dependency('egl', required: true)
+	dep_egl = dependency('egl', required: true, version: '>=1.4')
 
 	op_enable_x11 = true
 	x11_deps = [
