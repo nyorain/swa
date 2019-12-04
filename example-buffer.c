@@ -39,7 +39,7 @@ static void window_draw(struct swa_window* win) {
 	}
 
 	swa_window_apply_buffer(win);
-	swa_window_refresh(win);
+	// swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -79,6 +79,7 @@ int main() {
 	timespec_get(&last_redraw, TIME_UTC);
 
 	while(run) {
+		dlg_info("dispatching");
 		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}

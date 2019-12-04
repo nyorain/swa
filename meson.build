@@ -5,7 +5,7 @@ project(
 	license: 'MIT',
 	meson_version: '>=0.48.0',
 	default_options: [
-		'c_std=c99',
+		'c_std=c11',
 		'warning_level=3',
 		'werror=true',
 	],
@@ -25,9 +25,10 @@ args = cc.get_supported_arguments([
 	'/wd4706', # assignment within conditional expression
 	'/wd4100', # unreferenced formal parameter
 
-	# c99 compat
+	# c99 & c11 compat
 	'/wd4132', # const object should be initialized (for fwd decl)
 	'/wd4204', # non-constant aggregate initializer
+	'/wd4201', # anonymous union extension
 ])
 add_project_arguments(args, language: 'c')
 
@@ -42,13 +43,14 @@ dep_dlg = dependency('dlg',
 	static: true
 )
 
+swa_deps = [dep_dlg]
 swa_args = []
 conf_data = configuration_data()
 conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 
-if build_machine.system() == 'windows'
-	swa_deps = [dep_dlg]
+dep_vulkan = dependency('vulkan', required: false)
 
+if build_machine.system() == 'windows'
 	conf_data.set('SWA_WITH_VK', false, description: 'Compiled with Vulkan support')
 	conf_data.set('SWA_WITH_GL', false, description: 'Compiled with OpenGL support')
 	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
@@ -59,6 +61,8 @@ if build_machine.system() == 'windows'
 		swa_args += '-DSWA_API=__declspec(dllexport)'
 	endif
 
+	swa_deps += cc.find_library('Dwmapi')
+	swa_deps += cc.find_library('Shlwapi')
 	swa_src += files('src/swa/winapi.c')
 else
 	dep_pml = dependency('pml',
@@ -74,7 +78,6 @@ else
 		'src/swa/egl.c',
 	)
 
-	dep_vulkan = dependency('vulkan', required: true)
 	dep_xkbcommon = dependency('xkbcommon', required: true)
 
 	dep_wl_client = dependency('wayland-client', required: true)
@@ -145,9 +148,8 @@ else
 		sources: wl_protos_headers,
 	)
 
-	swa_deps = [
+	swa_deps += [
 		dep_pml,
-		dep_dlg,
 		dep_wl_client,
 		dep_wl_cursor,
 		dep_wl_egl,
@@ -203,9 +205,11 @@ executable('example-exchange',
 	'example-exchange.c',
 	dependencies: [swa_dep, dep_dlg])
 
-executable('example-vulkan',
-	'example-vulkan.c',
-	dependencies: [swa_dep, dep_dlg, dep_vulkan])
+if dep_vulkan.found()
+	executable('example-vulkan',
+		'example-vulkan.c',
+		dependencies: [swa_dep, dep_dlg, dep_vulkan])
+endif
 
 executable('example-gl',
 	'example-gl.c',

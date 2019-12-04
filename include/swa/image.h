@@ -54,10 +54,10 @@ struct swa_pixel {
 SWA_API unsigned swa_image_format_size(enum swa_image_format);
 
 // Reads one pixel from the given image data with the given format.
-struct swa_pixel swa_read_pixel(const uint8_t* data, enum swa_image_format);
+SWA_API struct swa_pixel swa_read_pixel(const uint8_t* data, enum swa_image_format);
 
 // Writes ones pixel into the given image data with the given format.
-void swa_write_pixel(uint8_t* data, enum swa_image_format, struct swa_pixel);
+SWA_API void swa_write_pixel(uint8_t* data, enum swa_image_format, struct swa_pixel);
 
 // Converts an image into a new image that already has data.
 // Expects `src` to be a valid image.

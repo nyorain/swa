@@ -7,6 +7,7 @@
 #include <windows.h>
 #include <winuser.h>
 #include <windowsx.h>
+#include <Dwmapi.h>
 
 // undefine the shittiest macros
 // holy fuck microsoft...
@@ -22,6 +23,12 @@ extern "C" {
 
 struct swa_display_win {
 	struct swa_display base;
+
+	// The thread this display was created in.
+	// Since many winapi functions are thread-dependent, we
+	// require that all functions (except wakup_wait) have
+	// to be called from this thread.
+	DWORD main_thread_id;
 	bool error;
 
 	struct swa_window_win* focus;
@@ -37,6 +44,11 @@ struct swa_win_buffer_surface {
 	HDC wdc; // only set when buffer is active
 };
 
+struct swa_win_vk_surface {
+	uint64_t instance;
+	uint64_t surface;
+};
+
 struct swa_window_win {
 	struct swa_window base;
 	struct swa_display_win* dpy;
@@ -49,6 +61,7 @@ struct swa_window_win {
 	enum swa_surface_type surface_type;
 	union {
 		struct swa_win_buffer_surface buffer;
+		struct swa_win_vk_surface vk;
 	};
 
 	struct {

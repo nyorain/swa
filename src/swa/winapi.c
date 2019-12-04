@@ -2,8 +2,12 @@
 #include <dlg/dlg.h>
 
 #ifdef SWA_WITH_VK
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_win32.h>
+  #include <vulkan/vulkan.h>
+  #include <vulkan/vulkan_win32.h>
+#endif
+
+#ifdef SWA_WITH_GL
+  #include <Wingdi.h>
 #endif
 
 // define constants that are sometimes not included
@@ -241,19 +245,48 @@ static bool win_is_client_decorated(struct swa_window* base) {
 }
 
 static uint64_t win_get_vk_surface(struct swa_window* base) {
-	return false;
+#ifdef SWA_WITH_VK
+	struct swa_window_win* win = get_window_win(base);
+	if(win->surface_type != swa_surface_vk) {
+		dlg_warn("can't get vulkan surface from non-vulkan window");
+		return 0;
+	}
+
+	return (uint64_t) win->vk.surface;
+#else
+	dlg_warn("swa was compiled without vulkan suport");
+	return 0;
+#endif
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
+#ifdef SWA_WITH_GL
+	dlg_error("unimplemented");
 	return false;
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
+#ifdef SWA_WITH_GL
+	dlg_error("unimplemented");
 	return false;
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
+#ifdef SWA_WITH_GL
+	dlg_error("unimplemented");
 	return false;
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
@@ -274,7 +307,10 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 		return false;
 	}
 
-	// check if we have to recreate the bitmap
+	// check if we have to recreate the bitmap.
+	// Even though we might get a differrent DC every time, this
+	// works as the bitmap created by CreateDIBSection works
+	// with other DCs as well.
 	if(win->buffer.width != win->width || win->buffer.height != win->height) {
 		if(win->buffer.bitmap) {
 			DeleteObject(win->buffer.bitmap);
@@ -429,6 +465,7 @@ bool display_dispatch(struct swa_display* base, bool block) {
 
 void display_wakeup(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
+	PostThreadMessage(dpy->main_thread_id, WM_USER, 0, 0);
 }
 
 enum swa_display_cap display_capabilities(struct swa_display* base) {
@@ -657,9 +694,11 @@ struct swa_window* display_create_window(struct swa_display* base,
 	// create window
 	unsigned exstyle = 0;
 	unsigned style = WS_OVERLAPPEDWINDOW;
+
+	// NOTE: in theory this is not supported when we use CS_OWNDC but in practice it's
+	// the only way and works.
 	if(settings->transparent) {
 		exstyle |= WS_EX_LAYERED;
-		style |= CS_OWNDC;
 	}
 
 	wchar_t* titlew = settings->title ? widen(settings->title) : L"";
@@ -678,13 +717,71 @@ struct swa_window* display_create_window(struct swa_display* base,
 	}
 
 	SetWindowLongPtr(win->handle, GWLP_USERDATA, (uintptr_t) win);
-	win_set_cursor(&win->base, settings->cursor);
+	if(settings->transparent) {
+		// This will simply cause windows to respect the alpha bits in the content of the window
+		// and not actually blur anything.
+		DWM_BLURBEHIND bb = {0};
+		bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+		bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);  // makes the window transparent
+		bb.fEnable = TRUE;
+		DwmEnableBlurBehindWindow(win->handle, &bb);
 
+		// This is not what makes the window transparent.
+		// We simply have to do this so the window contents are shown.
+		// We only have to set the layered flag to make DwmEnableBlueBehinWindow function
+		// correctly and this causes the flag to have no further effect.
+		SetLayeredWindowAttributes(win->handle, 0x1, 0, LWA_COLORKEY);
+	}
+
+	win_set_cursor(&win->base, settings->cursor);
 	ShowWindowAsync(win->handle, SW_SHOWDEFAULT);
 
 	// surface
 	win->surface_type = settings->surface;
 	// no-op for buffer surface
+	if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		win->vk.instance = settings->surface_settings.vk.instance;
+		if(!win->vk.instance) {
+			dlg_error("No vulkan instance passed for vulkan window");
+			goto err;
+		}
+
+		VkWin32SurfaceCreateInfoKHR info = {0};
+		info.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+		info.hinstance = hinstance;
+		info.hwnd = win->handle;
+
+		VkInstance instance = (VkInstance) win->vk.instance;
+		VkSurfaceKHR surface;
+
+		PFN_vkCreateWin32SurfaceKHR fn = (PFN_vkCreateWin32SurfaceKHR)
+			vkGetInstanceProcAddr(instance, "vkCreateWin32SurfaceKHR");
+		if(!fn) {
+			dlg_error("Failed to load 'vkCreateWin32SurfaceKHR' function");
+			goto err;
+		}
+
+		VkResult res = fn(instance, &info, NULL, &surface);
+		if(res != VK_SUCCESS) {
+			dlg_error("Failed to create vulkan surface: %d", res);
+			goto err;
+		}
+
+		win->vk.surface = (uint64_t)surface;
+#else
+		dlg_error("swa was compiled without vulkan support");
+		goto error;
+#endif
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		dlg_error("unimplemented");
+		goto error;
+#else
+		dlg_error("swa was compiled without gl support");
+		goto error;
+#endif
+	}
 
 	return &win->base;
 
@@ -717,5 +814,6 @@ struct swa_display* swa_display_win_create(const char* appname) {
 
 	struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
+	dpy->main_thread_id = GetCurrentThreadId();
 	return &dpy->base;
 }

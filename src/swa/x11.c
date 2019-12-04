@@ -21,13 +21,13 @@
 #include <xkbcommon/xkbcommon-x11.h>
 
 #ifdef SWA_WITH_VK
-#include <vulkan/vulkan.h>
-#include <vulkan/vulkan_xcb.h>
+  #include <vulkan/vulkan.h>
+  #include <vulkan/vulkan_xcb.h>
 #endif
 
 #ifdef SWA_WITH_GL
-#include <swa/egl.h>
-#include <EGL/egl.h>
+  #include <swa/egl.h>
+  #include <EGL/egl.h>
 #endif
 
 static const struct swa_display_interface display_impl;
@@ -439,6 +439,7 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
+#ifdef SWA_WITH_GL
 	struct swa_window_x11* win = get_window_x11(base);
 	if(win->surface_type != swa_surface_gl) {
 		dlg_error("Window doesn't have gl surface");
@@ -449,9 +450,14 @@ static bool win_gl_make_current(struct swa_window* base) {
 	dlg_assert(win->gl.context && win->gl.surface);
 	return eglMakeCurrent(win->dpy->egl->display, win->gl.surface,
 		win->gl.surface, win->gl.context);
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
+#ifdef SWA_WITH_GL
 	struct swa_window_x11* win = get_window_x11(base);
 	if(win->surface_type != swa_surface_gl) {
 		dlg_error("Window doesn't have gl surface");
@@ -463,10 +469,20 @@ static bool win_gl_swap_buffers(struct swa_window* base) {
 
 	win_surface_frame(&win->base);
 	return eglSwapBuffers(win->dpy->egl->display, win->gl.surface);
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
+#ifdef SWA_WITH_GL
+	dlg_error("unimplemented");
 	return false;
+#else
+	dlg_warn("swa was compiled without gl suport");
+	return false;
+#endif
 }
 
 static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
@@ -1664,7 +1680,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 #ifdef SWA_WITH_VK
 		win->vk.instance = settings->surface_settings.vk.instance;
 		if(!win->vk.instance) {
-			dlg_error("Didn't set vulkan instance for vulkan window");
+			dlg_error("No vulkan instance passed for vulkan window");
 			goto error;
 		}
 
