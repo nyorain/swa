@@ -184,6 +184,7 @@ else
 		'src/swa/drm/drm.c',
 		'src/swa/drm/props.c',
 		'src/swa/drm/xcursor.c',
+		'src/swa/drm/vulkan.c',
 	)
 endif
 

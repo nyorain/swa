@@ -49,9 +49,18 @@ static void window_close(struct swa_window* win) {
 	run = false;
 }
 
+static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
+	dlg_trace("key: %d %d", ev->keycode, ev->pressed);
+	if(ev->pressed && ev->keycode == swa_key_escape) {
+		dlg_info("Escape pressed, exiting");
+		run = false;
+	}
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.close = window_close,
+	.key = window_key,
 };
 
 static void sighandler(int signo) {
@@ -93,12 +102,14 @@ int main() {
 	timespec_get(&last_redraw, TIME_UTC);
 
 	while(run) {
-		dlg_info("dispatching");
 		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}
 	}
 
+	dlg_trace("Destroying swa window...");
 	swa_window_destroy(win);
+	dlg_trace("Destroying swa display...");
 	swa_display_destroy(dpy);
+	dlg_trace("Exiting cleanly");
 }

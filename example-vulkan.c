@@ -1,9 +1,14 @@
+#define _XOPEN_SOURCE 500
+#define _POSIX_C_SOURCE 200808L
+
+#include <unistd.h>
 #include <swa/swa.h>
 #include <swa/key.h>
 #include <dlg/dlg.h>
 #include <string.h>
 #include <vulkan/vulkan.h>
 #include <time.h>
+#include <signal.h>
 
 struct render_buffer {
 	VkCommandBuffer cb;
@@ -169,6 +174,7 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 		NULL, &state->swapchain);
 
 	if(state->swapchain_info.oldSwapchain) {
+		state->swapchain_info.oldSwapchain = VK_NULL_HANDLE;
 		vkDestroySwapchainKHR(state->device,
 			state->swapchain_info.oldSwapchain, NULL);
 	}
@@ -186,11 +192,25 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	}
 }
 
+static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
+	if(ev->pressed && ev->keycode == swa_key_escape) {
+		dlg_info("Escape pressed, exiting");
+		run = false;
+	}
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.close = window_close,
 	.resize = window_resize,
+	.key = window_key,
 };
+
+static void sighandler(int signo) {
+	if(signo == SIGINT) {
+		run = false;
+	}
+}
 
 // Initialization of window and vulkan in general needs the following
 // steps, in that order:
@@ -210,6 +230,12 @@ static const struct swa_window_listener window_listener = {
 // used SWA_DEFAULT_SIZE.
 int main() {
 	int ret = EXIT_SUCCESS;
+
+	struct sigaction sa;
+	sa.sa_handler = sighandler;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGINT, &sa, NULL);
+
 	struct swa_display* dpy = swa_display_autocreate("swa example-vulkan");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
@@ -253,6 +279,12 @@ int main() {
 	}
 
 	state.surface = (VkSurfaceKHR) swa_window_get_vk_surface(win);
+	if(!state.surface) {
+		ret = EXIT_FAILURE;
+		dlg_error("Couldn't get vk surface from swa window");
+		goto cleanup_win;
+	}
+
 	if(!init_renderer(&state)) {
 		ret = EXIT_FAILURE;
 		goto cleanup_win;
@@ -262,8 +294,12 @@ int main() {
 	timespec_get(&last_redraw, TIME_UTC);
 
 	// main loop
-	while(run) {
-		if(!swa_display_dispatch(dpy, true)) {
+	// TODO!
+	unsigned count = 0u;
+	while(run && ++count < 1000u) {
+		dlg_info("dispatch");
+		usleep(1000 * 5);
+		if(!swa_display_dispatch(dpy, false)) {
 			break;
 		}
 	}
@@ -275,6 +311,7 @@ cleanup_state:
 	cleanup(&state);
 cleanup_dpy:
 	swa_display_destroy(dpy);
+	dlg_trace("Exiting cleanly");
 	return ret;
 }
 
@@ -695,7 +732,8 @@ bool init_renderer(struct state* state) {
 		}
 	}
 
-	// TODO: use platform-specific queries. Integrate into swa
+	// TODO: use platform-specific queries. Integrate into swa?
+	// TODO: when no queue supports presenting here, try another phdev
 	uint32_t present_qfam = 0xFFFFFFFFu;
 	for(unsigned i = 0u; i < qfam_count; ++i) {
 		VkBool32 sup;

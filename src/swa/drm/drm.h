@@ -9,15 +9,39 @@
 #include <xf86drmMode.h>
 #include <pml.h>
 
+struct drm_vk_surface;
+
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+struct pointer {
+	struct pointer* next;
+	struct pointer* prev;
+
+	struct libinput_device* dev;
+};
+
+struct keyboard {
+	struct keyboard* next;
+	struct keyboard* prev;
+
+	struct libinput_device* dev;
+};
+
+struct touch {
+	struct touch* prev;
+	struct touch* next;
+
+	struct libinput_device* dev;
+};
 
 struct drm_display {
 	struct swa_display base;
 	struct pml* pml;
 
 	struct {
+		bool vtset;
 		bool active;
 		int sigusrfd;
 		struct pml_io* sigusrio;
@@ -25,16 +49,16 @@ struct drm_display {
 		int saved_kb_mode;
 	} session;
 
-	int drm_fd;
-	// bool has_fb_mods;
-	struct pml_io* drm_io;
-
-	drmModeResPtr res;
-	unsigned n_planes;
-	drmModePlanePtr* planes;
-
-	unsigned n_outputs;
-	struct drm_output* outputs;
+	struct {
+		int fd;
+		// bool has_fb_mods;
+		struct pml_io* io;
+		drmModeResPtr res;
+		unsigned n_planes;
+		drmModePlanePtr* planes;
+		unsigned n_outputs;
+		struct drm_output* outputs;
+	} drm;
 
 	struct udev* udev;
 	struct udev_monitor* udev_monitor;
@@ -43,6 +67,24 @@ struct drm_display {
 	struct {
 		struct libinput* context;
 		struct pml_io* io;
+
+		struct {
+			bool present;
+			struct drm_window* focus;
+			struct xkb_keymap* keymap;
+			struct xkb_state* state;
+		} keyboard;
+
+		struct {
+			bool present;
+			uint32_t x;
+			uint32_t y;
+			struct drm_window* over;
+		} pointer;
+
+		struct {
+			bool present;
+		} touch;
 	} input;
 };
 
@@ -89,13 +131,15 @@ struct drm_buffer_surface {
 struct drm_window {
 	struct swa_window base;
 	struct drm_display* dpy;
-	struct drm_output* output;
-	enum swa_surface_type surface_type;
-	bool redraw;
 	struct pml_defer* defer_draw;
 
+	bool redraw;
+	struct drm_output* output; // optional
+
+	enum swa_surface_type surface_type;
 	union {
 		struct drm_buffer_surface buffer;
+		struct drm_vk_surface* vk;
 	};
 };
 

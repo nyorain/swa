@@ -34,7 +34,7 @@
 #include <drm_mode.h>
 
 #ifdef SWA_WITH_VK
-  #include <vulkan/vulkan.h>
+  #include "vulkan.h"
 #endif
 
 static const struct swa_display_interface display_impl;
@@ -54,6 +54,13 @@ static struct drm_window* get_window_drm(struct swa_window* base) {
 static void win_destroy(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
 	if(win->output) win->output->window = NULL;
+	if(win->dpy->input.pointer.over == win) {
+		win->dpy->input.pointer.over = NULL;
+	}
+	if(win->dpy->input.keyboard.focus == win) {
+		win->dpy->input.keyboard.focus = NULL;
+	}
+
 	// TODO
 	free(win);
 }
@@ -91,12 +98,17 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 
 static void win_refresh(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
-	if(!win->buffer.pending && !win->buffer.active) {
-		if(win->base.listener->draw) {
-			pml_defer_enable(win->defer_draw, true);
+	if(win->surface_type == swa_surface_buffer) {
+		if(!win->buffer.pending && !win->buffer.active) {
+			if(win->base.listener->draw) {
+				pml_defer_enable(win->defer_draw, true);
+			}
+		} else {
+			win->redraw = true;
 		}
 	} else {
-		win->redraw = true;
+		// TODO
+		dlg_info("TODO: unimplemented");
 	}
 }
 
@@ -135,10 +147,19 @@ static bool win_is_client_decorated(struct swa_window* base) {
 	return false;
 }
 
-// TODO
 static uint64_t win_get_vk_surface(struct swa_window* base) {
-	dlg_error("TODO: not implemented");
+#ifdef SWA_WITH_VK
+	struct drm_window* win = get_window_drm(base);
+	if(win->surface_type != swa_surface_vk) {
+		dlg_warn("can't get vulkan surface from non-vulkan window");
+		return 0;
+	}
+
+	return (uint64_t) win->vk->surface;
+#else
+	dlg_warn("swa was compiled without vulkan suport");
 	return 0;
+#endif
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
@@ -260,7 +281,7 @@ static void win_apply_buffer(struct swa_window* base) {
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 	}
 
-	int ret = drmModeAtomicCommit(win->dpy->drm_fd, req, flags, win->dpy);
+	int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
 	if(ret != 0) {
 		dlg_error("drmModeAtomicCommit: %s", strerror(errno));
 	} else {
@@ -298,6 +319,20 @@ static const struct swa_window_interface window_impl = {
 };
 
 // display
+static void drm_finish(struct drm_display* dpy) {
+	// TODO: cleanup output data
+	free(dpy->drm.outputs);
+	for(unsigned i = 0u; i < dpy->drm.n_planes; i++) {
+		drmModeFreePlane(dpy->drm.planes[i]);
+	}
+	free(dpy->drm.planes);
+
+	if(dpy->drm.res) drmModeFreeResources(dpy->drm.res);
+	if(dpy->drm.io) pml_io_destroy(dpy->drm.io);
+	if(dpy->drm.fd) close(dpy->drm.fd);
+	memset(&dpy->drm, 0x0, sizeof(dpy->drm));
+}
+
 static void display_destroy(struct swa_display* base) {
 	struct drm_display* dpy = get_display_drm(base);
 
@@ -312,16 +347,7 @@ static void display_destroy(struct swa_display* base) {
 	}
 
 	// TODO: cleanup libinput, udev stuff
-	// TODO: cleanup output data
-	free(dpy->outputs);
-	for(unsigned i = 0u; i < dpy->n_planes; i++) {
-		drmModeFreePlane(dpy->planes[i]);
-	}
-	free(dpy->planes);
-
-	if(dpy->res) drmModeFreeResources(dpy->res);
-	if(dpy->drm_fd) close(dpy->drm_fd);
-
+	drm_finish(dpy);
 	free(dpy);
 }
 
@@ -337,13 +363,25 @@ static void display_wakeup(struct swa_display* base) {
 }
 
 static enum swa_display_cap display_capabilities(struct swa_display* base) {
-	// TODO: return mouse/touch/keyboard depending on libinput
 	// TODO: implement gl support
-	// TODO: implement vk support
-	return swa_display_cap_buffer_surface;
+	struct drm_display* dpy = get_display_drm(base);
+	enum swa_display_cap caps =
+#ifdef SWA_WITH_GL
+		// swa_display_cap_gl |
+#endif
+#ifdef SWA_WITH_VK
+		swa_display_cap_vk |
+#endif
+		swa_display_cap_buffer_surface;
+
+	if(dpy->input.keyboard.present) caps |= swa_display_cap_keyboard;
+	if(dpy->input.pointer.present) caps |= swa_display_cap_mouse;
+	if(dpy->input.touch.present) caps |= swa_display_cap_touch;
+	return caps;
 }
 
 static const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
+	(void) base;
 #ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
@@ -426,7 +464,7 @@ static bool init_dumb_buffer(struct drm_display* dpy,
 		.height = output->mode.vdisplay,
 		.bpp = 32,
 	};
-	int err = drmIoctl(dpy->drm_fd, DRM_IOCTL_MODE_CREATE_DUMB, &create);
+	int err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create);
 	if(err != 0) {
 		dlg_error("Failed to create %u x %u dumb buffer: %s",
 			create.width, create.height, strerror(errno));
@@ -449,7 +487,7 @@ static bool init_dumb_buffer(struct drm_display* dpy,
 	struct drm_mode_map_dumb map = {
 		.handle = buf->gem_handle,
 	};
-	err = drmIoctl(dpy->drm_fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
+	err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
 	if(err != 0) {
 		dlg_error("failed to get %u x %u mmap offset: %s",
 			create.width, create.height, strerror(errno));
@@ -457,7 +495,7 @@ static bool init_dumb_buffer(struct drm_display* dpy,
 	}
 
 	buf->data = mmap(NULL, create.size, PROT_WRITE, MAP_SHARED,
-		dpy->drm_fd, map.offset);
+		dpy->drm.fd, map.offset);
 	if(buf->data == MAP_FAILED) {
 		dlg_error("failed to mmap %u x %u dumb buffer: %s",
 			create.width, create.height, strerror(errno));
@@ -471,7 +509,7 @@ static bool init_dumb_buffer(struct drm_display* dpy,
 	uint32_t pitches[4] = {buf->stride, 0, 0, 0};
 	uint32_t gem_handles[4] = {buf->gem_handle, 0, 0, 0};
 	uint32_t offsets[4] = {0, 0, 0, 0};
-	err = drmModeAddFB2(dpy->drm_fd, create.width, create.height,
+	err = drmModeAddFB2(dpy->drm.fd, create.width, create.height,
 		DRM_FORMAT_XRGB8888, gem_handles, pitches,
 		offsets, &buf->fb_id, 0);
 
@@ -484,12 +522,12 @@ static bool init_dumb_buffer(struct drm_display* dpy,
 
 err_dumb:;
 	struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
-	drmIoctl(dpy->drm_fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+	drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
 err:
 	return false;
 }
 
-void win_send_draw(struct pml_defer* defer) {
+static void win_send_draw(struct pml_defer* defer) {
 	struct drm_window* win = pml_defer_get_data(defer);
 	pml_defer_enable(defer, false);
 	if(win->base.listener->draw) {
@@ -497,114 +535,347 @@ void win_send_draw(struct pml_defer* defer) {
 	}
 }
 
-struct swa_window* display_create_window(struct swa_display* base,
-		const struct swa_window_settings* settings) {
-	struct drm_display* dpy = get_display_drm(base);
+static void page_flip_handler(int fd, unsigned seq,
+		unsigned tv_sec, unsigned tv_usec, unsigned crtc_id, void *data) {
+	struct drm_display* dpy = data;
+	dlg_assert(dpy);
+	dlg_assert(dpy->drm.fd);
 
-	// Just create it on any free output.
-	// If there aren't any remaning outputs, fail
 	struct drm_output* output = NULL;
-	for(unsigned i = 0u; i < dpy->n_outputs; ++i) {
-		if(!dpy->outputs[i].window) {
-			output = &dpy->outputs[i];
+	for(unsigned i = 0u; i < dpy->drm.n_outputs; ++i) {
+		if(dpy->drm.outputs[i].crtc_id == crtc_id) {
+			output = &dpy->drm.outputs[i];
 			break;
 		}
 	}
 
 	if(!output) {
-		dlg_error("Can't create window since there isn't a free output");
+		dlg_debug("[CRTC:%u] atomic completion for unknown CRTC", crtc_id);
+		return;
+	}
+
+	if(!output->window) {
+		dlg_debug("[CRTC:%u] atomic completion for windowless output", crtc_id);
+		return;
+	}
+
+	// manage buffers
+	dlg_assert(output->window->buffer.pending);
+	dlg_assert(output->window->buffer.pending->in_use);
+	if(output->window->buffer.last) {
+		dlg_assert(output->window->buffer.last->in_use);
+		output->window->buffer.last->in_use = false;
+	}
+	output->window->buffer.last = output->window->buffer.pending;
+	output->window->buffer.pending = NULL;
+
+	// redraw, if requested
+	if(output->window->redraw) {
+		output->window->redraw = false;
+		struct swa_window* base = &output->window->base;
+		if(base->listener->draw) {
+			base->listener->draw(base);
+		}
+	}
+}
+
+static void drm_io(struct pml_io* io, unsigned revents) {
+	struct drm_display* dpy = pml_io_get_data(io);
+	drmEventContext event = {
+		.version = 3,
+		.page_flip_handler2 = page_flip_handler,
+	};
+
+	errno = 0;
+	int err = drmHandleEvent(dpy->drm.fd, &event);
+	if(err != 0) {
+		dlg_error("drmHandleEvent: %d (%s)", err, strerror(errno));
+	}
+}
+
+static bool output_init(struct drm_display* dpy,struct drm_output* output,
+		drmModeConnectorPtr connector) {
+	bool success = false;
+
+	// Find the encoder (a deprecated KMS object) for this connector
+	if(connector->encoder_id == 0) {
+		dlg_debug("[CONN:%" PRIu32 "]: no encoder", connector->connector_id);
 		return NULL;
 	}
 
-	struct drm_window* win = calloc(1, sizeof(*win));
-	win->base.impl = &window_impl;
-	win->base.listener = settings->listener;
-	win->output = output;
-	win->dpy = dpy;
-	win->surface_type = settings->surface;
-	output->window = win;
-
-	if(win->surface_type == swa_surface_buffer) {
-		win->output->needs_modeset = true;
-		for(unsigned i = 0u; i < 3u; ++i) {
-			if(!init_dumb_buffer(dpy, output, &win->buffer.buffers[i])) {
-				goto error;
-			}
+	drmModeEncoderPtr encoder = NULL;
+	for(int e = 0; e < dpy->drm.res->count_encoders; e++) {
+		if(dpy->drm.res->encoders[e] == connector->encoder_id) {
+			encoder = drmModeGetEncoder(dpy->drm.fd, dpy->drm.res->encoders[e]);
+			break;
 		}
-	} else if(win->surface_type == swa_surface_vk) {
-		// TODO
-		dlg_error("TODO: Not implemented");
-		goto error;
-	} else if(win->surface_type == swa_surface_gl) {
-		// TODO
-		dlg_error("TODO: Not implemented");
+	}
+
+	assert(encoder);
+
+	// TODO: use more sophisticated matching/crtc reassigning, see wlroots
+	if(encoder->crtc_id == 0) {
+		dlg_debug("[CONN:%" PRIu32 "]: no CRTC", connector->connector_id);
+		goto out_encoder;
+	}
+
+	drmModeCrtcPtr crtc = NULL;
+	for(int c = 0; c < dpy->drm.res->count_crtcs; c++) {
+		if(dpy->drm.res->crtcs[c] == encoder->crtc_id) {
+			crtc = drmModeGetCrtc(dpy->drm.fd, dpy->drm.res->crtcs[c]);
+			break;
+		}
+	}
+	assert(crtc);
+
+	// Ensure the CRTC is active.
+	if(crtc->buffer_id == 0) {
+		dlg_debug("[CONN:%" PRIu32 "]: not active", connector->connector_id);
+		goto out_crtc;
+	}
+
+	// The kernel doesn't directly tell us what it considers to be the
+	// single primary plane for this CRTC (i.e. what would be updated
+	// by drmModeSetCrtc), but if it's already active then we can cheat
+	// by looking for something displaying the same framebuffer ID,
+	// since that information is duplicated.
+	drmModePlanePtr plane = NULL;
+	for(unsigned p = 0; p < dpy->drm.n_planes; p++) {
+		dlg_debug("[PLANE: %" PRIu32 "] CRTC ID %" PRIu32 ", FB %" PRIu32,
+			dpy->drm.planes[p]->plane_id,
+			dpy->drm.planes[p]->crtc_id,
+			dpy->drm.planes[p]->fb_id);
+		if(dpy->drm.planes[p]->crtc_id == crtc->crtc_id &&
+		    	dpy->drm.planes[p]->fb_id == crtc->buffer_id) {
+			plane = dpy->drm.planes[p];
+			break;
+		}
+	}
+	assert(plane);
+
+	// DRM is supposed to provide a refresh interval, but often doesn't;
+	// calculate our own in milliHz for higher precision anyway.
+	uint64_t refresh = ((crtc->mode.clock * 1000000LL / crtc->mode.htotal) +
+		   (crtc->mode.vtotal / 2)) / crtc->mode.vtotal;
+	dlg_debug("[CRTC:%" PRIu32 ", CONN %" PRIu32 ", PLANE %" PRIu32 "]: "
+		"active at %u x %u, %" PRIu64 " mHz",
+		crtc->crtc_id, connector->connector_id, plane->plane_id,
+	    crtc->width, crtc->height, refresh);
+
+	output->primary_plane_id = plane->plane_id;
+	output->crtc_id = crtc->crtc_id;
+	output->connector_id = connector->connector_id;
+	output->mode = crtc->mode;
+
+	int ret = drmModeCreatePropertyBlob(dpy->drm.fd, &output->mode,
+		sizeof(output->mode), &output->mode_id);
+	if(ret != 0) {
+		dlg_error("Unable to create property blob: %s", strerror(errno));
+		goto out_plane;
+	}
+
+	// Just reuse the CRTC's existing mode: requires it to already be
+	// active. In order to use a different mode, we could look at the
+	// mode list exposed in the connector, or construct a new DRM mode
+	// from EDID.
+	// output->mode = crtc->mode;
+	// output->refresh_interval_nsec = millihz_to_nsec(refresh);
+	// output->mode_blob_id = mode_blob_create(device, &output->mode);
+	if(!get_drm_connector_props(dpy->drm.fd, output->connector_id,
+				&output->props.connector)) {
+		goto out_plane;
+	}
+	if(!get_drm_plane_props(dpy->drm.fd, output->primary_plane_id,
+				&output->props.plane)) {
+		goto out_plane;
+	}
+	if(!get_drm_crtc_props(dpy->drm.fd, output->crtc_id,
+				&output->props.crtc)) {
+		goto out_plane;
+	}
+
+	success = true;
+
+out_plane:
+	drmModeFreePlane(plane);
+out_crtc:
+	drmModeFreeCrtc(crtc);
+out_encoder:
+	drmModeFreeEncoder(encoder);
+	return success;
+}
+
+static bool init_drm_dev(struct drm_display* dpy, const char* filename) {
+	dpy->drm.fd = open(filename, O_RDWR | O_CLOEXEC, 0);
+	if(dpy->drm.fd < 0) {
+		dlg_error("couldn't open %s: %s", filename, strerror(errno));
 		goto error;
 	}
 
-	// queue initial events
-	win->defer_draw = pml_defer_new(dpy->pml, win_send_draw);
-	pml_defer_set_data(win->defer_draw, win);
+	dpy->drm.io = pml_io_new(dpy->pml, dpy->drm.fd, POLLIN, drm_io);
+	if(!dpy->drm.io) {
+		goto error;
+	}
 
-	return &win->base;
+	pml_io_set_data(dpy->drm.io, dpy);
+
+	// In order to drive KMS, we need to be 'master'. This should already
+	// have happened for us thanks to being root and the first client.
+	// There can only be one master at a time, so this will fail if
+	// (e.g.) trying to run this test whilst a graphical session is
+	// already active on the current VT.
+	drm_magic_t magic;
+	if(drmGetMagic(dpy->drm.fd, &magic) != 0 ||
+			drmAuthMagic(dpy->drm.fd, magic) != 0) {
+		dlg_error("KMS device %s is not master", filename);
+		goto error;
+	}
+
+	int err;
+	err = drmSetClientCap(dpy->drm.fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
+	err |= drmSetClientCap(dpy->drm.fd, DRM_CLIENT_CAP_ATOMIC, 1);
+	if(err != 0) {
+		dlg_error("No support for universal planes or atomic");
+		goto error;
+	}
+
+	// uint64_t cap;
+	// err = drmGetCap(dpy->drm_fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
+	// dpy->has_fb_mods = (err == 0 && cap != 0);
+	// dlg_debug("device %s framebuffer modifiers",
+	//     (dpy->has_fb_mods) ? "supports" : "does not support");
+
+	// The two 'resource' properties describe the KMS capabilities for
+	// this device.
+	dpy->drm.res = drmModeGetResources(dpy->drm.fd);
+	if(!dpy->drm.res) {
+		dlg_error("couldn't get card resources for %s", filename);
+		goto error;
+	}
+
+	drmModePlaneResPtr plane_res = drmModeGetPlaneResources(dpy->drm.fd);
+	if(!plane_res) {
+		dlg_error("device %s has no planes", filename);
+		goto error;
+	}
+
+	if(dpy->drm.res->count_crtcs <= 0 || dpy->drm.res->count_connectors <= 0 ||
+	    	dpy->drm.res->count_encoders <= 0 || plane_res->count_planes <= 0) {
+		dlg_error("device %s is not a KMS device", filename);
+		goto error;
+	}
+
+	dpy->drm.planes = calloc(plane_res->count_planes, sizeof(*dpy->drm.planes));
+	dpy->drm.n_planes = plane_res->count_planes;
+	for(unsigned int i = 0; i < plane_res->count_planes; i++) {
+		dpy->drm.planes[i] = drmModeGetPlane(dpy->drm.fd, plane_res->planes[i]);
+		dlg_assert(dpy->drm.planes[i]);
+	}
+
+	free(plane_res);
+	dpy->drm.outputs = calloc(dpy->drm.res->count_connectors, sizeof(*dpy->drm.outputs));
+
+	// Go through our connectors one by one and try to find a usable
+	// output chain. The comments in output_create() describe how we
+	// determine how to set up the output, and why we work backwards
+	// from a connector.
+	for(int i = 0; i < dpy->drm.res->count_connectors; i++) {
+		drmModeConnectorPtr connector =
+			drmModeGetConnector(dpy->drm.fd, dpy->drm.res->connectors[i]);
+		struct drm_output* output = &dpy->drm.outputs[dpy->drm.n_outputs];
+		if(!output_init(dpy, output, connector)) {
+			memset(output, 0x0, sizeof(*output));
+			continue;
+		}
+
+		++dpy->drm.n_outputs;
+	}
+
+	if(dpy->drm.n_outputs == 0) {
+		dlg_error("device %s has no active outputs", filename);
+		goto error;
+	}
+
+	dlg_info("using device %s with %d outputs", filename, dpy->drm.n_outputs);
+	return true;
 
 error:
-	win_destroy(&win->base);
-	return NULL;
+	drm_finish(dpy);
+	return false;
 }
 
-static const struct swa_display_interface display_impl = {
-	.destroy = display_destroy,
-	.dispatch = display_dispatch,
-	.wakeup = display_wakeup,
-	.capabilities = display_capabilities,
-	.vk_extensions = display_vk_extensions,
-	.key_pressed = display_key_pressed,
-	.key_name = display_key_name,
-	.active_keyboard_mods = display_active_keyboard_mods,
-	.get_keyboard_focus = display_get_keyboard_focus,
-	.mouse_button_pressed = display_mouse_button_pressed,
-	.mouse_position = display_mouse_position,
-	.get_mouse_over = display_get_mouse_over,
-	.get_clipboard = display_get_clipboard,
-	.set_clipboard = display_set_clipboard,
-	.start_dnd = display_start_dnd,
-	.create_window = display_create_window,
-};
+static bool init_drm(struct drm_display* dpy) {
+	int n_devs = drmGetDevices2(0, NULL, 0);
+	if(n_devs == 0) {
+		dlg_error("no DRM devices available");
+		return false;
+	}
 
+	drmDevicePtr* devs = calloc(n_devs, sizeof(*devs));
+	n_devs = drmGetDevices2(0, devs, n_devs);
+	dlg_info("%d DRM devices available", n_devs);
 
+	for(int i = 0; i < n_devs; i++) {
+		drmDevicePtr candidate = devs[i];
+
+		if(!(candidate->available_nodes & (1 << DRM_NODE_PRIMARY))) {
+			continue;
+		}
+
+		if(init_drm_dev(dpy, candidate->nodes[DRM_NODE_PRIMARY])) {
+			break;
+		}
+	}
+
+	drmFreeDevices(devs, n_devs);
+	if(!dpy->drm.fd) {
+		dlg_error("Couldn't find any suitable KMS device");
+		return false;
+	}
+
+	return true;
+}
+
+// TODO: handle it for vulkan as well
+// we have to set the mode again somehow? see wlroots vk_display backend
 static void sigusr_handler(struct pml_io* io, unsigned revents) {
 	struct drm_display* dpy = pml_io_get_data(io);
 	if(dpy->session.active) {
 		dpy->session.active = false;
 
-		for(unsigned i = 0u; i < dpy->n_outputs; ++i) {
-			if(!dpy->outputs[i].window) {
-				continue;
+		if(dpy->drm.fd) {
+			for(unsigned i = 0u; i < dpy->drm.n_outputs; ++i) {
+				if(!dpy->drm.outputs[i].window) {
+					continue;
+				}
+
+				struct swa_window* base = &dpy->drm.outputs[i].window->base;
+				if(base->listener->focus) {
+					base->listener->focus(base, false);
+				}
 			}
 
-			struct swa_window* base = &dpy->outputs[i].window->base;
-			if(base->listener->focus) {
-				base->listener->focus(base, false);
-			}
+			// TODO: ipc to privileged process instead
+			drmDropMaster(dpy->drm.fd);
 		}
 
-		// TODO: ipc to privileged process instead
-		drmDropMaster(dpy->drm_fd);
 		ioctl(dpy->session.tty_fd, VT_RELDISP, 1);
 	} else {
 		ioctl(dpy->session.tty_fd, VT_RELDISP, VT_ACKACQ);
 
-		// TODO: ipc to privileged process instead
-		drmSetMaster(dpy->drm_fd);
+		if(dpy->drm.fd) {
+			// TODO: ipc to privileged process instead
+			drmSetMaster(dpy->drm.fd);
 
-		for(unsigned i = 0u; i < dpy->n_outputs; ++i) {
-			if(!dpy->outputs[i].window) {
-				continue;
-			}
+			for(unsigned i = 0u; i < dpy->drm.n_outputs; ++i) {
+				if(!dpy->drm.outputs[i].window) {
+					continue;
+				}
 
-			struct swa_window* base = &dpy->outputs[i].window->base;
-			if(base->listener->focus) {
-				base->listener->focus(base, true);
+				struct swa_window* base = &dpy->drm.outputs[i].window->base;
+				if(base->listener->focus) {
+					base->listener->focus(base, true);
+				}
 			}
 		}
 
@@ -735,275 +1006,117 @@ static int vt_setup(struct drm_display* dpy) {
 	return 0;
 }
 
-static bool output_init(struct drm_display* dpy,struct drm_output* output,
-		drmModeConnectorPtr connector) {
-	bool success = false;
+static struct swa_window* display_create_window(struct swa_display* base,
+		const struct swa_window_settings* settings) {
+	struct drm_display* dpy = get_display_drm(base);
 
-	// Find the encoder (a deprecated KMS object) for this connector
-	if(connector->encoder_id == 0) {
-		dlg_debug("[CONN:%" PRIu32 "]: no encoder", connector->connector_id);
-		return NULL;
-	}
+	struct drm_window* win = calloc(1, sizeof(*win));
+	win->base.impl = &window_impl;
+	win->base.listener = settings->listener;
+	win->dpy = dpy;
 
-	drmModeEncoderPtr encoder = NULL;
-	for(int e = 0; e < dpy->res->count_encoders; e++) {
-		if(dpy->res->encoders[e] == connector->encoder_id) {
-			encoder = drmModeGetEncoder(dpy->drm_fd, dpy->res->encoders[e]);
-			break;
+	win->surface_type = settings->surface;
+	if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		// TODO: might be able to make this work
+		// Proper multi-window not supported for vulkan anyways
+		if(dpy->drm.fd) {
+			dlg_error("Can't mix vulkan and non-vulkan windows on drm backend");
+			goto error;
+		}
+
+		VkInstance instance = (VkInstance) settings->surface_settings.vk.instance;
+		if(!(win->vk = drm_vk_surface_create(instance))) {
+			goto error;
+		}
+
+#else // SWA_WITH_VK
+		dlg_error("swa was compiled without vulkan support");
+		goto error;
+#endif // SWA_WITH_VK
+	} else {
+		if(!dpy->drm.fd) {
+			if(!init_drm(dpy)) {
+				goto error;
+			}
+		}
+
+		// Just create it on any free output.
+		// If there aren't any remaning outputs, fail
+		struct drm_output* output = NULL;
+		for(unsigned i = 0u; i < dpy->drm.n_outputs; ++i) {
+			if(!dpy->drm.outputs[i].window) {
+				output = &dpy->drm.outputs[i];
+				break;
+			}
+		}
+
+		if(!output) {
+			dlg_error("Can't create window since there isn't a free output");
+			goto error;
+		}
+
+		output->window = win;
+		win->output = output;
+		win->output->needs_modeset = true;
+
+		if(win->surface_type == swa_surface_buffer) {
+			for(unsigned i = 0u; i < 3u; ++i) {
+				if(!init_dumb_buffer(dpy, output, &win->buffer.buffers[i])) {
+					goto error;
+				}
+			}
+		} else if(win->surface_type == swa_surface_gl) {
+			// TODO
+			dlg_error("TODO: Not implemented");
+			goto error;
 		}
 	}
 
-	assert(encoder);
-
-	// TODO: use more sophisticated matching/crtc reassigning, see wlroots
-	if(encoder->crtc_id == 0) {
-		dlg_debug("[CONN:%" PRIu32 "]: no CRTC", connector->connector_id);
-		goto out_encoder;
-	}
-
-	drmModeCrtcPtr crtc = NULL;
-	for(int c = 0; c < dpy->res->count_crtcs; c++) {
-		if(dpy->res->crtcs[c] == encoder->crtc_id) {
-			crtc = drmModeGetCrtc(dpy->drm_fd, dpy->res->crtcs[c]);
-			break;
-		}
-	}
-	assert(crtc);
-
-	// Ensure the CRTC is active.
-	if(crtc->buffer_id == 0) {
-		dlg_debug("[CONN:%" PRIu32 "]: not active", connector->connector_id);
-		goto out_crtc;
-	}
-
-	// The kernel doesn't directly tell us what it considers to be the
-	// single primary plane for this CRTC (i.e. what would be updated
-	// by drmModeSetCrtc), but if it's already active then we can cheat
-	// by looking for something displaying the same framebuffer ID,
-	// since that information is duplicated.
-	drmModePlanePtr plane = NULL;
-	for(unsigned p = 0; p < dpy->n_planes; p++) {
-		dlg_debug("[PLANE: %" PRIu32 "] CRTC ID %" PRIu32 ", FB %" PRIu32,
-			dpy->planes[p]->plane_id,
-			dpy->planes[p]->crtc_id,
-			dpy->planes[p]->fb_id);
-		if(dpy->planes[p]->crtc_id == crtc->crtc_id &&
-		    	dpy->planes[p]->fb_id == crtc->buffer_id) {
-			plane = dpy->planes[p];
-			break;
-		}
-	}
-	assert(plane);
-
-	// DRM is supposed to provide a refresh interval, but often doesn't;
-	// calculate our own in milliHz for higher precision anyway.
-	uint64_t refresh = ((crtc->mode.clock * 1000000LL / crtc->mode.htotal) +
-		   (crtc->mode.vtotal / 2)) / crtc->mode.vtotal;
-	dlg_debug("[CRTC:%" PRIu32 ", CONN %" PRIu32 ", PLANE %" PRIu32 "]: "
-		"active at %u x %u, %" PRIu64 " mHz",
-		crtc->crtc_id, connector->connector_id, plane->plane_id,
-	    crtc->width, crtc->height, refresh);
-
-	output->primary_plane_id = plane->plane_id;
-	output->crtc_id = crtc->crtc_id;
-	output->connector_id = connector->connector_id;
-	output->mode = crtc->mode;
-
-	int ret = drmModeCreatePropertyBlob(dpy->drm_fd, &output->mode,
-		sizeof(output->mode), &output->mode_id);
-	if(ret != 0) {
-		dlg_error("Unable to create property blob: %s", strerror(errno));
-		goto out_plane;
-	}
-
-	// Just reuse the CRTC's existing mode: requires it to already be
-	// active. In order to use a different mode, we could look at the
-	// mode list exposed in the connector, or construct a new DRM mode
-	// from EDID.
-	// output->mode = crtc->mode;
-	// output->refresh_interval_nsec = millihz_to_nsec(refresh);
-	// output->mode_blob_id = mode_blob_create(device, &output->mode);
-	if(!get_drm_connector_props(dpy->drm_fd, output->connector_id,
-				&output->props.connector)) {
-		goto out_plane;
-	}
-	if(!get_drm_plane_props(dpy->drm_fd, output->primary_plane_id,
-				&output->props.plane)) {
-		goto out_plane;
-	}
-	if(!get_drm_crtc_props(dpy->drm_fd, output->crtc_id,
-				&output->props.crtc)) {
-		goto out_plane;
-	}
-
-	success = true;
-
-out_plane:
-	drmModeFreePlane(plane);
-out_crtc:
-	drmModeFreeCrtc(crtc);
-out_encoder:
-	drmModeFreeEncoder(encoder);
-	return success;
-}
-
-static void page_flip_handler(int fd, unsigned seq,
-		unsigned tv_sec, unsigned tv_usec, unsigned crtc_id, void *data) {
-	struct drm_display* dpy = data;
-	struct drm_output* output = NULL;
-	for(unsigned i = 0u; i < dpy->n_outputs; ++i) {
-		if(dpy->outputs[i].crtc_id == crtc_id) {
-			output = &dpy->outputs[i];
-			break;
+	if(!dpy->session.tty_fd) {
+		if(vt_setup(dpy) != 0) {
+			dlg_error("couldn't set up VT: %s", strerror(errno));
+			goto error;
 		}
 	}
 
-	if(!output) {
-		dlg_debug("[CRTC:%u] atomic completion for unknown CRTC", crtc_id);
-		return;
+	// queue initial events
+	win->defer_draw = pml_defer_new(dpy->pml, win_send_draw);
+	pml_defer_set_data(win->defer_draw, win);
+
+	// TODO: somewhat hacky
+	if(dpy->input.pointer.present && !dpy->input.pointer.over) {
+		dpy->input.pointer.over = win;
+	}
+	if(dpy->input.keyboard.present && !dpy->input.keyboard.focus) {
+		dpy->input.keyboard.focus = win;
 	}
 
-	if(!output->window) {
-		dlg_debug("[CRTC:%u] atomic completion for windowless output", crtc_id);
-		return;
-	}
-
-	// manage buffers
-	dlg_assert(output->window->buffer.pending);
-	dlg_assert(output->window->buffer.pending->in_use);
-	if(output->window->buffer.last) {
-		dlg_assert(output->window->buffer.last->in_use);
-		output->window->buffer.last->in_use = false;
-	}
-	output->window->buffer.last = output->window->buffer.pending;
-	output->window->buffer.pending = NULL;
-
-	// redraw, if requested
-	if(output->window->redraw) {
-		output->window->redraw = false;
-		struct swa_window* base = &output->window->base;
-		if(base->listener->draw) {
-			base->listener->draw(base);
-		}
-	}
-}
-
-static void drm_io(struct pml_io* io, unsigned revents) {
-	struct drm_display* dpy = pml_io_get_data(io);
-	drmEventContext event = {
-		.version = 3,
-		.page_flip_handler2 = page_flip_handler,
-	};
-
-	errno = 0;
-	int err = drmHandleEvent(dpy->drm_fd, &event);
-	if(err != 0) {
-		dlg_error("drmHandleEvent: %d (%s)", err, strerror(errno));
-	}
-}
-
-struct drm_display* drm_display_create_for_dev(const char* filename) {
-	struct drm_display* dpy = calloc(1, sizeof(*dpy));
-	dpy->base.impl = &display_impl;
-	dpy->pml = pml_new();
-
-	dpy->drm_fd = open(filename, O_RDWR | O_CLOEXEC, 0);
-	if(dpy->drm_fd < 0) {
-		dlg_error("couldn't open %s: %s", filename, strerror(errno));
-		goto error;
-	}
-
-	dpy->drm_io = pml_io_new(dpy->pml, dpy->drm_fd, POLLIN, drm_io);
-	if(!dpy->drm_io) {
-		goto error;
-	}
-
-	pml_io_set_data(dpy->drm_io, dpy);
-
-	// In order to drive KMS, we need to be 'master'. This should already
-	// have happened for us thanks to being root and the first client.
-	// There can only be one master at a time, so this will fail if
-	// (e.g.) trying to run this test whilst a graphical session is
-	// already active on the current VT.
-	drm_magic_t magic;
-	if(drmGetMagic(dpy->drm_fd, &magic) != 0 ||
-			drmAuthMagic(dpy->drm_fd, magic) != 0) {
-		dlg_error("KMS device %s is not master", filename);
-		goto error;
-	}
-
-	int err;
-	err = drmSetClientCap(dpy->drm_fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1);
-	err |= drmSetClientCap(dpy->drm_fd, DRM_CLIENT_CAP_ATOMIC, 1);
-	if(err != 0) {
-		dlg_error("No support for universal planes or atomic");
-		goto error;
-	}
-
-	// uint64_t cap;
-	// err = drmGetCap(dpy->drm_fd, DRM_CAP_ADDFB2_MODIFIERS, &cap);
-	// dpy->has_fb_mods = (err == 0 && cap != 0);
-	// dlg_debug("device %s framebuffer modifiers",
-	//     (dpy->has_fb_mods) ? "supports" : "does not support");
-
-	// The two 'resource' properties describe the KMS capabilities for
-	// this device.
-	dpy->res = drmModeGetResources(dpy->drm_fd);
-	if(!dpy->res) {
-		dlg_error("couldn't get card resources for %s", filename);
-		goto error;
-	}
-
-	drmModePlaneResPtr plane_res = drmModeGetPlaneResources(dpy->drm_fd);
-	if(!plane_res) {
-		dlg_error("device %s has no planes", filename);
-		goto error;
-	}
-
-	if(dpy->res->count_crtcs <= 0 || dpy->res->count_connectors <= 0 ||
-	    	dpy->res->count_encoders <= 0 || plane_res->count_planes <= 0) {
-		dlg_error("device %s is not a KMS device", filename);
-		goto error;
-	}
-
-	dpy->planes = calloc(plane_res->count_planes, sizeof(*dpy->planes));
-	dpy->n_planes = plane_res->count_planes;
-	for(unsigned int i = 0; i < plane_res->count_planes; i++) {
-		dpy->planes[i] = drmModeGetPlane(dpy->drm_fd, plane_res->planes[i]);
-		assert(dpy->planes[i]);
-	}
-
-	free(plane_res);
-	dpy->outputs = calloc(dpy->res->count_connectors, sizeof(*dpy->outputs));
-
-	// Go through our connectors one by one and try to find a usable
-	// output chain. The comments in output_create() describe how we
-	// determine how to set up the output, and why we work backwards
-	// from a connector.
-	for(int i = 0; i < dpy->res->count_connectors; i++) {
-		drmModeConnectorPtr connector =
-			drmModeGetConnector(dpy->drm_fd, dpy->res->connectors[i]);
-		struct drm_output* output = &dpy->outputs[dpy->n_outputs];
-		if(!output_init(dpy, output, connector)) {
-			memset(output, 0x0, sizeof(*output));
-			continue;
-		}
-
-		++dpy->n_outputs;
-	}
-
-	if(dpy->n_outputs == 0) {
-		dlg_error("device %s has no active outputs", filename);
-		goto error;
-	}
-
-	dlg_info("using device %s with %d outputs", filename, dpy->n_outputs);
-	return dpy;
+	return &win->base;
 
 error:
-	display_destroy(&dpy->base);
+	win_destroy(&win->base);
 	return NULL;
 }
+
+static const struct swa_display_interface display_impl = {
+	.destroy = display_destroy,
+	.dispatch = display_dispatch,
+	.wakeup = display_wakeup,
+	.capabilities = display_capabilities,
+	.vk_extensions = display_vk_extensions,
+	.key_pressed = display_key_pressed,
+	.key_name = display_key_name,
+	.active_keyboard_mods = display_active_keyboard_mods,
+	.get_keyboard_focus = display_get_keyboard_focus,
+	.mouse_button_pressed = display_mouse_button_pressed,
+	.mouse_position = display_mouse_position,
+	.get_mouse_over = display_get_mouse_over,
+	.get_clipboard = display_get_clipboard,
+	.set_clipboard = display_set_clipboard,
+	.start_dnd = display_start_dnd,
+	.create_window = display_create_window,
+};
 
 static void udev_io(struct pml_io* io, unsigned revents) {
 	struct drm_display* dpy = pml_io_get_data(io);
@@ -1058,10 +1171,13 @@ static bool init_udev(struct drm_display* dpy) {
 // TODO: session abstraction
 static int libinput_open_restricted(const char *path,
 		int flags, void *data) {
-	return open(path, flags);
+	int fd = open(path, flags);
+	dlg_trace("libinput open %s %d -> %d", path, flags, fd);
+	return fd;
 }
 
 static void libinput_close_restricted(int fd, void *data) {
+	dlg_trace("libinput close %d", fd);
 	close(fd);
 }
 
@@ -1070,19 +1186,66 @@ static const struct libinput_interface libinput_impl = {
 	.close_restricted = libinput_close_restricted
 };
 
+static void handle_device_added(struct drm_display* dpy,
+		struct libinput_device* dev) {
+	int vendor = libinput_device_get_id_vendor(dev);
+	int product = libinput_device_get_id_product(dev);
+	const char *name = libinput_device_get_name(dev);
+	dlg_info("Added libinput device %s [%d:%d]", name, vendor, product);
+
+	if(libinput_device_has_capability(dev, LIBINPUT_DEVICE_CAP_KEYBOARD)) {
+		dpy->input.keyboard.present = true;
+	}
+	if(libinput_device_has_capability(dev, LIBINPUT_DEVICE_CAP_POINTER)) {
+		dpy->input.pointer.present = true;
+	}
+	if(libinput_device_has_capability(dev, LIBINPUT_DEVICE_CAP_TOUCH)) {
+		dpy->input.touch.present = true;
+	}
+}
+
+static void handle_keyboard_key(struct drm_display* dpy,
+		struct libinput_event* event) {
+	struct libinput_event_keyboard* kbevent = libinput_event_get_keyboard_event(event);
+	uint32_t keycode = libinput_event_keyboard_get_key(kbevent);
+	enum libinput_key_state state = libinput_event_keyboard_get_key_state(kbevent);
+	bool pressed = false;
+
+	switch(state) {
+	case LIBINPUT_KEY_STATE_RELEASED:
+		pressed = true;
+		break;
+	case LIBINPUT_KEY_STATE_PRESSED:
+		pressed = false;
+		break;
+	}
+
+	struct drm_window* focus = dpy->input.keyboard.focus;
+	if(focus && focus->base.listener->key) {
+		struct swa_key_event ev = {
+			.keycode = keycode,
+			.pressed = pressed,
+			.utf8 = "",
+			.repeated = false,
+			.modifiers = swa_keyboard_mod_none,
+		};
+		focus->base.listener->key(&focus->base, &ev);
+	}
+}
+
 static void handle_libinput_event(struct drm_display* dpy,
 		struct libinput_event* event) {
-	// struct libinput_device *libinput_dev = libinput_event_get_device(event);
+	struct libinput_device* libinput_dev = libinput_event_get_device(event);
 	enum libinput_event_type event_type = libinput_event_get_type(event);
 	switch (event_type) {
 	case LIBINPUT_EVENT_DEVICE_ADDED:
-		// handle_device_added(dpy, libinput_dev);
+		handle_device_added(dpy, libinput_dev);
 		break;
 	case LIBINPUT_EVENT_DEVICE_REMOVED:
 		// handle_device_removed(dpy, libinput_dev);
 		break;
 	case LIBINPUT_EVENT_KEYBOARD_KEY:
-		// handle_keyboard_key(event, libinput_dev);
+		handle_keyboard_key(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_MOTION:
 		// handle_pointer_motion(event, libinput_dev);
@@ -1171,7 +1334,7 @@ static bool init_libinput(struct drm_display* dpy) {
 	}
 
 	libinput_log_set_handler(dpy->input.context, log_libinput);
-	libinput_log_set_priority(dpy->input.context, LIBINPUT_LOG_PRIORITY_ERROR);
+	libinput_log_set_priority(dpy->input.context, LIBINPUT_LOG_PRIORITY_DEBUG);
 
 	int fd = libinput_get_fd(dpy->input.context);
 	dpy->input.io = pml_io_new(dpy->pml, fd, POLLIN, libinput_io);
@@ -1180,44 +1343,34 @@ static bool init_libinput(struct drm_display* dpy) {
 	}
 
 	pml_io_set_data(dpy->input.io, dpy);
+
+	// Dispatch all present events.
+	// Important to get initial devices
+	dlg_trace("Reading initial libinput events");
+	libinput_io(dpy->input.io, POLLIN);
+	dlg_debug("keyboard: %d, pointer: %d, touch: %d",
+		dpy->input.keyboard.present,
+		dpy->input.pointer.present,
+		dpy->input.touch.present);
+
 	return true;
 }
 
 struct swa_display* drm_display_create(const char* appname) {
 	(void) appname;
 
-	int n_devs = drmGetDevices2(0, NULL, 0);
-	if(n_devs == 0) {
-		dlg_error("no DRM devices available");
-		return NULL;
+	struct drm_display* dpy = calloc(1, sizeof(*dpy));
+	dpy->base.impl = &display_impl;
+	dpy->pml = pml_new();
+
+	// We defer all drm stuff until windows are created since for
+	// vulkan windows, we use the VkDisplayKHR api instead of drm
+	// directly and for gl/buffer surfaces we use drm.
+
+	if(!init_udev(dpy)) {
+		goto error;
 	}
-
-	drmDevicePtr* devs = calloc(n_devs, sizeof(*devs));
-	n_devs = drmGetDevices2(0, devs, n_devs);
-	dlg_info("%d DRM devices available", n_devs);
-
-	struct drm_display* dpy = NULL;
-	for(int i = 0; i < n_devs; i++) {
-		drmDevicePtr candidate = devs[i];
-
-		if(!(candidate->available_nodes & (1 << DRM_NODE_PRIMARY))) {
-			continue;
-		}
-
-		dpy = drm_display_create_for_dev(candidate->nodes[DRM_NODE_PRIMARY]);
-		if(dpy) {
-			break;
-		}
-	}
-
-	drmFreeDevices(devs, n_devs);
-	if(!dpy) {
-		dlg_error("Couldn't find any suitable KMS device");
-		return NULL;
-	}
-
-	if(vt_setup(dpy) != 0) {
-		dlg_error("couldn't set up VT for graphics mode: %s", strerror(errno));
+	if(!init_libinput(dpy)) {
 		goto error;
 	}
 
