@@ -50,6 +50,39 @@ static struct drm_window* get_window_drm(struct swa_window* base) {
 	return (struct drm_window*) base;
 }
 
+static bool add_fd_flags(int fd, int add_flags) {
+	long flags = fcntl(fd, F_GETFD);
+	if(flags == -1) {
+		dlg_error("fcntl (get): %s (%d)", strerror(errno), errno);
+		return false;
+	}
+
+	if(fcntl(fd, F_SETFD, flags | add_flags) == -1) {
+		dlg_error("fcntl (set): %s (%d)", strerror(errno), errno);
+		return false;
+	}
+
+	return true;
+}
+
+static bool swa_pipe(int fds[static 2]) {
+	// NOTE: on linux we could use pipe2 here, not as racy
+	int err = pipe(fds);
+	if(err < 0) {
+		dlg_error("pipe: %s (%d)", strerror(errno), errno);
+		return false;
+	}
+
+	int flags = O_NONBLOCK | FD_CLOEXEC;
+	if(!add_fd_flags(fds[0], flags) || !add_fd_flags(fds[0], flags)) {
+		close(fds[0]);
+		close(fds[1]);
+		return false;
+	}
+
+	return true;
+}
+
 // window
 static void win_destroy(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
@@ -91,7 +124,12 @@ static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
-	// TODO: implement support for cursor via cursor planes
+	// TODO: implement support for cursor via cursor planes.
+	// For vulkan this will be somewhat complicated though. We probably
+	// have to create our own, internal vulkan device i guess?
+	// Combining vkdisplay with drm calls isn't something we want to start.
+	// But we would also have to create pipelines to render the cursor
+	// into the surface (created from the cursor plane)...
 	(void) base; (void) cursor;
 	dlg_error("win_set_cursor not supported");
 }
@@ -107,7 +145,12 @@ static void win_refresh(struct swa_window* base) {
 			win->redraw = true;
 		}
 	} else {
-		// TODO
+		// TODO: implement
+		// opengl can be handles comparably to the dumb buffer approach.
+		// for vulkan we require the display control extension. We either
+		// have to export the fence into fd and poll that (not sure if
+		// that's possible though, try it!) or spin up a seperate thread
+		// that waits for it and then writes a pipe
 		dlg_info("TODO: unimplemented");
 	}
 }
@@ -346,6 +389,11 @@ static void display_destroy(struct swa_display* base) {
 		ioctl(dpy->session.tty_fd, VT_SETMODE, &mode);
 	}
 
+
+	if(dpy->wakeup_pipe_r) close(dpy->wakeup_pipe_r);
+	if(dpy->wakeup_pipe_w) close(dpy->wakeup_pipe_w);
+	if(dpy->wakeup_io) pml_io_destroy(dpy->wakeup_io);
+
 	// TODO: cleanup libinput, udev stuff
 	drm_finish(dpy);
 	free(dpy);
@@ -354,12 +402,18 @@ static void display_destroy(struct swa_display* base) {
 static bool display_dispatch(struct swa_display* base, bool block) {
 	struct drm_display* dpy = get_display_drm(base);
 	pml_iterate(dpy->pml, block);
-	return true;
+	return !dpy->quit;
 }
 
 static void display_wakeup(struct swa_display* base) {
-	// TODO: use eventfd
-	dlg_error("TODO: unimplemented");
+	struct drm_display* dpy = get_display_drm(base);
+	int err = write(dpy->wakeup_pipe_w, " ", 1);
+
+	// if the pipe is full, the waiting thread will wake up and clear
+	// it and it doesn't matter that our write call failed
+	if(err < 0 && errno != EAGAIN) {
+		dlg_warn("Writing to wakeup pipe failed: %s", strerror(errno));
+	}
 }
 
 static enum swa_display_cap display_capabilities(struct swa_display* base) {
@@ -413,8 +467,13 @@ static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* ba
 }
 
 static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return NULL;
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.keyboard.present) {
+		dlg_error("no keyboard present");
+		return NULL;
+	}
+
+	return &dpy->input.keyboard.focus->base;
 }
 
 static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
@@ -425,21 +484,26 @@ static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	// struct drm_display* dpy = get_display_drm(base);
 }
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return NULL;
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.pointer.present) {
+		dlg_error("no pointer present");
+		return NULL;
+	}
+
+	return &dpy->input.pointer.over->base;
 }
 static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
-	// struct drm_display* dpy = get_display_drm(base);
+	dlg_error("clipboard not supported");
 	return NULL;
 }
 static bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source) {
-	// struct drm_display* dpy = get_display_drm(base);
+	dlg_error("clipboard not supported");
 	return false;
 }
 static bool display_start_dnd(struct swa_display* base,
 		struct swa_data_source* source) {
-	// struct drm_display* dpy = get_display_drm(base);
+	dlg_error("dnd not supported");
 	return false;
 }
 
@@ -840,6 +904,19 @@ static bool init_drm(struct drm_display* dpy) {
 // we have to set the mode again somehow? see wlroots vk_display backend
 static void sigusr_handler(struct pml_io* io, unsigned revents) {
 	struct drm_display* dpy = pml_io_get_data(io);
+	dlg_assert(pml_io_get_fd(io) == dpy->session.sigusrfd);
+	dlg_debug("Received SIGUSR1");
+
+	// clear input
+	struct signalfd_siginfo signal_info;
+	int len;
+	errno = 0;
+	len = read(dpy->session.sigusrfd, &signal_info, sizeof(signal_info));
+	if(!(len == -1 && errno == EAGAIN) && len != sizeof(signal_info)) {
+		dlg_warn("Reading from signalfd failed: %s (length %d)",
+			strerror(errno), len);
+	}
+
 	if(dpy->session.active) {
 		dpy->session.active = false;
 
@@ -883,6 +960,24 @@ static void sigusr_handler(struct pml_io* io, unsigned revents) {
 	}
 }
 
+static void sigterm_handler(struct pml_io* io, unsigned revents) {
+	struct drm_display* dpy = pml_io_get_data(io);
+	dlg_assert(pml_io_get_fd(io) == dpy->session.sigtermfd);
+	dlg_info("Received SIGTERM");
+
+	// clear input
+	struct signalfd_siginfo signal_info;
+	int len;
+	errno = 0;
+	len = read(dpy->session.sigtermfd, &signal_info, sizeof(signal_info));
+	if(!(len == -1 && errno == EAGAIN) && len != sizeof(signal_info)) {
+		dlg_warn("Reading from signalfd failed: %s (length %d)",
+			strerror(errno), len);
+	}
+
+	dpy->quit = true;
+}
+
 static int vt_setup(struct drm_display* dpy) {
 	const char *tty_num_env = getenv("TTYNO");
 	int tty_num = 0;
@@ -903,7 +998,7 @@ static int vt_setup(struct drm_display* dpy) {
 	} else {
 		int tty0;
 
-		//Other-other-wise, look for a free VT we can use by querying /dev/tty0
+		// Other-other-wise, look for a free VT we can use by querying /dev/tty0
 		tty0 = open("/dev/tty0", O_WRONLY | O_CLOEXEC);
 		if(tty0 < 0) {
 			dlg_error("couldn't open /dev/tty0");
@@ -941,7 +1036,6 @@ static int vt_setup(struct drm_display* dpy) {
 	assert(tty_num != 0);
 
 	dlg_debug("using VT %d", tty_num);
-
 	if(ioctl(dpy->session.tty_fd, VT_ACTIVATE, tty_num) != 0 ||
 			ioctl(dpy->session.tty_fd, VT_WAITACTIVE, tty_num) != 0) {
 		dlg_error("couldn't switch to VT %d", tty_num);
@@ -984,13 +1078,13 @@ static int vt_setup(struct drm_display* dpy) {
 	sigemptyset(&mask);
 	sigaddset(&mask, SIGUSR1);
 
-	// Block normal signal handling our switching signal
+	// Block normal signal handling of our switching signal
 	if(sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
 		dlg_error("Failed to block SIGUSR1 signal handling");
 		return -errno;
 	}
 
-	dpy->session.sigusrfd = signalfd(-1, &mask, 0);
+	dpy->session.sigusrfd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
 	if(dpy->session.sigusrfd < 0) {
 		dlg_error("signalfd failed");
 		return -errno;
@@ -1003,6 +1097,35 @@ static int vt_setup(struct drm_display* dpy) {
 	}
 
 	pml_io_set_data(dpy->session.sigusrio, dpy);
+
+	// We also install a signal fd (and block normal
+	// handling) of SIGTERM. This is a fallback that can be used
+	// to terminate the process. Could additionally add SIGINT to
+	// the mask?
+	// TODO: make all of this optional! some processes may wish
+	// to handle this signal on their own.
+	sigemptyset(&mask);
+	sigaddset(&mask, SIGTERM);
+
+	// Block normal signal handling
+	if(sigprocmask(SIG_BLOCK, &mask, NULL) == -1) {
+		dlg_error("Failed to block SIGTERM signal handling");
+		return -errno;
+	}
+
+	dpy->session.sigtermfd = signalfd(-1, &mask, SFD_CLOEXEC | SFD_NONBLOCK);
+	if(dpy->session.sigtermfd < 0) {
+		dlg_error("signalfd failed");
+		return -errno;
+	}
+
+	dpy->session.sigtermio = pml_io_new(dpy->pml, dpy->session.sigtermfd,
+		POLLIN, sigterm_handler);
+	if(!dpy->session.sigtermio) {
+		return -1;
+	}
+
+	pml_io_set_data(dpy->session.sigtermio, dpy);
 	return 0;
 }
 
@@ -1080,6 +1203,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 	}
 
+	// TODO: also send initial size event
 	// queue initial events
 	win->defer_draw = pml_defer_new(dpy->pml, win_send_draw);
 	pml_defer_set_data(win->defer_draw, win);
@@ -1130,8 +1254,7 @@ static void udev_io(struct pml_io* io, unsigned revents) {
 		goto out;
 	}
 
-	dev_t devnum = udev_device_get_devnum(udev_dev);
-	struct wlr_device* dev;
+	// dev_t devnum = udev_device_get_devnum(udev_dev);
 
 	// TODO: compare devnum to drm device and if they are the same,
 	// reinitialize drm. This means we might have to destroy outputs
@@ -1356,12 +1479,37 @@ static bool init_libinput(struct drm_display* dpy) {
 	return true;
 }
 
+static void clear_wakeup(struct pml_io* io, unsigned revents) {
+	char buf[128];
+	int ret;
+	int size = sizeof(buf);
+
+	int fd = pml_io_get_fd(io);
+	while((ret = read(fd, buf, size)) == size);
+
+	if(ret < 0) {
+		dlg_warn("Reading from wakeup pipe failed: %s", strerror(errno));
+	}
+}
+
 struct swa_display* drm_display_create(const char* appname) {
 	(void) appname;
 
 	struct drm_display* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->pml = pml_new();
+
+	// create wakeup pipes
+	int fds[2];
+	if(!swa_pipe(fds)) {
+		goto error;
+	}
+
+	dpy->wakeup_pipe_r = fds[0];
+	dpy->wakeup_pipe_w = fds[1];
+	dpy->wakeup_io = pml_io_new(dpy->pml, dpy->wakeup_pipe_r,
+		POLLIN, clear_wakeup);
+	pml_io_set_data(dpy->wakeup_io, dpy);
 
 	// We defer all drm stuff until windows are created since for
 	// vulkan windows, we use the VkDisplayKHR api instead of drm

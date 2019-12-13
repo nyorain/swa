@@ -1,7 +1,3 @@
-#define _XOPEN_SOURCE 500
-#define _POSIX_C_SOURCE 200808L
-
-#include <unistd.h>
 #include <swa/swa.h>
 #include <swa/key.h>
 #include <dlg/dlg.h>
@@ -206,12 +202,6 @@ static const struct swa_window_listener window_listener = {
 	.key = window_key,
 };
 
-static void sighandler(int signo) {
-	if(signo == SIGINT) {
-		run = false;
-	}
-}
-
 // Initialization of window and vulkan in general needs the following
 // steps, in that order:
 // - Create swa display
@@ -230,12 +220,6 @@ static void sighandler(int signo) {
 // used SWA_DEFAULT_SIZE.
 int main() {
 	int ret = EXIT_SUCCESS;
-
-	struct sigaction sa;
-	sa.sa_handler = sighandler;
-	sigemptyset(&sa.sa_mask);
-	sigaction(SIGINT, &sa, NULL);
-
 	struct swa_display* dpy = swa_display_autocreate("swa example-vulkan");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
@@ -294,12 +278,8 @@ int main() {
 	timespec_get(&last_redraw, TIME_UTC);
 
 	// main loop
-	// TODO!
-	unsigned count = 0u;
-	while(run && ++count < 1000u) {
-		dlg_info("dispatch");
-		usleep(1000 * 5);
-		if(!swa_display_dispatch(dpy, false)) {
+	while(run) {
+		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}
 	}

@@ -15,36 +15,21 @@ struct drm_vk_surface;
 extern "C" {
 #endif
 
-struct pointer {
-	struct pointer* next;
-	struct pointer* prev;
-
-	struct libinput_device* dev;
-};
-
-struct keyboard {
-	struct keyboard* next;
-	struct keyboard* prev;
-
-	struct libinput_device* dev;
-};
-
-struct touch {
-	struct touch* prev;
-	struct touch* next;
-
-	struct libinput_device* dev;
-};
-
 struct drm_display {
 	struct swa_display base;
 	struct pml* pml;
+
+	int wakeup_pipe_w, wakeup_pipe_r;
+	struct pml_io* wakeup_io;
+	bool quit;
 
 	struct {
 		bool vtset;
 		bool active;
 		int sigusrfd;
 		struct pml_io* sigusrio;
+		int sigtermfd;
+		struct pml_io* sigtermio;
 		int tty_fd;
 		int saved_kb_mode;
 	} session;
