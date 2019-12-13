@@ -1,8 +1,11 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <swa/swa.h>
 #include <swa/key.h>
 #include <dlg/dlg.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 
 static bool run = true;
 struct timespec last_redraw;
@@ -39,7 +42,7 @@ static void window_draw(struct swa_window* win) {
 	}
 
 	swa_window_apply_buffer(win);
-	// swa_window_refresh(win);
+	swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -51,12 +54,23 @@ static const struct swa_window_listener window_listener = {
 	.close = window_close,
 };
 
+static void sighandler(int signo) {
+	if(signo == SIGINT) {
+		run = false;
+	}
+}
+
 int main() {
 	struct swa_display* dpy = swa_display_autocreate("swa example-buffer");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
 		return EXIT_FAILURE;
 	}
+
+	struct sigaction sa;
+	sa.sa_handler = sighandler;
+	sigemptyset(&sa.sa_mask);
+	sigaction(SIGINT, &sa, NULL);
 
 	struct swa_cursor cursor;
 	cursor.type = swa_cursor_load;

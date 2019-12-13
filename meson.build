@@ -166,6 +166,25 @@ else
 	conf_data.set('SWA_WITH_WL', true, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', true, description: 'Compiled with X11 support')
 	conf_data.set('SWA_WITH_WIN', false, description: 'Compiled with Winapi support')
+
+	# drm backend
+	dep_drm = dependency('libdrm', version: '>=2.4.95')
+	dep_gbm = dependency('gbm', version: '>=17.1.0')
+	dep_libinput = dependency('libinput', version: '>=1.9.0')
+	dep_udev = dependency('libudev')
+
+	swa_deps += [
+		dep_drm,
+		dep_gbm,
+		dep_libinput,
+		dep_udev,
+	]
+
+	swa_src += files(
+		'src/swa/drm/drm.c',
+		'src/swa/drm/props.c',
+		'src/swa/drm/xcursor.c',
+	)
 endif
 
 subdir('include/swa')
