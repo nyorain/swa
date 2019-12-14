@@ -111,7 +111,7 @@ struct swa_x11_buffer_surface {
 };
 
 struct swa_x11_vk_surface {
-	uint64_t instance;
+	uintptr_t instance;
 	uint64_t surface;
 };
 

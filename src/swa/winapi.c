@@ -169,6 +169,12 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		dlg_error("TODO: not implemented");
 		return;
 	} else {
+		enum swa_cursor_type type = cursor.type;
+		if(type == swa_cursor_default) {
+			win->cursor.set = false;
+			return;
+		}
+
 		const wchar_t* idc = cursor_to_winapi(cursor.type);
 		if(!idc) {
 			dlg_warn("Invalid/Unsupported cursor type: %d", (int) cursor.type);
@@ -187,6 +193,7 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		DestroyCursor(win->cursor.handle);
 	}
 
+	win->cursor.set = true;
 	win->cursor.owned = owned;
 	win->cursor.handle = handle;
 
@@ -252,7 +259,7 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 		return 0;
 	}
 
-	return (uint64_t) win->vk.surface;
+	return win->vk.surface;
 #else
 	dlg_warn("swa was compiled without vulkan suport");
 	return 0;
@@ -421,6 +428,7 @@ static const struct swa_window_interface window_impl = {
 // display api
 void display_destroy(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
+	unregister_window_class();
 	free(dpy);
 }
 
@@ -633,7 +641,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 		} case WM_ERASEBKGND: {
 			return 1; // prevent the background erase
 		} case WM_SETCURSOR: {
-			if(LOWORD(lparam) == HTCLIENT) {
+			if(win->cursor.set && LOWORD(lparam) == HTCLIENT) {
 				SetCursor(win->cursor.handle);
 				return 1;
 			}
@@ -658,6 +666,37 @@ static char* narrow(const wchar_t* wide) {
 	return utf8;
 }
 
+static const wchar_t* window_class_name = L"swa_window_class";
+static bool register_window_class(void) {
+	WNDCLASSEX wcx;
+	wcx.cbSize = sizeof(wcx);
+	// TODO: OWNDC not needed for buffer surfaces.
+	// Not sure if it's needed for vulkan.
+	// Maybe create two seperate window classes?
+	wcx.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
+	wcx.lpfnWndProc = win_proc;
+	wcx.cbClsExtra = 0;
+	wcx.cbWndExtra = 0;
+	wcx.hInstance = GetModuleHandle(NULL);
+	wcx.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+	wcx.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
+	wcx.hCursor = LoadCursor(NULL, IDC_ARROW);
+	wcx.hbrBackground = NULL;
+	wcx.lpszMenuName = NULL;
+	wcx.lpszClassName = window_class_name;
+
+	if(!RegisterClassExW(&wcx)) {
+		print_winapi_error("RegisterClassEx");
+		return false;
+	}
+
+	return true;
+}
+
+static void unregister_window_class(void) {
+	UnregisterWindowClassW(window_class_name, GetModuleHandle(NULL));
+}
+
 struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_win* dpy = get_display_win(base);
@@ -670,26 +709,6 @@ struct swa_window* display_create_window(struct swa_display* base,
 	// TODO, use GetSystemMetrics. See docs for MINMAXSIZE
 	win->max_width = win->max_height = 9999;
 	HINSTANCE hinstance = GetModuleHandle(NULL);
-
-	// new window class
-	WNDCLASSEX wcx;
-	wcx.cbSize = sizeof(wcx);
-	wcx.style = CS_HREDRAW | CS_VREDRAW;
-	wcx.lpfnWndProc = win_proc;
-	wcx.cbClsExtra = 0;
-	wcx.cbWndExtra = 0;
-	wcx.hInstance = hinstance;
-	wcx.hIcon = LoadIcon(NULL, IDI_APPLICATION);
-	wcx.hIconSm = LoadIcon(NULL, IDI_APPLICATION);
-	wcx.hCursor = LoadCursor(NULL, IDC_ARROW);
-	wcx.hbrBackground = NULL;
-	wcx.lpszMenuName = NULL;
-	wcx.lpszClassName = L"MainWClass";
-
-	if(!RegisterClassExW(&wcx)) {
-		print_winapi_error("RegisterClassEx");
-		goto error;
-	}
 
 	// create window
 	unsigned exstyle = 0;
@@ -704,13 +723,8 @@ struct swa_window* display_create_window(struct swa_display* base,
 	wchar_t* titlew = settings->title ? widen(settings->title) : L"";
 	int width = settings->width == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->width;
 	int height = settings->height == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->height;
-	win->handle = CreateWindowEx(
-		exstyle,
-		L"MainWClass",
-		titlew,
-		style,
-		CW_USEDEFAULT, CW_USEDEFAULT, width, height,
-		NULL, NULL, hinstance, win);
+	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style,
+		CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, hinstance, win);
 	if(!win->handle) {
 		print_winapi_error("CreateWindowEx");
 		goto error;
@@ -744,7 +758,7 @@ struct swa_window* display_create_window(struct swa_display* base,
 		win->vk.instance = settings->surface_settings.vk.instance;
 		if(!win->vk.instance) {
 			dlg_error("No vulkan instance passed for vulkan window");
-			goto err;
+			goto error;
 		}
 
 		VkWin32SurfaceCreateInfoKHR info = {0};
@@ -759,13 +773,13 @@ struct swa_window* display_create_window(struct swa_display* base,
 			vkGetInstanceProcAddr(instance, "vkCreateWin32SurfaceKHR");
 		if(!fn) {
 			dlg_error("Failed to load 'vkCreateWin32SurfaceKHR' function");
-			goto err;
+			goto error;
 		}
 
 		VkResult res = fn(instance, &info, NULL, &surface);
 		if(res != VK_SUCCESS) {
 			dlg_error("Failed to create vulkan surface: %d", res);
-			goto err;
+			goto error;
 		}
 
 		win->vk.surface = (uint64_t)surface;
@@ -812,8 +826,24 @@ static const struct swa_display_interface display_impl = {
 struct swa_display* swa_display_win_create(const char* appname) {
 	(void) appname;
 
+	if(!register_window_class()) {
+		return NULL;
+	}
+
 	struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->main_thread_id = GetCurrentThreadId();
+	dpy->dummy_window = CreateWindowExW(WS_EX_OVERLAPPEDWINDOW, window_class_name,
+		L"swa dummy window", WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0, 1, 1,
+		NULL, NULL, GetModuleHandleW(NULL), NULL);
+	if(!dpy->dummy_window) {
+		print_winapi_error("CreateWindowEx dummy window");
+		goto error;
+	}
+
 	return &dpy->base;
+
+error:
+	display_destroy(dpy);
+	return NULL;
 }

@@ -113,7 +113,7 @@ struct swa_wl_gl_surface {
 };
 
 struct swa_wl_vk_surface {
-	uint64_t instance;
+	uintptr_t instance;
 	uint64_t surface;
 };
 

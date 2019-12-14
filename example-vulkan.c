@@ -54,19 +54,19 @@ static void cleanup(struct state* state);
 
 // window callbacks
 static bool run = true;
-struct timespec last_redraw;
+// struct timespec last_redraw;
 
 static void window_draw(struct swa_window* win) {
 	struct state* state = swa_window_get_userdata(win);
 	dlg_info("Redrawing");
 	VkResult res;
 
-	struct timespec now;
-	timespec_get(&now, TIME_UTC);
-	float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
-	ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
-	dlg_info("Time between redraws: %f", ms);
-	last_redraw = now;
+	// struct timespec now;
+	// timespec_get(&now, TIME_UTC);
+	// float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
+	// ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
+	// dlg_info("Time between redraws: %f", ms);
+	// last_redraw = now;
 
 	// TODO: use per-buffer fences making sure the previous
 	// rendering into this buffer finished
@@ -259,7 +259,7 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, &state);
-	timespec_get(&last_redraw, TIME_UTC);
+	// timespec_get(&last_redraw, TIME_UTC);
 
 	// main loop
 	while(run) {

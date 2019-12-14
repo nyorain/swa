@@ -5,7 +5,7 @@
 #include <time.h>
 
 static bool run = true;
-struct timespec last_redraw;
+// struct timespec last_redraw;
 
 static void window_draw(struct swa_window* win) {
 	struct swa_image img;
@@ -13,13 +13,13 @@ static void window_draw(struct swa_window* win) {
 		return;
 	}
 
-	struct timespec now;
+	// struct timespec now;
 	// clock_gettime(CLOCK_MONOTONIC, &now);
-	timespec_get(&now, TIME_UTC);
-	float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
-	ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
-	dlg_info("Time between redraws: %f", ms);
-	last_redraw = now;
+	// timespec_get(&now, TIME_UTC);
+	// float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
+	// ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
+	// dlg_info("Time between redraws: %f", ms);
+	// last_redraw = now;
 
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 
@@ -76,7 +76,7 @@ int main() {
 	}
 
 	swa_window_set_userdata(win, dpy);
-	timespec_get(&last_redraw, TIME_UTC);
+	// timespec_get(&last_redraw, TIME_UTC);
 
 	while(run) {
 		dlg_info("dispatching");

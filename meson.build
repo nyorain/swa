@@ -51,7 +51,7 @@ conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 dep_vulkan = dependency('vulkan', required: false)
 
 if build_machine.system() == 'windows'
-	conf_data.set('SWA_WITH_VK', false, description: 'Compiled with Vulkan support')
+	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
 	conf_data.set('SWA_WITH_GL', false, description: 'Compiled with OpenGL support')
 	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', false, description: 'Compiled with X11 support')
@@ -63,6 +63,7 @@ if build_machine.system() == 'windows'
 
 	swa_deps += cc.find_library('Dwmapi')
 	swa_deps += cc.find_library('Shlwapi')
+	swa_deps += dep_vulkan
 	swa_src += files('src/swa/winapi.c')
 else
 	dep_pml = dependency('pml',
@@ -161,7 +162,7 @@ else
 
 	swa_deps += x11_deps
 
-	conf_data.set('SWA_WITH_VK', true, description: 'Compiled with Vulkan support')
+	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
 	conf_data.set('SWA_WITH_GL', true, description: 'Compiled with OpenGL support')
 	conf_data.set('SWA_WITH_WL', true, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', true, description: 'Compiled with X11 support')

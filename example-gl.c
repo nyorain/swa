@@ -7,6 +7,7 @@
 // Thanks Bill!
 #include <stdlib.h>
 #include <GL/gl.h>
+#include <GL/glext.h>
 
 static bool run = true;
 static bool premult = false;

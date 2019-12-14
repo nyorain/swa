@@ -46,6 +46,7 @@ winapi:
 
 general
 
+- print egl errors (eglGetError) for easier debugging
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer

@@ -23,6 +23,7 @@ extern "C" {
 
 struct swa_display_win {
 	struct swa_display base;
+	HWND dummy_window;
 
 	// The thread this display was created in.
 	// Since many winapi functions are thread-dependent, we
@@ -33,6 +34,7 @@ struct swa_display_win {
 
 	struct swa_window_win* focus;
 	struct swa_window_win* mouse_over;
+	struct wgl_api* wgl;
 };
 
 struct swa_win_buffer_surface {
@@ -45,7 +47,7 @@ struct swa_win_buffer_surface {
 };
 
 struct swa_win_vk_surface {
-	uint64_t instance;
+	uintptr_t instance;
 	uint64_t surface;
 };
 
@@ -67,6 +69,7 @@ struct swa_window_win {
 	struct {
 		HCURSOR handle;
 		bool owned;
+		bool set;
 	} cursor;
 };
 

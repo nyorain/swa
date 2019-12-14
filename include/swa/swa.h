@@ -203,7 +203,7 @@ struct swa_gl_surface_settings {
 // It must have furthermore been created with *all* extensions
 // returned by swa_display_vk_extensions.
 struct swa_vk_surface_settings {
-	uint64_t instance; // type: VkInstance
+	uintptr_t instance; // type: VkInstance
 };
 
 struct swa_buffer_surface_settings {

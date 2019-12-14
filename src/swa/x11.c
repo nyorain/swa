@@ -431,7 +431,7 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 		return 0;
 	}
 
-	return (uint64_t) win->vk.surface;
+	return win->vk.surface;
 #else
 	dlg_warn("swa was compiled without vulkan suport");
 	return 0;
@@ -1666,7 +1666,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			goto error;
 		}
 
-		win->vk.surface = (uint64_t)surface;
+		win->vk.surface = (uint64_t) surface;
 #else
 		dlg_error("swa was compiled without vulkan support");
 		goto err;
