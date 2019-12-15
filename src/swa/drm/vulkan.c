@@ -1,7 +1,19 @@
 #include "vulkan.h"
+#include <swa/swa.h>
+#include <swa/impl.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <unistd.h>
+#include <errno.h>
+#include <string.h>
+#include <pthread.h>
+#include <pml.h>
 #include <dlg/dlg.h>
+#include <sys/poll.h>
+#include <sys/eventfd.h> // TODO: linux only
+
+// TODO: hack
+VkDevice swa_vk_drm_device = NULL;
 
 #define dlg_error_vk(fmt, res) dlg_error( \
 	"vulkan error %s (%d): " fmt, \
@@ -41,23 +53,263 @@ const char *vulkan_strerror(VkResult err) {
 
 // TODO
 struct drm_vk_api {
+	PFN_vkDestroySurfaceKHR destroySurfaceKHR;
 	PFN_vkGetPhysicalDeviceDisplayPropertiesKHR getPhysicalDeviceDisplayPropertiesKHR;
 	PFN_vkGetDisplayPlaneSupportedDisplaysKHR getDisplayPlaneSupportedDisplaysKHR;
 	PFN_vkGetDisplayModePropertiesKHR getDisplayModePropertiesKHR;
 	PFN_vkGetPhysicalDeviceDisplayPlanePropertiesKHR getPhysicalDeviceDisplayPlanePropertiesKHR;
 	PFN_vkCreateDisplayPlaneSurfaceKHR createDisplayPlaneSurfaceKHR;
 	PFN_vkGetDisplayPlaneCapabilitiesKHR getDisplayPlaneCapabilitiesKHR;
+	PFN_vkRegisterDisplayEventEXT registerDisplayEventEXT;
 };
+
+struct drm_vk_surface {
+	VkInstance instance;
+	VkPhysicalDevice phdev;
+	VkDisplayPropertiesKHR display;
+	VkSurfaceKHR surface;
+	VkDisplayModeKHR mode;
+	struct swa_window* window;
+
+	VkDevice device;
+	bool has_swapchain;
+	bool has_display_control;
+
+	struct {
+		VkFence fence;
+		VkFence next_fence;
+		pthread_mutex_t mutex;
+		pthread_t thread;
+		pthread_cond_t cond;
+		bool join;
+		int eventfd;
+		struct pml_io* eventfd_io;
+		bool redraw;
+	} frame;
+};
+
+static bool has_extension(const VkExtensionProperties *avail,
+		uint32_t availc, const char *req) {
+	for(size_t j = 0; j < availc; ++j) {
+		if(!strcmp(avail[j].extensionName, req)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static void finish_device(struct drm_vk_surface* surf) {
+	if(surf->device) {
+		vkDestroyDevice(surf->device, NULL);
+		surf->device = VK_NULL_HANDLE;
+	}
+
+	surf->has_swapchain = false;
+	surf->has_display_control = false;
+}
+
+static void init_device(struct drm_vk_surface* surf) {
+	VkResult res;
+
+	// find supported extensions
+	VkExtensionProperties* phdev_exts = NULL;
+	uint32_t phdev_extc = 0;
+
+	res = vkEnumerateDeviceExtensionProperties(surf->phdev, NULL,
+		&phdev_extc, NULL);
+	if((res != VK_SUCCESS) || (phdev_extc == 0)) {
+		dlg_error_vk("Could not enumerate device extensions (1)", res);
+		goto error;
+	}
+
+	phdev_exts = malloc(sizeof(*phdev_exts) * phdev_extc);
+	res = vkEnumerateDeviceExtensionProperties(surf->phdev, NULL,
+		&phdev_extc, phdev_exts);
+	if(res != VK_SUCCESS) {
+		free(phdev_exts);
+		dlg_error_vk("Could not enumerate device extensions (2)", res);
+		goto error;
+	}
+
+	for(size_t j = 0; j < phdev_extc; ++j) {
+		dlg_debug("Vulkan Device extensions %s", phdev_exts[j].extensionName);
+	}
+
+	unsigned n_exts = 0;
+	const char* exts[2];
+
+	const char* dev_ext = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+	if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
+		exts[n_exts++] = dev_ext;
+		surf->has_swapchain = true;
+	}
+
+	dev_ext = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
+	if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
+		exts[n_exts++] = dev_ext;
+		surf->has_display_control = true;
+	}
+
+	free(phdev_exts);
+
+	// TODO
+	// find queues
+	VkDeviceQueueCreateInfo qinfos[2] = {0};
+	unsigned n_queues = 1;
+	float prio = 1.f;
+	for(unsigned i = 0u; i < n_queues; ++i) {
+		qinfos[i].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+		qinfos[i].queueFamilyIndex = 0;
+		qinfos[i].queueCount = 1;
+		qinfos[i].pQueuePriorities = &prio;
+	}
+
+	VkDeviceCreateInfo dev_info = {0};
+	dev_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+	dev_info.queueCreateInfoCount = n_queues;
+	dev_info.pQueueCreateInfos = qinfos;
+	dev_info.enabledExtensionCount = n_exts;
+	dev_info.ppEnabledExtensionNames = exts;
+
+	res = vkCreateDevice(surf->phdev, &dev_info, NULL, &surf->device);
+	if(res != VK_SUCCESS){
+		dlg_error_vk("Failed to create vulkan device", res);
+		goto error;
+	}
+
+	return;
+
+error:
+	finish_device(surf);
+	return;
+}
+
+static void* frame_thread(void* data) {
+	struct drm_vk_surface* surf = data;
+	while(true) {
+		dlg_trace("lock c");
+		pthread_mutex_lock(&surf->frame.mutex);
+		if(surf->frame.join) {
+			dlg_trace("unlock (join) c");
+			pthread_mutex_unlock(&surf->frame.mutex);
+			break;
+		}
+
+		// TODO: if there is a new fence, abandon the old one and
+		// use that instead, i guess.
+		if(!surf->frame.fence) {
+			while(!surf->frame.next_fence && !surf->frame.join) {
+				dlg_trace("wait c");
+				pthread_cond_wait(&surf->frame.cond, &surf->frame.mutex);
+			}
+
+			if(surf->frame.join) {
+				pthread_mutex_unlock(&surf->frame.mutex);
+				break;
+			}
+
+			surf->frame.fence = surf->frame.next_fence;
+			surf->frame.next_fence = VK_NULL_HANDLE;
+		}
+
+		dlg_trace("unlock c");
+		VkDevice device = swa_vk_drm_device ? swa_vk_drm_device : surf->device;
+		pthread_mutex_unlock(&surf->frame.mutex);
+
+		// 0.1 sec timeout; mainly relevant for destruction
+		static const uint64_t timeout = 100 * 1000 * 1000;
+		VkResult res = vkWaitForFences(device, 1, &surf->frame.fence, true, timeout);
+		if(res == VK_SUCCESS) {
+			dlg_trace("display fence completed");
+			vkDestroyFence(device, surf->frame.fence, NULL);
+			surf->frame.fence = VK_NULL_HANDLE;
+
+			int64_t v = 1;
+			write(surf->frame.eventfd, &v, 8);
+		} else if(res != VK_TIMEOUT) {
+			dlg_error_vk("vkWaitForFences", res);
+		}
+	}
+
+	if(surf->frame.fence) {
+		// vkDestroyFence(device, surf->frame.fence, NULL);
+		surf->frame.fence = VK_NULL_HANDLE;
+	}
+
+	return NULL;
+}
+
+static void eventfd_readable(struct pml_io* io, unsigned revents) {
+	struct drm_vk_surface* surf = pml_io_get_data(io);
+	dlg_assert(pml_io_get_fd(io) == surf->frame.eventfd);
+	dlg_assert(surf->window->listener->draw);
+	dlg_trace("eventfd readable");
+
+	// reset eventfd
+	int64_t v = 0;
+	read(surf->frame.eventfd, &v, 8);
+
+	// send draw event
+	dlg_trace("eventfd reset complete");
+	if(surf->frame.redraw) {
+		dlg_trace("sending draw event due to eventfd");
+		surf->frame.redraw = false;
+		surf->window->listener->draw(surf->window);
+	}
+}
+
+static void init_frame(struct pml* pml, struct drm_vk_surface* surf) {
+	surf->frame.eventfd = eventfd(0, EFD_CLOEXEC);
+	if(surf->frame.eventfd < 0) {
+		dlg_error("eventfd failed: %s", strerror(errno));
+		goto error;
+	}
+
+	surf->frame.eventfd_io = pml_io_new(pml, surf->frame.eventfd,
+		POLLIN, eventfd_readable);
+	if(!surf->frame.eventfd_io) {
+		goto error;
+	}
+
+	pml_io_set_data(surf->frame.eventfd_io, surf);
+
+	pthread_mutex_init(&surf->frame.mutex, NULL);
+	pthread_cond_init(&surf->frame.cond, NULL);
+	pthread_create(&surf->frame.thread, NULL, frame_thread, surf);
+
+	return;
+
+error:
+	return;
+}
 
 void drm_vk_surface_destroy(struct drm_vk_surface* surf) {
 	if(!surf) {
 		return;
 	}
 
+	if(surf->surface) {
+		vkDestroySurfaceKHR(surf->instance, surf->surface, NULL);
+	}
+	if(surf->frame.thread) {
+		pthread_mutex_lock(&surf->frame.mutex);
+		surf->frame.join = true;
+		pthread_cond_signal(&surf->frame.cond);
+		pthread_mutex_unlock(&surf->frame.mutex);
+		pthread_join(surf->frame.thread, NULL);
+
+		pthread_mutex_destroy(&surf->frame.mutex);
+		pthread_cond_destroy(&surf->frame.cond);
+	}
+
+	// TODO: cleanup fences
+	finish_device(surf);
 	free(surf);
 }
 
-struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
+struct drm_vk_surface* drm_vk_surface_create(struct pml* pml,
+		VkInstance instance, struct swa_window* window) {
 	VkResult res;
 
 	// TODO: allow application to pass in phdev to use?
@@ -77,6 +329,13 @@ struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
 	}
 
 	struct drm_vk_surface* surf = calloc(1, sizeof(*surf));
+	surf->instance = instance;
+	surf->phdev = phdev;
+	surf->window = window;
+
+	VkDisplayPropertiesKHR* display_props = NULL;
+	VkDisplayPlanePropertiesKHR* plane_props = NULL;
+	VkDisplayModePropertiesKHR* modes = NULL;
 
 	// scan displays
 	uint32_t display_count;
@@ -92,7 +351,7 @@ struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
 		goto error;
 	}
 
-	VkDisplayPropertiesKHR* display_props = calloc(display_count, sizeof(*display_props));
+	display_props = calloc(display_count, sizeof(*display_props));
 	res = vkGetPhysicalDeviceDisplayPropertiesKHR(phdev, &display_count, display_props);
 	if(res != VK_SUCCESS) {
 		dlg_error_vk("vkGetPhysicalDeviceDisplayPropertiesKHR (2)", res);
@@ -114,7 +373,7 @@ struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
 	}
 
 	assert(modes_count > 0); // guaranteed by standard
-	VkDisplayModePropertiesKHR* modes = calloc(modes_count, sizeof(*modes));
+	modes = calloc(modes_count, sizeof(*modes));
 	res = vkGetDisplayModePropertiesKHR(phdev, display, &modes_count, modes);
 	if(res != VK_SUCCESS) {
 		dlg_error_vk("vkGetDisplayModePropertiesKHR (2)", res);
@@ -147,7 +406,7 @@ struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
 		goto error;
     }
 
-	VkDisplayPlanePropertiesKHR* plane_props = calloc(plane_count, sizeof(*plane_props));
+	plane_props = calloc(plane_count, sizeof(*plane_props));
 	res = vkGetPhysicalDeviceDisplayPlanePropertiesKHR(phdev, &plane_count, plane_props);
 	if(res != VK_SUCCESS) {
 		dlg_error_vk("vkGetPhysicalDeviceDisplayPlanePropertiesKHR (2)", res);
@@ -229,13 +488,90 @@ struct drm_vk_surface* drm_vk_surface_create(VkInstance instance) {
 		goto error;
 	}
 
-	// TODO: cleanup of props
+	free(display_props);
+	free(plane_props);
+	free(modes);
 
-	surf->mode = mode; // TODO: not really needed, right?
-	surf->instance = instance;
+	init_device(surf);
+
+	// If the window listener doesn't want draw events, we don't need
+	// this whole frame thing
+	if(surf->has_display_control) {
+		if(window->listener->draw) {
+			init_frame(pml, surf);
+		}
+	} else {
+		dlg_warn("No support for display control extensions");
+	}
+
+	surf->mode = mode; // TODO: not really needed later on, right?
 	return surf;
 
 error:
-	// TODO: cleanup
+	free(display_props);
+	free(plane_props);
+	free(modes);
+	drm_vk_surface_destroy(surf);
 	return NULL;
+}
+
+void drm_vk_surface_frame(struct drm_vk_surface* surf) {
+	if(!surf->has_display_control) {
+		return;
+	}
+
+	dlg_assert(surf->device && surf->frame.thread);
+	VkDevice device = swa_vk_drm_device ? swa_vk_drm_device : surf->device;
+
+	PFN_vkRegisterDisplayEventEXT registerDisplayEventEXT =
+		(PFN_vkRegisterDisplayEventEXT)
+		vkGetDeviceProcAddr(device, "vkRegisterDisplayEventEXT");
+	dlg_assert(registerDisplayEventEXT);
+
+	VkFence fence;
+	VkDisplayEventInfoEXT event_info = {0};
+	event_info.sType = VK_STRUCTURE_TYPE_DISPLAY_EVENT_INFO_EXT;
+	event_info.displayEvent = VK_DISPLAY_EVENT_TYPE_FIRST_PIXEL_OUT_EXT;
+	VkResult res = registerDisplayEventEXT(device,
+		surf->display.display, &event_info, NULL, &fence);
+	if(res != VK_SUCCESS) {
+		dlg_error_vk("vkRegisterDisplayEventEXT", res);
+		return;
+	}
+
+	dlg_trace("lock a");
+	pthread_mutex_lock(&surf->frame.mutex);
+	if(surf->frame.next_fence || surf->frame.fence) {
+		dlg_info("Detected mixing surface_frame with manual drawing");
+	}
+	if(surf->frame.next_fence) {
+		vkDestroyFence(device, surf->frame.next_fence, NULL);
+	}
+
+	surf->frame.next_fence = fence;
+	pthread_cond_signal(&surf->frame.cond);
+	dlg_trace("unlock a");
+	pthread_mutex_unlock(&surf->frame.mutex);
+}
+
+void drm_vk_surface_refresh(struct drm_vk_surface* surf) {
+	bool pending;
+	dlg_trace("lock b");
+	pthread_mutex_lock(&surf->frame.mutex);
+	pending = (bool)surf->frame.fence || (bool)surf->frame.next_fence;
+	dlg_trace("unlock b");
+	pthread_mutex_unlock(&surf->frame.mutex);
+
+	if(pending) {
+		dlg_trace("refresh: pending, delayed redraw");
+		surf->frame.redraw = true;
+	} else if(surf->window->listener->draw) {
+		// TODO
+		dlg_trace("refresh: immediate redraw");
+		// surf->window->listener->draw(surf->window);
+	}
+}
+
+VkSurfaceKHR drm_vk_surface_get(struct drm_vk_surface* surf) {
+	return surf->surface;
 }

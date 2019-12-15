@@ -6,6 +6,9 @@
 #include <time.h>
 #include <signal.h>
 
+// TODO: hack
+extern VkDevice swa_vk_drm_device;
+
 struct render_buffer {
 	VkCommandBuffer cb;
 	VkImageView iv;
@@ -672,7 +675,7 @@ bool init_renderer(struct state* state) {
 
 	res = vkEnumerateDeviceExtensionProperties(state->phdev, NULL,
 		&phdev_extc, NULL);
-	if ((res != VK_SUCCESS) || (phdev_extc == 0)) {
+	if((res != VK_SUCCESS) || (phdev_extc == 0)) {
 		vk_error(res, "Could not enumerate device extensions (1)");
 		return false;
 	}
@@ -680,12 +683,13 @@ bool init_renderer(struct state* state) {
 	phdev_exts = malloc(sizeof(*phdev_exts) * phdev_extc);
 	res = vkEnumerateDeviceExtensionProperties(state->phdev, NULL,
 		&phdev_extc, phdev_exts);
-	if (res != VK_SUCCESS) {
+	if(res != VK_SUCCESS) {
+		free(phdev_exts);
 		vk_error(res, "Could not enumerate device extensions (2)");
 		return false;
 	}
 
-	for (size_t j = 0; j < phdev_extc; ++j) {
+	for(size_t j = 0; j < phdev_extc; ++j) {
 		dlg_debug("Vulkan Device extensions %s", phdev_exts[j].extensionName);
 	}
 
@@ -694,6 +698,16 @@ bool init_renderer(struct state* state) {
 		dlg_error("Device has no support for swapchain extension");
 		free(phdev_exts);
 		return false;
+	}
+
+	const char* exts[2];
+
+	unsigned n_exts = 1u;
+	exts[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+	dev_ext = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
+	if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
+		exts[n_exts++] = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
 	}
 
 	free(phdev_exts);
@@ -755,8 +769,8 @@ bool init_renderer(struct state* state) {
 	dev_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	dev_info.queueCreateInfoCount = n_qis;
 	dev_info.pQueueCreateInfos = qis;
-	dev_info.enabledExtensionCount = 1;
-	dev_info.ppEnabledExtensionNames = &dev_ext;
+	dev_info.enabledExtensionCount = n_exts;
+	dev_info.ppEnabledExtensionNames = exts;
 
 	VkDevice dev;
 	res = vkCreateDevice(state->phdev, &dev_info, NULL, &dev);
@@ -764,6 +778,8 @@ bool init_renderer(struct state* state) {
 		vk_error(res, "Failed to create vulkan device");
 		return false;
 	}
+
+	swa_vk_drm_device = dev;
 
 	state->device = dev;
 	state->qs.gfx_fam = gfx_qfam;

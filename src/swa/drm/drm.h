@@ -1,5 +1,13 @@
 #pragma once
 
+// TODO: make dependency on drm stuff optional?
+//  research whether they all of them are available everywhere or a mesa thing
+// TODO: implement gl/egl using gbm_surface
+//  make that definitely optional since it's a mesa thing
+// TODO: full input support
+// TODO: cursor plane support
+//  has to be treated completely differently for vulkan
+
 #include "props.h"
 #include <swa/impl.h>
 #include <swa/xkb.h>

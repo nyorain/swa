@@ -144,20 +144,33 @@ static void win_refresh(struct swa_window* base) {
 		} else {
 			win->redraw = true;
 		}
-	} else {
+	} else if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		drm_vk_surface_refresh(win->vk);
+#else
+		dlg_error("window has vk surface but swa was built without vulkan");
+#endif
+	} else if(win->surface_type == swa_surface_gl) {
 		// TODO: implement
-		// opengl can be handles comparably to the dumb buffer approach.
-		// for vulkan we require the display control extension. We either
-		// have to export the fence into fd and poll that (not sure if
-		// that's possible though, try it!) or spin up a seperate thread
-		// that waits for it and then writes a pipe
+		// when using gbm_surface, it can probably be handled comparably
+		// to the dumb buffer approach.
 		dlg_info("TODO: unimplemented");
+	} else {
+		dlg_warn("can't refresh window without surface");
 	}
 }
 
 static void win_surface_frame(struct swa_window* base) {
-	(void) base;
-	// no-op
+	struct drm_window* win = get_window_drm(base);
+	if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		drm_vk_surface_frame(win->vk);
+#else
+		dlg_error("window has vk surface but swa was built without vulkan");
+#endif
+	}
+
+	// no-op otherwise
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
@@ -198,7 +211,7 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 		return 0;
 	}
 
-	return (uint64_t) win->vk->surface;
+	return (uint64_t) drm_vk_surface_get(win->vk);
 #else
 	dlg_warn("swa was compiled without vulkan suport");
 	return 0;
@@ -401,7 +414,9 @@ static void display_destroy(struct swa_display* base) {
 
 static bool display_dispatch(struct swa_display* base, bool block) {
 	struct drm_display* dpy = get_display_drm(base);
+	dlg_info("before dispatch");
 	pml_iterate(dpy->pml, block);
+	dlg_info("after dispatch");
 	return !dpy->quit;
 }
 
@@ -440,6 +455,8 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
 		VK_KHR_DISPLAY_EXTENSION_NAME,
+		// We only require that because ext_display_control depends on it
+		VK_EXT_DISPLAY_SURFACE_COUNTER_EXTENSION_NAME,
 	};
 	*count = sizeof(names) / sizeof(names[0]);
 	return names;
@@ -1149,7 +1166,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 
 		VkInstance instance = (VkInstance) settings->surface_settings.vk.instance;
-		if(!(win->vk = drm_vk_surface_create(instance))) {
+		if(!(win->vk = drm_vk_surface_create(dpy->pml, instance, &win->base))) {
 			goto error;
 		}
 

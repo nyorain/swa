@@ -38,12 +38,13 @@ source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
+dep_threads = dependency('threads', required: false)
 dep_dlg = dependency('dlg',
 	fallback: ['dlg', 'dlg_dep'],
 	static: true
 )
 
-swa_deps = [dep_dlg]
+swa_deps = [dep_dlg, dep_threads]
 swa_args = []
 conf_data = configuration_data()
 conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
