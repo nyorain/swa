@@ -51,8 +51,9 @@ conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 dep_vulkan = dependency('vulkan', required: false)
 
 if build_machine.system() == 'windows'
+	dep_gl = dependency('gl', required: false)
 	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
-	conf_data.set('SWA_WITH_GL', false, description: 'Compiled with OpenGL support')
+	conf_data.set('SWA_WITH_GL', dep_gl.found(), description: 'Compiled with OpenGL support')
 	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', false, description: 'Compiled with X11 support')
 	conf_data.set('SWA_WITH_WIN', true, description: 'Compiled with Winapi support')
@@ -64,7 +65,11 @@ if build_machine.system() == 'windows'
 	swa_deps += cc.find_library('Dwmapi')
 	swa_deps += cc.find_library('Shlwapi')
 	swa_deps += dep_vulkan
-	swa_src += files('src/swa/winapi.c')
+	swa_deps += dep_gl
+	swa_src += files(
+		'src/swa/winapi.c',
+		'src/swa/wgl.c'
+	)
 else
 	dep_pml = dependency('pml',
 		fallback: ['pml', 'pml_dep'],

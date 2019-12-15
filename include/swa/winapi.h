@@ -64,6 +64,7 @@ struct swa_window_win {
 	union {
 		struct swa_win_buffer_surface buffer;
 		struct swa_win_vk_surface vk;
+		void* gl_context;
 	};
 
 	struct {
@@ -79,6 +80,11 @@ struct swa_data_offer_win {
 };
 
 struct swa_display* swa_display_win_create(const char* appname);
+
+// wgl utility
+bool swa_wgl_init_context(struct swa_display_win* dpy, HDC hdc,
+	const struct swa_gl_surface_settings* gls, bool transparent,
+	void** out_context);
 
 #ifdef __cplusplus
 }
