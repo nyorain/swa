@@ -1492,6 +1492,9 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 	}
 }
 
+// TODO: we somehow have to make sure that display creation
+// fails when we wouldn't have enough rights.
+// Not sure how to test that though.
 struct swa_display* drm_display_create(const char* appname) {
 	(void) appname;
 
