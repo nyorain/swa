@@ -766,6 +766,7 @@ static bool win_gl_make_current(struct swa_window* base) {
 	return false;
 #endif
 }
+
 static bool win_gl_swap_buffers(struct swa_window* base) {
 #ifdef SWA_WITH_GL
 	struct swa_window_wl* win = get_window_wl(base);
@@ -785,6 +786,7 @@ static bool win_gl_swap_buffers(struct swa_window* base) {
 	return false;
 #endif
 }
+
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
 #ifdef SWA_WITH_GL
 	// struct swa_window_wl* win = get_window_wl(base);

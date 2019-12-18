@@ -46,6 +46,8 @@ winapi:
 
 general
 
+- add 'refresh' and/or 'frame' to window capabilities?
+  it can't be implemented on all backends
 - print egl errors (eglGetError) for easier debugging
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
