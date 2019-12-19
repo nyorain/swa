@@ -14,17 +14,52 @@
  #include <swa/x11.h>
 #endif
 
-struct swa_display* swa_display_autocreate(const char* appname) {
-	struct swa_display* dpy;
+typedef struct swa_display* (*display_constructor)(const char*);
+
+struct {
+	const char* name;
+	display_constructor constructor;
+} backends[] = {
 #ifdef SWA_WITH_WL
-	if((dpy = swa_display_wl_create(appname))) return dpy;
+	{"wayland", swa_display_wl_create},
 #endif
-#ifdef SWA_WITH_X11
-	if((dpy = swa_display_x11_create(appname))) return dpy;
+#ifdef SWA_WITH_WL
+	{"x11", swa_display_x11_create},
 #endif
 #ifdef SWA_WITH_WIN
-	if((dpy = swa_display_win_create(appname))) return dpy;
+	{"winapi", swa_display_win_create},
 #endif
+#ifdef SWA_WITH_ANDROID
+	{"android", swa_display_win_create},
+#endif
+};
+
+struct swa_display* swa_display_autocreate(const char* appname) {
+	const char* backend = getenv("SWA_BACKEND");
+	unsigned backend_count = sizeof(backends) / sizeof(backends[0]);
+	if(backend) {
+		dlg_debug("SWA_BACKEND set to '%s'", backend);
+		for(unsigned i = 0u; i < backend_count; ++i) {
+			if(strcmp(backends[i].name, backend) == 0) {
+				struct swa_display* dpy = backends[i].constructor(appname);
+				if(!dpy) {
+					dlg_error("Requested backend '%s' not available", backend);
+				}
+				return dpy;
+			}
+		}
+
+		dlg_error("Requested backend '%s' unknown", backend);
+		return NULL;
+	}
+
+	for(unsigned i = 0u; i < backend_count; ++i) {
+		struct swa_display* dpy = backends[i].constructor(appname);
+		if(dpy) {
+			return dpy;
+		}
+	}
+
 	return NULL;
 }
 

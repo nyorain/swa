@@ -347,7 +347,10 @@ struct swa_window_listener {
 	// For newly created windows, this will be emitted only when
 	// the initial window size was chosen to be different from the
 	// size passed in the `swa_window_settings`. When the settings
-	// used `SWA_DEFAULT_SIZE`, this event will always be emitted.
+	// used `SWA_DEFAULT_SIZE`, this event will always be emitted after
+	// creation. Listeners don't have to call `swa_window_refresh` from
+	// within this function (or start drawing directly), backends will
+	// send a `draw` event if needed.
 	void (*resize)(struct swa_window*, unsigned width, unsigned height);
 	// Called when the window state changes.
 	// For newly created windows, this will be emitted only when

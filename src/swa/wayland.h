@@ -185,6 +185,7 @@ struct swa_data_offer_wl {
 	} data;
 };
 
+// public api
 struct swa_display* swa_display_wl_create(const char* appname);
 
 #ifdef __cplusplus

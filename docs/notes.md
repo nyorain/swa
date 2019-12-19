@@ -55,6 +55,7 @@ general
   on wayland and grab the cursor on x11
 - interface to query platform phdev vulkan support, see glfw and
   example-vulkan.c
+  	- make sure it works for the drm backend prototype
 - figure out when to use events and when just use plain parameters in window listener?
 	- clean up touch events. Really include dx, dy in movement?
 	  would make some backend implementations *way* more complicated
@@ -73,6 +74,10 @@ general
 
 laster/low prio
 
+- public apis per backend. E.g. retrieve x11/wayland display from
+  display, get android native activity etc.
+  Should be possible to check first via something like `swa_display_is_android`
+  or something
 - further gl settings: accum buffer, color buffer depth,
   robustness/reset strategy
 - evaluate once again whether/where deferred events make sense.

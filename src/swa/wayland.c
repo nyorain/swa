@@ -2489,8 +2489,10 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 }
 
 struct swa_display* swa_display_wl_create(const char* appname) {
+	errno = 0;
 	struct wl_display* wld = wl_display_connect(NULL);
 	if(!wld) {
+		dlg_error("wl_display_connect: %s", strerror(errno));
 		return NULL;
 	}
 
