@@ -46,6 +46,7 @@ static bool init_instance(struct state* state, unsigned n_dpy_exts,
 	const char** dpy_exts);
 static bool init_renderer(struct state* state);
 static bool init_render_buffers(struct state* state);
+static bool init_swapchain(struct state* state, unsigned width, unsigned height);
 static const char *vulkan_strerror(VkResult err);
 static void cleanup_renderer(struct state* state);
 static void cleanup(struct state* state);
@@ -139,11 +140,18 @@ static void window_close(struct swa_window* win) {
 
 static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	struct state* state = swa_window_get_userdata(win);
-	// dlg_info("resized to %d %d", w, h);
+	dlg_info("resized to %d %d", w, h);
 
-	// make sure all previous rendering has finished since we will
-	// destroy rendering resources
-	vkDeviceWaitIdle(state->device);
+	if(!state->swapchain) {
+		if(!init_swapchain(state, w, h)) {
+			dlg_error("Failed to init swapchain");
+			return;
+		}
+	} else {
+		// make sure all previous rendering has finished since we will
+		// destroy rendering resources
+		vkDeviceWaitIdle(state->device);
+	}
 
 	// recreate swapchain
 	VkSurfaceCapabilitiesKHR caps;
@@ -629,6 +637,115 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	return true;
 }
 
+static bool init_swapchain(struct state* state, unsigned width, unsigned height) {
+	VkResult res;
+	VkDevice dev = state->device;
+
+	VkSwapchainCreateInfoKHR* info = &state->swapchain_info;
+	info->sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+	info->surface = state->surface;
+
+	// Get available present modes
+	uint32_t present_mode_count;
+	vkGetPhysicalDeviceSurfacePresentModesKHR(state->phdev, state->surface,
+		&present_mode_count, NULL);
+	VkPresentModeKHR *present_modes =
+		calloc(present_mode_count, sizeof(VkPresentModeKHR));
+
+	res = vkGetPhysicalDeviceSurfacePresentModesKHR(state->phdev,
+		state->surface, &present_mode_count, present_modes);
+	if(res != VK_SUCCESS || present_mode_count == 0) {
+		vk_error(res, "Failed to retrieve surface present modes");
+		return false;
+	}
+
+	// this mode is required to be supported
+	info->presentMode = VK_PRESENT_MODE_FIFO_KHR;
+
+	bool vsync = false;
+	if(!vsync) {
+		for (size_t i = 0; i < present_mode_count; i++) {
+			if (present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
+				info->presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+				break;
+			} else if (present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
+				info->presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+			}
+		}
+	}
+
+	free(present_modes);
+
+	VkSurfaceCapabilitiesKHR caps;
+	res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
+		state->surface, &caps);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "failed retrieve surface caps");
+		return false;
+	}
+
+	uint32_t pref_image_count = caps.minImageCount + 1;
+	if((caps.maxImageCount > 0) && (pref_image_count > caps.maxImageCount)) {
+		pref_image_count = caps.maxImageCount;
+	}
+
+	// transformation
+	VkSurfaceTransformFlagBitsKHR transform =
+		VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
+	if(!(caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)) {
+		transform = caps.currentTransform;
+	}
+
+	// use alpha if possible
+	VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+	VkCompositeAlphaFlagBitsKHR alpha_flags[] = {
+		VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
+		VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+		VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
+		VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
+	};
+
+	for(int i = 0; i < 4; ++i) {
+		if (caps.supportedCompositeAlpha & alpha_flags[i]) {
+			alpha = alpha_flags[i];
+			break;
+		}
+	}
+
+	// In this case, we can freely choose the size.
+	if(caps.currentExtent.width == 0xFFFFFFFFu) {
+		info->imageExtent.width = width;
+		info->imageExtent.height = height;
+	} else {
+		info->imageExtent.width = caps.currentExtent.width;
+		info->imageExtent.height = caps.currentExtent.height;
+	}
+
+	// usage
+	dlg_assert(caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
+	info->imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+	// create swapchain
+	info->minImageCount = pref_image_count;
+	info->preTransform = transform;
+	info->imageArrayLayers = 1;
+	info->imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	info->clipped = VK_TRUE;
+	info->compositeAlpha = alpha;
+
+	res = vkCreateSwapchainKHR(dev, info, NULL, &state->swapchain);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "Failed to create vk swapchain");
+		return false;
+	}
+
+	if(!init_render_buffers(state)) {
+		return false;
+	}
+
+	return true;
+}
+
 bool init_renderer(struct state* state) {
 	VkResult res;
 
@@ -758,12 +875,7 @@ bool init_renderer(struct state* state) {
 		state->qs.present = state->qs.gfx;
 	}
 
-	// create swapchain
-	VkSwapchainCreateInfoKHR info = {0};
-	info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
-	info.surface = state->surface;
-
-	// format
+	// query render format
 	uint32_t formats_count;
 	res = vkGetPhysicalDeviceSurfaceFormatsKHR(state->phdev,
 		state->surface, &formats_count, NULL);
@@ -782,111 +894,17 @@ bool init_renderer(struct state* state) {
 
 	// try to find a format matching our needs if we don't have
 	// free choice
-	info.imageFormat = formats[0].format;
-	info.imageColorSpace = formats[0].colorSpace;
+	state->swapchain_info.imageFormat = formats[0].format;
+	state->swapchain_info.imageColorSpace = formats[0].colorSpace;
 	if(formats_count == 1 && formats[0].format == VK_FORMAT_UNDEFINED) {
-		info.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
+		state->swapchain_info.imageFormat = VK_FORMAT_B8G8R8A8_SRGB;
 	}
 
 	free(formats);
 
-	// Get available present modes
-	uint32_t present_mode_count;
-	vkGetPhysicalDeviceSurfacePresentModesKHR(state->phdev, state->surface,
-		&present_mode_count, NULL);
-	VkPresentModeKHR *present_modes =
-		calloc(present_mode_count, sizeof(VkPresentModeKHR));
-
-	res = vkGetPhysicalDeviceSurfacePresentModesKHR(state->phdev,
-		state->surface, &present_mode_count, present_modes);
-	if(res != VK_SUCCESS || present_mode_count == 0) {
-		vk_error(res, "Failed to retrieve surface present modes");
-		return false;
-	}
-
-	// this mode is required to be supported
-	info.presentMode = VK_PRESENT_MODE_FIFO_KHR;
-
-	bool vsync = false;
-	if(!vsync) {
-		for (size_t i = 0; i < present_mode_count; i++) {
-			if (present_modes[i] == VK_PRESENT_MODE_MAILBOX_KHR) {
-				info.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
-				break;
-			} else if (present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
-				info.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-			}
-		}
-	}
-
-	free(present_modes);
-
-	VkSurfaceCapabilitiesKHR caps;
-	res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
-		state->surface, &caps);
-	if(res != VK_SUCCESS) {
-		vk_error(res, "failed retrieve surface caps");
-		return false;
-	}
-
-	uint32_t pref_image_count = caps.minImageCount + 1;
-	if((caps.maxImageCount > 0) && (pref_image_count > caps.maxImageCount)) {
-		pref_image_count = caps.maxImageCount;
-	}
-
-	// transformation
-	VkSurfaceTransformFlagBitsKHR transform =
-		VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR;
-	if(!(caps.supportedTransforms & VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR)) {
-		transform = caps.currentTransform;
-	}
-
-	// use alpha if possible
-	VkCompositeAlphaFlagBitsKHR alpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
-	VkCompositeAlphaFlagBitsKHR alpha_flags[] = {
-		VK_COMPOSITE_ALPHA_PRE_MULTIPLIED_BIT_KHR,
-		VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
-		VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-		VK_COMPOSITE_ALPHA_POST_MULTIPLIED_BIT_KHR,
-	};
-
-	for(int i = 0; i < 4; ++i) {
-		if (caps.supportedCompositeAlpha & alpha_flags[i]) {
-			alpha = alpha_flags[i];
-			break;
-		}
-	}
-
-	if(caps.currentExtent.width == 0xFFFFFFFFu) {
-		info.imageExtent.width = 800;
-		info.imageExtent.height = 500;
-	} else {
-		info.imageExtent.width = caps.currentExtent.width;
-		info.imageExtent.height = caps.currentExtent.height;
-	}
-
-	// usage
-	dlg_assert(caps.supportedUsageFlags & VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT);
-	info.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
-
-	// create swapchain
-	info.minImageCount = pref_image_count;
-	info.preTransform = transform;
-	info.imageArrayLayers = 1;
-	info.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-	info.clipped = VK_TRUE;
-	info.compositeAlpha = alpha;
-
-	state->swapchain_info = info;
-	res = vkCreateSwapchainKHR(dev, &info, NULL, &state->swapchain);
-	if(res != VK_SUCCESS) {
-		vk_error(res, "Failed to create vk swapchain");
-		return false;
-	}
-
 	// render pass
 	VkAttachmentDescription attachment = {0};
-	attachment.format = info.imageFormat;
+	attachment.format = state->swapchain_info.imageFormat;
 	attachment.samples = VK_SAMPLE_COUNT_1_BIT;
 	attachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -936,10 +954,6 @@ bool init_renderer(struct state* state) {
 	res = vkCreateSemaphore(dev, &sem_info, NULL, &state->render_sem);
 	if(res != VK_SUCCESS) {
 		vk_error(res, "vkCreateSemaphore");
-		return false;
-	}
-
-	if(!init_render_buffers(state)) {
 		return false;
 	}
 

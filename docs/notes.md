@@ -126,6 +126,9 @@ The list of sources i noted for ny:
 - https://www.x.org/releases/X11R7.6/doc/xproto/x11protocol.html#requests:PutImage
 - https://tronche.com/gui/x/xlib/graphics/XPutImage.html
 
+xwayland seems to not support shm pixmaps. We don't require them (or use
+them at all).
+
 x11 touch events and ownership
 https://lwn.net/Articles/475886/
 https://lwn.net/Articles/485484/
