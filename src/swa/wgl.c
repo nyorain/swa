@@ -86,7 +86,7 @@ static bool find_ext(const char* exts, const char* ext) {
 		return false;
 	}
 
-	unsigned len = strlen(ext);
+	size_t len = strlen(ext);
 	char after = *(f + len);
 	return (f == exts || *(f - 1) == ' ') &&
 		(after == '\0' || after == ' ');
@@ -178,8 +178,8 @@ bool swa_wgl_init_context(struct swa_display_win* dpy, HDC hdc,
         pfd.dwFlags = PFD_DRAW_TO_WINDOW | PFD_SUPPORT_OPENGL | PFD_DOUBLEBUFFER;
         pfd.iPixelType = PFD_TYPE_RGBA;
         pfd.cColorBits = transparent ? 32 : 24;
-        pfd.cStencilBits = gls->stencil;
-        pfd.cDepthBits = gls->stencil;
+        pfd.cStencilBits = (BYTE) gls->stencil;
+        pfd.cDepthBits = (BYTE) gls->stencil;
 
         int pf = ChoosePixelFormat(hdc, &pfd);
         SetPixelFormat(hdc, pf, &pfd);

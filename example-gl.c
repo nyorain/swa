@@ -5,17 +5,21 @@
 // this is important as a msvc workaround: their gl.h header is
 // broken windows.h has to be included first (which is pulled by stdlib.h)
 // Thanks Bill!
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include <stdlib.h>
 #include <GL/gl.h>
-#include <GL/glext.h>
+#define GL_FRAMEBUFFER_SRGB 0x8DB9
 
 static bool run = true;
 static bool premult = false;
 
 static void window_draw(struct swa_window* win) {
-	float alpha = 0.1;
+	float alpha = 0.1f;
 	float mult = premult ? alpha : 1.f;
-	glClearColor(mult * 0.8, mult * 0.6, mult * 0.3, alpha);
+	glClearColor(mult * 0.8f, mult * 0.6f, mult * 0.3f, alpha);
 	glClear(GL_COLOR_BUFFER_BIT);
 	swa_window_gl_swap_buffers(win);
 

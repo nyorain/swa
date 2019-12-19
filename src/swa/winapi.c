@@ -6,7 +6,7 @@
   #include <vulkan/vulkan_win32.h>
 #endif
 
- #include <Wingdi.h>
+#include <wingdi.h>
 
 // define constants that are sometimes not included
 #ifndef SC_DRAGMOVE
@@ -209,9 +209,9 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
-
 	// TODO: just use InvalidateRect? use RDW_FRAME?
 	RedrawWindow(win->handle, NULL, NULL, RDW_INVALIDATE | RDW_NOERASE);
+	// InvalidateRect(win->handle, NULL, false);
 }
 
 static void win_surface_frame(struct swa_window* base) {
@@ -578,6 +578,16 @@ bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
+swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
+	(void) base;
+#ifdef SWA_WITH_GL
+	return (swa_gl_proc) wglGetProcAddress(name);
+#else
+	dlg_error("swa was built without gl");
+	return NULL;
+#endif
+}
+
 static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	struct swa_window_win* win = (struct swa_window_win*) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	if(!win) {
@@ -587,7 +597,6 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 	// TODO:
 	// - WM_INPUTLANGCHANGE
 
-	LRESULT result = 0;
 	switch(msg) {
 		case WM_PAINT: {
 			if(win->width == 0 && win->height == 0) {
@@ -604,9 +613,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			// but that might create infinite render loops, i.e.
 			// display_dispatch will not return at all anymore.
 			// we probably have to defer something
-			result = DefWindowProc(hwnd, msg, wparam, lparam);
-
-			return 0;
+			return DefWindowProc(hwnd, msg, wparam, lparam);
 		} case WM_CLOSE: {
 			if(win->base.listener->close) {
 				win->base.listener->close(&win->base);
@@ -840,6 +847,7 @@ static const struct swa_display_interface display_impl = {
 	.set_clipboard = display_set_clipboard,
 	.start_dnd = display_start_dnd,
 	.create_window = display_create_window,
+	.get_gl_proc_addr = display_get_gl_proc_addr,
 };
 
 struct swa_display* swa_display_win_create(const char* appname) {

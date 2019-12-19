@@ -24,6 +24,8 @@ args = cc.get_supported_arguments([
 	'/wd4127', # conditional expression is constant
 	'/wd4706', # assignment within conditional expression
 	'/wd4100', # unreferenced formal parameter
+	'/wd4189', # local variable unused
+	'/wd4090', # wrong const double pointer warnings
 
 	# c99 & c11 compat
 	'/wd4132', # const object should be initialized (for fwd decl)
@@ -50,6 +52,11 @@ conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 
 dep_vulkan = dependency('vulkan', required: false)
 
+swa_inc = [
+	include_directories('src'),
+	include_directories('include'),
+]
+
 if build_machine.system() == 'windows'
 	dep_gl = dependency('gl', required: false)
 	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
@@ -64,6 +71,7 @@ if build_machine.system() == 'windows'
 
 	swa_deps += cc.find_library('Dwmapi')
 	swa_deps += cc.find_library('Shlwapi')
+	swa_deps += cc.find_library('Gdi32')
 	swa_deps += dep_vulkan
 	swa_deps += dep_gl
 	swa_src += files(
@@ -175,11 +183,6 @@ else
 endif
 
 subdir('include/swa')
-
-swa_inc = [
-	include_directories('src'),
-	include_directories('include'),
-]
 
 if shared
 	lib_type = 'shared_library'
