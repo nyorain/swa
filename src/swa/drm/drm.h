@@ -136,7 +136,7 @@ struct drm_window {
 	};
 };
 
-struct swa_display* drm_display_create(const char* appname);
+struct swa_display* drm_display_create(void);
 
 #ifdef __cplusplus
 }

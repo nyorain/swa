@@ -12,9 +12,6 @@
 #include <sys/poll.h>
 #include <sys/eventfd.h> // TODO: linux only
 
-// TODO: hack
-VkDevice swa_vk_drm_device = NULL;
-
 #define dlg_error_vk(fmt, res) dlg_error( \
 	"vulkan error %s (%d): " fmt, \
 	vulkan_strerror(res), res)
@@ -51,7 +48,7 @@ const char *vulkan_strerror(VkResult err) {
 	#undef ERR_STR
 }
 
-// TODO
+// TODO: use this instead of manually loading everything everytime
 struct drm_vk_api {
 	PFN_vkDestroySurfaceKHR destroySurfaceKHR;
 	PFN_vkGetPhysicalDeviceDisplayPropertiesKHR getPhysicalDeviceDisplayPropertiesKHR;
@@ -153,7 +150,7 @@ static void init_device(struct drm_vk_surface* surf) {
 
 	free(phdev_exts);
 
-	// TODO
+	// TODO: really find a present queue for the cursor surface
 	// find queues
 	VkDeviceQueueCreateInfo qinfos[2] = {0};
 	unsigned n_queues = 1;
@@ -188,16 +185,15 @@ error:
 static void* frame_thread(void* data) {
 	struct drm_vk_surface* surf = data;
 	while(true) {
-		dlg_trace("lock c");
 		pthread_mutex_lock(&surf->frame.mutex);
 		if(surf->frame.join) {
-			dlg_trace("unlock (join) c");
 			pthread_mutex_unlock(&surf->frame.mutex);
 			break;
 		}
 
 		// TODO: if there is a new fence, abandon the old one and
-		// use that instead, i guess.
+		// use that instead, i guess. We don't wanna wait for
+		// old fences
 		if(!surf->frame.fence) {
 			while(!surf->frame.next_fence && !surf->frame.join) {
 				dlg_trace("wait c");
@@ -213,16 +209,16 @@ static void* frame_thread(void* data) {
 			surf->frame.next_fence = VK_NULL_HANDLE;
 		}
 
-		dlg_trace("unlock c");
-		VkDevice device = swa_vk_drm_device ? swa_vk_drm_device : surf->device;
 		pthread_mutex_unlock(&surf->frame.mutex);
 
-		// 0.1 sec timeout; mainly relevant for destruction
+		// 0.1 sec timeout; mainly relevant for destruction since we
+		// can't wake the thread during waitForFences.
 		static const uint64_t timeout = 100 * 1000 * 1000;
-		VkResult res = vkWaitForFences(device, 1, &surf->frame.fence, true, timeout);
+		VkResult res = vkWaitForFences(surf->device, 1,
+			&surf->frame.fence, true, timeout);
 		if(res == VK_SUCCESS) {
 			dlg_trace("display fence completed");
-			vkDestroyFence(device, surf->frame.fence, NULL);
+			vkDestroyFence(surf->device, surf->frame.fence, NULL);
 			surf->frame.fence = VK_NULL_HANDLE;
 
 			int64_t v = 1;
@@ -233,7 +229,7 @@ static void* frame_thread(void* data) {
 	}
 
 	if(surf->frame.fence) {
-		// vkDestroyFence(device, surf->frame.fence, NULL);
+		vkDestroyFence(surf->device, surf->frame.fence, NULL);
 		surf->frame.fence = VK_NULL_HANDLE;
 	}
 
@@ -313,6 +309,15 @@ struct drm_vk_surface* drm_vk_surface_create(struct pml* pml,
 	VkResult res;
 
 	// TODO: allow application to pass in phdev to use?
+	// or at least allow it to query the used device? but i guess
+	// only the physical device that we choose here will be able
+	// to present on the returned surface, so applications can
+	// query it implicitly. But it's a bad solution, make this
+	// explicit (or document it!).
+	// But then we should enumerate all phdevs; important for
+	// supporting multiple monitors, that may be plugged into
+	// different phdevs.
+	// maybe allow to configure this via env vars?
 	VkPhysicalDevice phdevs[10];
 	uint32_t count = 10;
 	res = vkEnumeratePhysicalDevices(instance, &count, phdevs);
@@ -390,6 +395,11 @@ struct drm_vk_surface* drm_vk_surface_create(struct pml* pml,
 	}
 
 	// TODO: don't just choose the first mode!
+	// we could try to match the requested window size. We could even
+	// create a new display mode for it.
+	// This is probably a bad idea in many cases though.
+	// We could also implement 'resize' using custom modes.
+	// maybe allow to configure this via env vars?
 	VkDisplayModePropertiesKHR* mode_props = &modes[0];
 	VkDisplayModeKHR mode = mode_props->displayMode;
 
@@ -515,6 +525,9 @@ error:
 	return NULL;
 }
 
+// TODO: when this is called *before* vkQueuePresentKHR was called
+// the first time (and surface_frame should always be called before
+// queuePresent), the registerDisplayEventEXT call may fail.
 void drm_vk_surface_frame(struct drm_vk_surface* surf) {
 	if(!surf->has_display_control) {
 		return;
@@ -539,7 +552,6 @@ void drm_vk_surface_frame(struct drm_vk_surface* surf) {
 		return;
 	}
 
-	dlg_trace("lock a");
 	pthread_mutex_lock(&surf->frame.mutex);
 	if(surf->frame.next_fence || surf->frame.fence) {
 		dlg_info("Detected mixing surface_frame with manual drawing");
@@ -550,26 +562,23 @@ void drm_vk_surface_frame(struct drm_vk_surface* surf) {
 
 	surf->frame.next_fence = fence;
 	pthread_cond_signal(&surf->frame.cond);
-	dlg_trace("unlock a");
 	pthread_mutex_unlock(&surf->frame.mutex);
 }
 
 void drm_vk_surface_refresh(struct drm_vk_surface* surf) {
 	bool pending;
-	dlg_trace("lock b");
 	pthread_mutex_lock(&surf->frame.mutex);
 	pending = (bool)surf->frame.fence || (bool)surf->frame.next_fence;
-	dlg_trace("unlock b");
 	pthread_mutex_unlock(&surf->frame.mutex);
 
 	if(pending) {
 		dlg_trace("refresh: pending, delayed redraw");
 		surf->frame.redraw = true;
-	} else if(surf->window->listener->draw) {
-		// TODO
-		dlg_trace("refresh: immediate redraw");
-		// surf->window->listener->draw(surf->window);
+		return true;
 	}
+
+	// immediate (i.e. via defer event) redraw.
+	return false;
 }
 
 VkSurfaceKHR drm_vk_surface_get(struct drm_vk_surface* surf) {

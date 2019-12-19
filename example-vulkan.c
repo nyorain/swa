@@ -575,9 +575,11 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	memcpy(enable_exts, dpy_exts, sizeof(*dpy_exts) * n_dpy_exts);
 	uint32_t enable_extc = n_dpy_exts;
 
+	bool use_layers = false;
 	const char* req = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 	bool has_debug = has_extension(avail_exts, avail_extc, req);
-	if(has_debug) {
+	bool use_debug = has_debug && use_layers;
+	if(use_debug) {
 		enable_exts[enable_extc++] = req;
 	}
 
@@ -603,8 +605,11 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	instance_info.pApplicationInfo = &application_info;
 	instance_info.enabledExtensionCount = enable_extc;
 	instance_info.ppEnabledExtensionNames = enable_exts;
-	instance_info.enabledLayerCount = sizeof(layers) / sizeof(layers[0]);
-	instance_info.ppEnabledLayerNames = layers;
+
+	if(use_layers) {
+		instance_info.enabledLayerCount = sizeof(layers) / sizeof(layers[0]);
+		instance_info.ppEnabledLayerNames = layers;
+	}
 
 	res = vkCreateInstance(&instance_info, NULL, &state->instance);
 	free(enable_exts);
@@ -615,7 +620,7 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 
 	// debug callback
 	VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
-	if(has_debug) {
+	if(use_debug) {
 		state->api.createDebugUtilsMessengerEXT =
 			(PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
 					state->instance, "vkCreateDebugUtilsMessengerEXT");

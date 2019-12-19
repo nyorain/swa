@@ -146,7 +146,9 @@ static void win_refresh(struct swa_window* base) {
 		}
 	} else if(win->surface_type == swa_surface_vk) {
 #ifdef SWA_WITH_VK
-		drm_vk_surface_refresh(win->vk);
+		if(!drm_vk_surface_refresh(win->vk)) {
+			pml_defer_enable(win->defer_draw, true);
+		}
 #else
 		dlg_error("window has vk surface but swa was built without vulkan");
 #endif
@@ -378,7 +380,7 @@ static const struct swa_window_interface window_impl = {
 static void drm_finish(struct drm_display* dpy) {
 	// TODO: cleanup output data
 	free(dpy->drm.outputs);
-	for(unsigned i = 0u; i < dpy->drm.n_planes; i++) {
+	for(unsigned i = 0u; i < dpy->drm.n_planes; ++i) {
 		drmModeFreePlane(dpy->drm.planes[i]);
 	}
 	free(dpy->drm.planes);
@@ -778,7 +780,7 @@ static bool output_init(struct drm_display* dpy,struct drm_output* output,
 	success = true;
 
 out_plane:
-	drmModeFreePlane(plane);
+	// drmModeFreePlane(plane);
 out_crtc:
 	drmModeFreeCrtc(crtc);
 out_encoder:
@@ -1509,9 +1511,7 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 	}
 }
 
-struct swa_display* drm_display_create(const char* appname) {
-	(void) appname;
-
+struct swa_display* drm_display_create(void) {
 	struct drm_display* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->pml = pml_new();

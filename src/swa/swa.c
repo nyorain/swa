@@ -27,7 +27,7 @@ struct swa_display* swa_display_autocreate(const char* appname) {
 #ifdef SWA_WITH_WIN
 	if((dpy = swa_display_win_create(appname))) return dpy;
 #endif
-	return drm_display_create(appname);
+	return drm_display_create();
 }
 
 void swa_window_settings_default(struct swa_window_settings* settings) {
