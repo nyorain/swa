@@ -20,10 +20,12 @@ struct swa_display_android {
 	struct swa_display base;
 
 	ALooper* looper;
+	AInputQueue* input_queue;
 	AChoreographer* choreographer;
 
 	struct swa_window_android* window;
 
+	// TODO: could use a ringbuffer here
 	unsigned n_events;
 	unsigned cap_events;
 	struct event* events;
@@ -59,6 +61,8 @@ struct swa_window_android {
 		struct swa_android_gl_surface gl;
 	};
 };
+
+struct swa_display* swa_display_android_create(void);
 
 #ifdef __cplusplus
 }

@@ -170,7 +170,7 @@ static struct {
 static struct {
 	unsigned int android;
 	enum swa_keyboard_mod modifier;
-} modifierMappings[] = {
+} mod_map[] = {
 	{AMETA_ALT_ON, swa_keyboard_mod_alt},
 	{AMETA_SHIFT_ON, swa_keyboard_mod_shift},
 	{AMETA_CTRL_ON, swa_keyboard_mod_ctrl},
@@ -182,6 +182,20 @@ static struct {
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 
+enum swa_key android_to_key(int32_t keycode);
+enum swa_keyboard_mod android_to_modifiers(int32_t meta_state);
+
+enum swa_keyboard_mod android_to_modifiers(int32_t meta_state) {
+	enum swa_keyboard_mod mods = swa_keyboard_mod_none;
+	for(unsigned i = 0u; i < sizeof(mod_map) / sizeof(mod_map[0]); ++i) {
+		if(meta_state & mod_map[i].android) {
+			mods |= mod_map[i].modifier;
+		}
+	}
+
+	return mods;
+}
+
 static struct swa_display_android* get_display_android(struct swa_display* base) {
 	dlg_assert(base->impl == &display_impl);
 	return (struct swa_display_android*) base;
@@ -192,10 +206,130 @@ static struct swa_window_android* get_window_android(struct swa_window* base) {
 	return (struct swa_window_android*) base;
 }
 
-// window
+// window api
+static bool create_surface(struct swa_window_android* win,
+		ANativeWindow* nwin, const struct swa_window_settings* settings) {
+	struct swa_display_android* dpy = win->dpy;
+
+	if(win->surface_type == swa_surface_buffer) {
+		// TODO: handle more data formats. Respect the surface
+		// settings and the transparent flag
+		int err = ANativeWindow_setBuffersGeometry(nwin,
+			0, 0, WINDOW_FORMAT_RGBA_8888);
+		if(err != 0) {
+			dlg_error("ANativeWindow_setBuffersGeometry: %d", err);
+			return false;
+		}
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+	if(!dpy->egl) {
+		dpy->egl = swa_egl_display_create(EGL_PLATFORM_WAYLAND_EXT,
+			dpy->egl);
+		if(!dpy->egl) {
+			return false;
+		}
+	}
+
+	const struct swa_gl_surface_settings* gls = &settings->surface_settings.gl;
+	bool alpha = settings->transparent;
+	EGLConfig config;
+	EGLContext* ctx = &win->gl.context;
+	if(!swa_egl_init_context(dpy->egl, gls, alpha, &config, ctx)) {
+		return false;
+	}
+
+	if(!(win->gl.surface = swa_egl_create_surface(dpy->egl,
+			nwin, config, gls->srgb))) {
+		return false;
+	}
+#else // SWA_WITH_GL
+	dlg_error("swa was compiled without GL support");
+	return false;
+#endif // SWA_WITH_GL
+	} else if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		win->vk.instance = settings->surface_settings.vk.instance;
+		if(!win->vk.instance) {
+			dlg_error("No vulkan instance passed for vulkan window");
+			return false;
+		}
+
+		VkAndroidSurfaceCreateInfoKHR info = {};
+		info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
+		info.window = nwin;
+
+		VkInstance instance = (VkInstance) win->vk.instance;
+		VkSurfaceKHR surface;
+
+		PFN_vkCreateAndroidSurfaceKHR fn = (PFN_vkCreateAndroidSurfaceKHR)
+			vkGetInstanceProcAddr(instance, "vkCreateAndroidSurfaceKHR");
+		if(!fn) {
+			dlg_error("Failed to load 'vkCreateWaylandSurfaceKHR' function");
+			return false;
+		}
+
+		VkResult res = fn(instance, &info, NULL, &surface);
+		if(res != VK_SUCCESS) {
+			dlg_error("Failed to create vulkan surface: %d", res);
+			return false;
+		}
+
+		win->vk.surface = (uint64_t)surface;
+#else // SWA_WITH_VK
+		dlg_error("swa was compiled without vulkan support");
+		goto err;
+#endif // SWA_WITH_VK
+	}
+
+	win->valid = true;
+	return true;
+}
+
+static void destroy_surface(struct swa_window_android* win) {
+	win->valid = false;
+
+	if(win->surface_type == swa_surface_buffer) {
+		dlg_assertm(!win->buffer.active, "Drawing buffer still pending "
+			"while surface was destroyed");
+	} else if(win->surface_type == swa_surface_vk) {
+#ifdef SWA_WITH_VK
+		if(win->vk.surface) {
+			dlg_assert(win->vk.instance);
+
+			VkInstance instance = (VkInstance) win->vk.instance;
+			VkSurfaceKHR surface = (VkSurfaceKHR) win->vk.surface;
+			PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
+				vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
+			if(fn) {
+				fn(instance, surface, NULL);
+			} else {
+				dlg_error("Failed to load 'vkDestroySurfaceKHR' function");
+			}
+		}
+
+		memset(&win->vk, 0x0, sizeof(win->vk));
+#else // SWA_WITH_VK
+		dlg_error("swa was compiled without vk support; invalid surface");
+#endif // SWA_WITH_VK
+	} else if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+		if(win->gl.context) {
+			eglDestroyContext(win->dpy->egl->display, win->gl.context);
+		}
+		if(win->gl.surface) {
+			eglDestroySurface(win->dpy->egl->display, win->gl.surface);
+		}
+
+		memset(&win->gl, 0x0, sizeof(win->gl));
+#else // SWA_WITH_GL
+		dlg_error("swa was compiled without gl support; invalid surface");
+#endif // SWA_WITH_GL
+	}
+}
+
 static void win_destroy(struct swa_window* base) {
-	struct drm_window* win = get_window_drm(base);
-	// TODO
+	struct swa_window_android* win = get_window_android(base);
+	destroy_surface(win);
 	free(win);
 }
 
@@ -473,9 +607,157 @@ static void display_destroy(struct swa_display* base) {
 	free(dpy);
 }
 
+static bool is_destroyed(void) {
+	pthread_mutex_lock(&static_data.mutex);
+	bool res = static_data.destroyed;
+	pthread_mutex_unlock(&static_data.mutex);
+	return res;
+}
+
+// Returns whether the event was handled or not
+static bool handle_input_event(struct swa_display_android* dpy, AInputEvent* ev) {
+	// There isn't a window yet, so we don't care for any events at all yet.
+	if(!dpy->window) {
+		return false;
+	}
+
+	int32_t type = AInputEvent_getType(ev);
+	if(type == AINPUT_EVENT_TYPE_KEY) {
+		int action = AKeyEvent_getAction(ev);
+		bool pressed = false;
+		if(action == AKEY_EVENT_ACTION_DOWN) {
+			pressed = true;
+		} else if(action != AKEY_EVENT_ACTION_UP) {
+			dlg_debug("Unknown key action %d", action);
+			return false;
+		}
+
+		int32_t metaState = AKeyEvent_getMetaState(ev);
+		dpy->keyboard_mods = android_to_modifiers(metaState);
+
+	auto akeycode = AKeyEvent_getKeyCode(&event);
+
+	// we skip this keycode so that is handled by android
+	// the application can't handle it anyways (at the moment - TODO?!)
+	if(akeycode == AKEYCODE_BACK) {
+		dlg_debug("android: skip back key");
+		return false;
+	}
+
+		return true;
+	} else if(type == AINPUT_EVENT_TYPE_MOTION) {
+	} else {
+		dlg_debug("Unknown event type %d", type);
+	}
+
+	return false;
+}
+
+static int input_queue_readable(int fd, int events, void* data) {
+	struct swa_display_android* dpy = data;
+	dlg_assert(dpy->input_queue);
+
+	int ret = 0;
+	while((ret = AInputQueue_hasEvents(dpy->input_queue)) > 0) {
+		AInputEvent* event = NULL;
+		ret = AInputQueue_getEvent(dpy->input_queue, &event);
+		if(ret < 0) {
+			dlg_warn("getEvent returned error code %d", ret);
+			continue;
+		}
+
+		ret = AInputQueue_preDispatchEvent(dpy->input_queue, event);
+		if(ret != 0) {
+			continue;
+		}
+
+		bool handled = handle_input_event(dpy, event);
+		AInputQueue_finishEvent(dpy->input_queue, event, handled);
+	}
+
+	if(ret < 0) {
+		dlg_warn("input queue returned error code %d", ret);
+		return 1;
+	}
+
+	return 1;
+}
+
+static void handle_event(struct swa_display_android* dpy, const struct event* ev) {
+	switch(ev->type) {
+		case event_type_draw:
+			if(dpy->window && dpy->window->base.listener->draw) {
+				dpy->window->base.listener->draw(&dpy->window->base);
+			}
+			break;
+		case event_type_focus:
+			if(dpy->window && dpy->window->base.listener->focus) {
+				struct swa_window* win = &dpy->window->base;
+				win->listener->focus(win, ev->data);
+			}
+			break;
+		case event_type_win_created:
+			if(dpy->window && !dpy->window->valid) {
+				dpy->window->valid = true;
+				if(dpy->window->base.listener->surface_created) {
+					dpy->window->base.listener->surface_created(&dpy->window->base);
+				}
+			}
+			break;
+		case event_type_win_destroyed:
+			if(dpy->window && dpy->window->valid) {
+				dpy->window->valid = false;
+				if(dpy->window->base.listener->surface_destroyed) {
+					dpy->window->base.listener->surface_destroyed(&dpy->window->base);
+				}
+			}
+			break;
+		case event_type_input_queue_created: {
+			AInputQueue* queue = (AInputQueue*)(uintptr_t) ev->data;
+			AInputQueue_attachLooper(queue, dpy->looper, ALOOPER_POLL_CALLBACK,
+				input_queue_readable, dpy);
+			break;
+		} case event_type_input_queue_destroyed: {
+			AInputQueue* queue = (AInputQueue*)(uintptr_t) ev->data;
+			AInputQueue_detachLooper(queue);
+			break;
+		}
+	}
+}
+
 static bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_android* dpy = get_display_android(base);
-	// TODO
+
+	// process events from activity thread
+	pthread_mutex_lock(&static_data.mutex);
+	if(static_data.destroyed) {
+		pthread_mutex_unlock(&static_data.mutex);
+		return false;
+	}
+
+	while(dpy->n_events) {
+		struct event ev = dpy->events[0];
+		--dpy->n_events;
+		memcpy(dpy->events, dpy->events + 1, sizeof(*dpy->events) * dpy->n_events);
+		pthread_mutex_unlock(&static_data.mutex);
+		handle_event(dpy, &ev);
+		pthread_mutex_lock(&static_data.mutex);
+	}
+
+	dpy->n_events = 0;
+	pthread_mutex_unlock(&static_data.mutex);
+
+	// process looper events
+	int outFd, outEvents;
+	void* outData;
+	int timeout = block ? -1 : 0;
+	int err = ALooper_pollAll(timeout, &outFd, &outEvents, &outData);
+	if(err == ALOOPER_POLL_ERROR) {
+		dlg_error("ALooper_pollAll error");
+	}
+
+	return !is_destroyed();
+
 }
 
 static void display_wakeup(struct swa_display* base) {
@@ -581,7 +863,26 @@ static bool display_start_dnd(struct swa_display* base,
 
 static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
-	// TODO
+	struct swa_display_android* dpy = get_display_android(base);
+	struct swa_window_android* win = calloc(1, sizeof(*win));
+	win->dpy = dpy;
+	win->surface_type = settings->surface;
+	if(static_data.window) {
+		// TODO: send deferred size event
+		// TODO: send initial draw event?
+		if(!create_surface(win, static_data.window, settings)) {
+			goto error;
+		}
+	} else {
+		// TODO: send (deferred) initial surface destroyed event
+	}
+
+	dpy->window = win;
+	return &win->base;
+
+error:
+	win_destroy(&win->base);
+	return NULL;
 }
 
 static const struct swa_display_interface display_impl = {
@@ -603,6 +904,18 @@ static const struct swa_display_interface display_impl = {
 	.get_gl_proc_addr = display_get_gl_proc_addr,
 	.create_window = display_create_window,
 };
+
+struct swa_display* swa_display_android_create(void) {
+	struct swa_display_android* dpy = calloc(1, sizeof(*dpy));
+	dpy->base.impl = &display_impl;
+	dpy->looper = ALooper_prepare(0);
+
+#if __ANDROID_API__ >= 24
+	dpy->choreographer = AChoreographer_getInstance();
+#endif // __ANDROID_API__ >= 24
+
+	return &dpy->base;
+}
 
 // activity api
 static void* main_thread(void* data) {
@@ -689,9 +1002,8 @@ static void activity_onStop(ANativeActivity* activity) {
 }
 
 static void activity_onDestroy(ANativeActivity* activity) {
-	static_data.destroyed = true;
-
 	pthread_mutex_lock(&static_data.mutex);
+	static_data.destroyed = true;
 	if(static_data.dpy) {
 		ALooper_wake(static_data.dpy->looper);
 	}
