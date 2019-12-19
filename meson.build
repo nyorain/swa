@@ -24,6 +24,8 @@ args = cc.get_supported_arguments([
 	'/wd4127', # conditional expression is constant
 	'/wd4706', # assignment within conditional expression
 	'/wd4100', # unreferenced formal parameter
+	'/wd4189', # local variable unused
+	'/wd4090', # wrong const double pointer warnings
 
 	# c99 & c11 compat
 	'/wd4132', # const object should be initialized (for fwd decl)
@@ -50,9 +52,15 @@ conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 
 dep_vulkan = dependency('vulkan', required: false)
 
+swa_inc = [
+	include_directories('src'),
+	include_directories('include'),
+]
+
 if build_machine.system() == 'windows'
+	dep_gl = dependency('gl', required: false)
 	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
-	conf_data.set('SWA_WITH_GL', false, description: 'Compiled with OpenGL support')
+	conf_data.set('SWA_WITH_GL', dep_gl.found(), description: 'Compiled with OpenGL support')
 	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', false, description: 'Compiled with X11 support')
 	conf_data.set('SWA_WITH_WIN', true, description: 'Compiled with Winapi support')
@@ -63,8 +71,13 @@ if build_machine.system() == 'windows'
 
 	swa_deps += cc.find_library('Dwmapi')
 	swa_deps += cc.find_library('Shlwapi')
+	swa_deps += cc.find_library('Gdi32')
 	swa_deps += dep_vulkan
-	swa_src += files('src/swa/winapi.c')
+	swa_deps += dep_gl
+	swa_src += files(
+		'src/swa/winapi.c',
+		'src/swa/wgl.c'
+	)
 else
 	dep_pml = dependency('pml',
 		fallback: ['pml', 'pml_dep'],
@@ -170,11 +183,6 @@ else
 endif
 
 subdir('include/swa')
-
-swa_inc = [
-	include_directories('src'),
-	include_directories('include'),
-]
 
 if shared
 	lib_type = 'shared_library'

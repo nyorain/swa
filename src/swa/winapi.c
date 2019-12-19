@@ -6,9 +6,7 @@
   #include <vulkan/vulkan_win32.h>
 #endif
 
-#ifdef SWA_WITH_GL
-  #include <Wingdi.h>
-#endif
+#include <wingdi.h>
 
 // define constants that are sometimes not included
 #ifndef SC_DRAGMOVE
@@ -17,6 +15,7 @@
 
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
+static const wchar_t* window_class_name = L"swa_window_class";
 
 // utility
 static struct swa_display_win* get_display_win(struct swa_display* base) {
@@ -210,9 +209,9 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
-
 	// TODO: just use InvalidateRect? use RDW_FRAME?
 	RedrawWindow(win->handle, NULL, NULL, RDW_INVALIDATE | RDW_NOERASE);
+	// InvalidateRect(win->handle, NULL, false);
 }
 
 static void win_surface_frame(struct swa_window* base) {
@@ -227,7 +226,7 @@ static void win_surface_frame(struct swa_window* base) {
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
-	struct swa_window_win* win = get_window_win(base);
+	// struct swa_window_win* win = get_window_win(base);
 }
 
 static void win_begin_move(struct swa_window* base) {
@@ -268,8 +267,19 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 
 static bool win_gl_make_current(struct swa_window* base) {
 #ifdef SWA_WITH_GL
-	dlg_error("unimplemented");
-	return false;
+	struct swa_window_win* win = get_window_win(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Can't make non-gl window current");
+		return false;
+	}
+
+	HDC hdc = GetDC(win->handle);
+	if(!wglMakeCurrent(hdc, (HGLRC) win->gl_context)) {
+		print_winapi_error("wglMakeCurrent");
+		return false;
+	}
+
+	return true;
 #else
 	dlg_warn("swa was compiled without gl suport");
 	return false;
@@ -278,8 +288,19 @@ static bool win_gl_make_current(struct swa_window* base) {
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
 #ifdef SWA_WITH_GL
-	dlg_error("unimplemented");
-	return false;
+	struct swa_window_win* win = get_window_win(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Can't make non-gl window current");
+		return false;
+	}
+
+	HDC hdc = GetDC(win->handle);
+	if(!SwapBuffers(hdc)) {
+		print_winapi_error("SwapBuffers");
+		return false;
+	}
+
+	return true;
 #else
 	dlg_warn("swa was compiled without gl suport");
 	return false;
@@ -428,7 +449,7 @@ static const struct swa_window_interface window_impl = {
 // display api
 void display_destroy(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
-	unregister_window_class();
+	UnregisterClassW(window_class_name, GetModuleHandle(NULL));
 	free(dpy);
 }
 
@@ -477,7 +498,7 @@ void display_wakeup(struct swa_display* base) {
 }
 
 enum swa_display_cap display_capabilities(struct swa_display* base) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	enum swa_display_cap caps =
 #ifdef SWA_WITH_GL
 		swa_display_cap_gl |
@@ -557,6 +578,16 @@ bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
+swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
+	(void) base;
+#ifdef SWA_WITH_GL
+	return (swa_gl_proc) wglGetProcAddress(name);
+#else
+	dlg_error("swa was built without gl");
+	return NULL;
+#endif
+}
+
 static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
 	struct swa_window_win* win = (struct swa_window_win*) GetWindowLongPtr(hwnd, GWLP_USERDATA);
 	if(!win) {
@@ -566,7 +597,6 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 	// TODO:
 	// - WM_INPUTLANGCHANGE
 
-	LRESULT result = 0;
 	switch(msg) {
 		case WM_PAINT: {
 			if(win->width == 0 && win->height == 0) {
@@ -583,9 +613,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			// but that might create infinite render loops, i.e.
 			// display_dispatch will not return at all anymore.
 			// we probably have to defer something
-			result = DefWindowProc(hwnd, msg, wparam, lparam);
-
-			return 0;
+			return DefWindowProc(hwnd, msg, wparam, lparam);
 		} case WM_CLOSE: {
 			if(win->base.listener->close) {
 				win->base.listener->close(&win->base);
@@ -666,7 +694,6 @@ static char* narrow(const wchar_t* wide) {
 	return utf8;
 }
 
-static const wchar_t* window_class_name = L"swa_window_class";
 static bool register_window_class(void) {
 	WNDCLASSEX wcx;
 	wcx.cbSize = sizeof(wcx);
@@ -691,10 +718,6 @@ static bool register_window_class(void) {
 	}
 
 	return true;
-}
-
-static void unregister_window_class(void) {
-	UnregisterWindowClassW(window_class_name, GetModuleHandle(NULL));
 }
 
 struct swa_window* display_create_window(struct swa_display* base,
@@ -789,8 +812,11 @@ struct swa_window* display_create_window(struct swa_display* base,
 #endif
 	} else if(win->surface_type == swa_surface_gl) {
 #ifdef SWA_WITH_GL
-		dlg_error("unimplemented");
-		goto error;
+		HDC hdc = GetDC(win->handle);
+		if(!swa_wgl_init_context(dpy, hdc, &settings->surface_settings.gl,
+				settings->transparent, &win->gl_context)) {
+			goto error;
+		}
 #else
 		dlg_error("swa was compiled without gl support");
 		goto error;
@@ -821,6 +847,7 @@ static const struct swa_display_interface display_impl = {
 	.set_clipboard = display_set_clipboard,
 	.start_dnd = display_start_dnd,
 	.create_window = display_create_window,
+	.get_gl_proc_addr = display_get_gl_proc_addr,
 };
 
 struct swa_display* swa_display_win_create(const char* appname) {
@@ -844,6 +871,6 @@ struct swa_display* swa_display_win_create(const char* appname) {
 	return &dpy->base;
 
 error:
-	display_destroy(dpy);
+	display_destroy(&dpy->base);
 	return NULL;
 }
