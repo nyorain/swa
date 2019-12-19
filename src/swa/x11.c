@@ -1892,7 +1892,7 @@ struct swa_display* swa_display_x11_create(const char* appname) {
 		xcb_shm_query_version_reply(dpy->conn, sc, &err);
 	if(!sreply) {
 		handle_error(dpy, err, "xcb_shm_query_version");
-	} else if(sreply->shared_pixmaps &&
+	} else if(/*sreply->shared_pixmaps && */ // we don't need shared pixmaps
 			sreply->major_version >= 1 &&
 			sreply->minor_version >= 2) {
 		dpy->ext.shm = true;
