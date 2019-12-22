@@ -151,13 +151,6 @@ struct drm_buffer_surface {
 	// the currently active buffer, i.e. the last one for which the pageflip
 	// has completed
 	struct drm_dumb_buffer* last;
-
-	// The buffer we use as cursor buffer.
-	struct {
-		unsigned width;
-		unsigned height;
-		struct drm_dumb_buffer buffer;
-	} cursor;
 };
 
 struct drm_gl_surface {
@@ -174,6 +167,12 @@ struct drm_gl_surface {
 	struct gbm_bo* pending;
 };
 
+struct drm_buffer_cursor {
+	unsigned width;
+	unsigned height;
+	struct drm_dumb_buffer buffer;
+};
+
 struct drm_window {
 	struct swa_window base;
 	struct drm_display* dpy;
@@ -188,6 +187,10 @@ struct drm_window {
 		struct drm_vk_surface* vk;
 		struct drm_gl_surface gl;
 	};
+
+	union {
+		struct drm_buffer_cursor buffer;
+	} cursor;
 };
 
 struct swa_display* drm_display_create(void);

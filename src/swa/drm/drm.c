@@ -248,15 +248,20 @@ static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
-	// TODO: finish support for cursor via cursor planes.
-	// For vulkan this will be somewhat complicated though. We probably
+	// TODO: For vulkan this will be somewhat complicated. We probably
 	// have to create our own, internal vulkan device i guess?
 	// Combining vkdisplay with drm calls isn't something we want to start.
 	// But we would also have to create pipelines to render the cursor
 	// into the surface (created from the cursor plane)...
+	// NOTE: when already using a gl render surface, we could use
+	// gbm_bo's. Shouldn't really improve anything but may be useful
+	// when the drm driver doesn't have the dumb buffer capability i guess?
+	// are there drivers that implement gbm but not dumb buffers though?
+	// rather unlikely i guess
 
 	struct drm_window* win = get_window_drm(base);
-	if(win->surface_type != swa_surface_buffer) {
+	if(win->surface_type != swa_surface_buffer &&
+			win->surface_type != swa_surface_gl) {
 		dlg_error("TODO: not implemented");
 		return;
 	}
@@ -335,7 +340,7 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	// at all. Optimization
 
 	// create buffer if needed
-	if(!win->buffer.cursor.buffer.data) {
+	if(!win->cursor.buffer.buffer.data) {
 		int err;
 		uint64_t w, h;
 		err = drmGetCap(win->dpy->drm.fd, DRM_CAP_CURSOR_WIDTH, &w);
@@ -346,30 +351,30 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		h = err ? 64 : h;
 
 		if(!init_dumb_buffer(win->dpy, w, h, DRM_FORMAT_ARGB8888,
-				&win->buffer.cursor.buffer)) {
+				&win->cursor.buffer.buffer)) {
 			dlg_warn("failed to create cursor dumb buffer");
 			return;
 		}
 
-		win->buffer.cursor.width = w;
-		win->buffer.cursor.height = h;
+		win->cursor.buffer.width = w;
+		win->cursor.buffer.height = h;
 	}
 
-	if(cursor_image.width > win->buffer.cursor.width ||
-			cursor_image.height > win->buffer.cursor.height) {
+	if(cursor_image.width > win->cursor.buffer.width ||
+			cursor_image.height > win->cursor.buffer.height) {
 		dlg_error("cursor image too large");
 		return;
 	}
 
 	// clear first (important for overflow)
-	memset(win->buffer.cursor.buffer.data, 0x0, win->buffer.cursor.buffer.size);
+	memset(win->cursor.buffer.buffer.data, 0x0, win->cursor.buffer.buffer.size);
 	if(valid) {
 		struct swa_image dst = {
 			.width = cursor_image.width,
 			.height = cursor_image.height,
-			.stride = win->buffer.cursor.buffer.stride,
+			.stride = win->cursor.buffer.buffer.stride,
 			.format = swa_image_format_bgra32,
-			.data = win->buffer.cursor.buffer.data,
+			.data = win->cursor.buffer.buffer.data,
 		};
 		swa_convert_image(&cursor_image, &dst);
 	}
@@ -553,14 +558,14 @@ static bool pageflip(struct drm_window* win, uint32_t fb_id,
 	atomic_add(&atom, crtc_id, crtc_props->mode_id, win->output->mode_id);
 	atomic_add(&atom, crtc_id, crtc_props->active, 1);
 
-	if(win->surface_type == swa_surface_buffer && win->buffer.cursor.buffer.fb_id) {
+	if(win->cursor.buffer.buffer.fb_id) {
 		uint32_t plane_id = win->output->cursor_plane.id;
 		union drm_plane_props* pprops = &win->output->cursor_plane.props;
-		uint64_t width = win->buffer.cursor.width;
-		uint64_t height = win->buffer.cursor.height;
+		uint64_t width = win->cursor.buffer.width;
+		uint64_t height = win->cursor.buffer.height;
 
 		atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
-		atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.cursor.buffer.fb_id);
+		atomic_add(&atom, plane_id, pprops->fb_id, win->cursor.buffer.buffer.fb_id);
 		atomic_add(&atom, plane_id, pprops->src_x, 0);
 		atomic_add(&atom, plane_id, pprops->src_y, 0);
 		atomic_add(&atom, plane_id, pprops->src_w, width << 16);

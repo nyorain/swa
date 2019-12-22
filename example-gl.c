@@ -23,7 +23,7 @@ static void window_draw(struct swa_window* win) {
 	}
 
 	// for continous redrawing:
-	swa_window_refresh(win);
+	// swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -62,7 +62,7 @@ int main() {
 	}
 
 	struct swa_cursor cursor;
-	cursor.type = swa_cursor_load;
+	cursor.type = swa_cursor_right_pointer;
 
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
