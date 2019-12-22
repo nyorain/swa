@@ -1303,7 +1303,8 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 	if(dpy->keyboard) caps |= swa_display_cap_keyboard;
 	if(dpy->pointer) caps |= swa_display_cap_mouse;
 	if(dpy->touch) caps |= swa_display_cap_touch;
-	if(dpy->data_dev) caps |= swa_display_cap_dnd | swa_display_cap_clipboard;
+	// TODO: implement dnd
+	if(dpy->data_dev) caps |= /*swa_display_cap_dnd |*/ swa_display_cap_clipboard;
 	// NOTE: we don't know this for sure. But it's at least worth
 	// a shot in this case. And the final result should always be determined
 	// using win_is_client_decorated anyways
@@ -1328,6 +1329,11 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_wl* dpy = get_display_wl(base);
+	if(!dpy->keyboard) {
+		dlg_warn("display has no keyboard");
+		return false;
+	}
+
 	const unsigned n_bits = 8 * sizeof(dpy->key_states);
 	if(key >= n_bits) {
 		dlg_warn("keycode not tracked (too high)");

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vulkan/vulkan.h>
+#include <stdbool.h>
 
 struct pml;
 struct swa_window;

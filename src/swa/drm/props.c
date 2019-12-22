@@ -99,3 +99,24 @@ bool get_drm_plane_props(int fd, uint32_t id, union drm_plane_props *out) {
 	return scan_properties(fd, id, DRM_MODE_OBJECT_PLANE, out->props,
 		plane_info, sizeof(plane_info) / sizeof(plane_info[0]));
 }
+
+bool get_drm_prop(int fd, uint32_t obj, uint32_t prop, uint64_t *ret) {
+	drmModeObjectProperties *props =
+		drmModeObjectGetProperties(fd, obj, DRM_MODE_OBJECT_ANY);
+	if (!props) {
+		return false;
+	}
+
+	bool found = false;
+
+	for (uint32_t i = 0; i < props->count_props; ++i) {
+		if (props->props[i] == prop) {
+			*ret = props->prop_values[i];
+			found = true;
+			break;
+		}
+	}
+
+	drmModeFreeObjectProperties(props);
+	return found;
+}

@@ -5,8 +5,16 @@
 // TODO: implement gl/egl using gbm_surface
 //  make that definitely optional since it's a mesa thing
 // TODO: full input support
+//  - support for pointer movement
+//  - support for touch
+//  - support for keyboard utf via keymap
+//  - support for keyboard key repeat
+//  - support for keyboard modifiers
 // TODO: cursor plane support
 //  has to be treated completely differently for vulkan
+// TODO: multi output support
+// TODO: check for DRM_CAP_DUMB_BUFFER, otherwise don't return
+//  buffer surface cap
 
 #include "props.h"
 #include <swa/impl.h>
@@ -66,37 +74,52 @@ struct drm_display {
 			struct drm_window* focus;
 			struct xkb_keymap* keymap;
 			struct xkb_state* state;
+			enum swa_keyboard_mod mods;
+			uint64_t key_states[16]; // bitset
 		} keyboard;
 
 		struct {
 			bool present;
-			uint32_t x;
-			uint32_t y;
+			double x;
+			double y;
 			struct drm_window* over;
+			uint64_t button_states; // bitset
 		} pointer;
 
 		struct {
 			bool present;
 		} touch;
 	} input;
+
+	struct swa_xcursor_theme* cursor_theme;
 };
 
 struct drm_output {
-	struct drm_window* window; // optional
-
-	uint32_t connector_id;
-	uint32_t crtc_id;
-	uint32_t primary_plane_id;
+	struct drm_window* window; // only set when there is a window for output
 
 	drmModeModeInfo mode;
 	uint32_t mode_id;
 	bool needs_modeset;
 
 	struct {
-		union drm_crtc_props crtc;
-		union drm_plane_props plane;
-		union drm_connector_props connector;
-	} props;
+		uint32_t id;
+		union drm_crtc_props props;
+	} crtc;
+
+	struct {
+		uint32_t id;
+		union drm_connector_props props;
+	} connector;
+
+	struct {
+		uint32_t id;
+		union drm_plane_props props;
+	} primary_plane;
+
+	struct {
+		uint32_t id;
+		union drm_plane_props props;
+	} cursor_plane;
 };
 
 // Dumb buffers always have linear format mod and drm XRGB8888 format
@@ -119,6 +142,13 @@ struct drm_buffer_surface {
 	// the currently active buffer, i.e. the last one for which the pageflip
 	// has completed
 	struct drm_dumb_buffer* last;
+
+	// The buffer we use as cursor buffer.
+	struct {
+		unsigned width;
+		unsigned height;
+		struct drm_dumb_buffer buffer;
+	} cursor;
 };
 
 struct drm_window {

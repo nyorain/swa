@@ -6,9 +6,6 @@
 #include <time.h>
 #include <signal.h>
 
-// TODO: hack
-extern VkDevice swa_vk_drm_device;
-
 struct render_buffer {
 	VkCommandBuffer cb;
 	VkImageView iv;
@@ -783,8 +780,6 @@ bool init_renderer(struct state* state) {
 		vk_error(res, "Failed to create vulkan device");
 		return false;
 	}
-
-	swa_vk_drm_device = dev;
 
 	state->device = dev;
 	state->qs.gfx_fam = gfx_qfam;

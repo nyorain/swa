@@ -2,6 +2,8 @@
 
 #include "drm.h"
 #include "props.h"
+#include "xcursor.h"
+#include <swa/xkb.h>
 #include <dlg/dlg.h>
 #include <assert.h>
 #include <errno.h>
@@ -39,6 +41,9 @@
 
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
+
+// from xcursor.c
+const char* const* swa_get_xcursor_names(enum swa_cursor_type type);
 
 static struct drm_display* get_display_drm(struct swa_display* base) {
 	dlg_assert(base->impl == &display_impl);
@@ -83,6 +88,119 @@ static bool swa_pipe(int fds[static 2]) {
 	return true;
 }
 
+static void finish_dumb_buffer(struct drm_display* dpy,
+		struct drm_dumb_buffer* buf) {
+	if(buf->fb_id) {
+		drmModeRmFB(dpy->drm.fd, buf->fb_id);
+	}
+	if(buf->data) {
+		munmap(buf->data, buf->size);
+	}
+	if(buf->gem_handle) {
+		struct drm_mode_destroy_dumb destroy = { .handle = buf->gem_handle };
+		drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
+	}
+
+	memset(buf, 0x0, sizeof(*buf));
+}
+
+static bool init_dumb_buffer(struct drm_display* dpy,
+		unsigned width, unsigned height, unsigned format,
+		struct drm_dumb_buffer* buf) {
+	// The create ioctl uses the combination of depth and bpp to infer
+	// a format; 24/32 refers to DRM_FORMAT_XRGB8888 as defined in
+	// the drm_fourcc.h header. These arguments are the same as given
+	// to drmModeAddFB, which has since been superseded by
+	// drmModeAddFB2 as the latter takes an explicit format token.
+	//
+	// We only specify these arguments; the driver calculates the
+	// pitch (also known as stride or row length) and total buffer size
+	// for us, also returning us the GEM handle.
+	//
+	// For more information on pixel formats, a very useful reference
+	// is the Pixel Format Guide to the Galaxy, which covers most of the
+	// pixel formats used across the low-level graphics stack:
+	// https://afrantzis.com/pixel-format-guide/
+	struct drm_mode_create_dumb create = {
+		.width = width,
+		.height = height,
+		.bpp = 32,
+	};
+	int err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create);
+	if(err != 0) {
+		dlg_error("Failed to create %u x %u dumb buffer: %s",
+			create.width, create.height, strerror(errno));
+		goto err;
+	}
+
+	assert(create.handle > 0);
+	assert(create.pitch >= create.width * (create.bpp / 8));
+	assert(create.size >= create.pitch * create.height);
+
+	buf->gem_handle = create.handle;
+	buf->stride = create.pitch;
+
+	// In order to map the buffer, we call an ioctl specific to the buffer
+	// type, which returns us a fake offset to use with the mmap syscall.
+	// mmap itself then works as you expect.
+	//
+	// Note this means it is not possible to map arbitrary offsets of
+	// buffers without specifically requesting it from the kernel.
+	struct drm_mode_map_dumb map = {
+		.handle = buf->gem_handle,
+	};
+	err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
+	if(err != 0) {
+		dlg_error("failed to get %u x %u mmap offset: %s",
+			create.width, create.height, strerror(errno));
+		goto err;
+	}
+
+	buf->data = mmap(NULL, create.size, PROT_WRITE, MAP_SHARED,
+		dpy->drm.fd, map.offset);
+	if(buf->data == MAP_FAILED) {
+		dlg_error("failed to mmap %u x %u dumb buffer: %s",
+			create.width, create.height, strerror(errno));
+		goto err;
+	}
+
+	buf->size = create.size;
+
+	// create framebuffer
+	// TODO: use modifier api
+	uint32_t pitches[4] = {buf->stride, 0, 0, 0};
+	uint32_t gem_handles[4] = {buf->gem_handle, 0, 0, 0};
+	uint32_t offsets[4] = {0, 0, 0, 0};
+	err = drmModeAddFB2(dpy->drm.fd, width, height,
+		format, gem_handles, pitches, offsets, &buf->fb_id, 0);
+
+	if(err != 0 || buf->fb_id == 0) {
+		dlg_error("AddFB2 failed: %s", strerror(errno));
+		goto err;
+	}
+
+	dlg_trace("created dumb buffer %d: width %d, height %d, stride %d, size %ld",
+		buf->gem_handle, width, height, buf->stride, buf->size);
+	return true;
+
+err:
+	finish_dumb_buffer(dpy, buf);
+	return false;
+}
+
+struct atomic {
+	drmModeAtomicReq *req;
+	bool failed;
+};
+
+static void atomic_add(struct atomic* atom, uint32_t id, uint32_t prop, uint64_t val) {
+	if(!atom->failed && drmModeAtomicAddProperty(atom->req, id, prop, val) < 0) {
+		dlg_error("Failed to add atomic DRM property: %s", strerror(errno));
+		atom->failed = true;
+	}
+}
+
+
 // window
 static void win_destroy(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
@@ -124,14 +242,131 @@ static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
-	// TODO: implement support for cursor via cursor planes.
+	// TODO: finish support for cursor via cursor planes.
 	// For vulkan this will be somewhat complicated though. We probably
 	// have to create our own, internal vulkan device i guess?
 	// Combining vkdisplay with drm calls isn't something we want to start.
 	// But we would also have to create pipelines to render the cursor
 	// into the surface (created from the cursor plane)...
-	(void) base; (void) cursor;
-	dlg_error("win_set_cursor not supported");
+
+	struct drm_window* win = get_window_drm(base);
+	if(win->surface_type != swa_surface_buffer) {
+		dlg_error("TODO: not implemented");
+		return;
+	}
+
+	if(!win->output->cursor_plane.id) {
+		dlg_error("No cursor plane");
+		return;
+	}
+
+	enum swa_cursor_type type = cursor.type;
+	if(type == swa_cursor_default) {
+		type = swa_cursor_left_pointer;
+	}
+
+	// TODO: handle hotspot
+	struct swa_image cursor_image = {0};
+	bool valid = false;
+	if(type == swa_cursor_image) {
+		cursor_image = cursor.image;
+		valid = cursor_image.width > 0 && cursor_image.height > 0;
+	} else if(type != swa_cursor_none) {
+		if(!win->dpy->cursor_theme) {
+			const char* theme = getenv("XCURSOR_THEME");
+			const char* size_str = getenv("XCURSOR_SIZE");
+			unsigned size = 32u;
+			if(size_str) {
+				long s = strtol(size_str, NULL, 10);
+				if(s <= 0) {
+					dlg_warn("Invalid XCURSOR_SIZE: %s", size_str);
+				} else {
+					size = s;
+				}
+			}
+
+			// if XCURSOR_THEME is not set, we pass in null, which will result
+			// in the default cursor theme being used.
+			win->dpy->cursor_theme = swa_xcursor_theme_load(theme, size);
+			if(!win->dpy->cursor_theme) {
+				dlg_error("Could not load cursor theme");
+				return;
+			}
+		}
+
+		// TODO: support animated cursor. See wayland backend
+		const char* const* names = swa_get_xcursor_names(type);
+		if(!names) {
+			dlg_warn("failed to convert cursor type %d to xcursor", type);
+			return;
+		}
+
+		struct swa_xcursor* cursor = NULL;
+		for(; *names; ++names) {
+			cursor = swa_xcursor_theme_get_cursor(win->dpy->cursor_theme, *names);
+			if(cursor) {
+				break;
+			} else {
+				dlg_debug("failed to retrieve cursor %s", *names);
+			}
+		}
+
+		if(!cursor) {
+			dlg_warn("failed to get any cursor for cursor type %d", type);
+			return;
+		}
+
+		struct swa_xcursor_image* img = cursor->images[0];
+		cursor_image.width = img->width;
+		cursor_image.height = img->height;
+		cursor_image.stride = 4 * img->width;
+		cursor_image.format = swa_image_format_bgra32;
+		cursor_image.data = img->buffer;
+		valid = true;
+	}
+
+	// TODO: when cursor is unset, we could just not use a cursor plane
+	// at all. Optimization
+
+	// create buffer if needed
+	if(!win->buffer.cursor.buffer.data) {
+		int err;
+		uint64_t w, h;
+		err = drmGetCap(win->dpy->drm.fd, DRM_CAP_CURSOR_WIDTH, &w);
+		dlg_assertlm(dlg_level_warn, !err, "%d (%s)", err, strerror(errno));
+		w = err ? 64 : w;
+		err = drmGetCap(win->dpy->drm.fd, DRM_CAP_CURSOR_HEIGHT, &h);
+		dlg_assertlm(dlg_level_warn, !err, "%d (%s)", err, strerror(errno));
+		h = err ? 64 : h;
+
+		if(!init_dumb_buffer(win->dpy, w, h, DRM_FORMAT_ARGB8888,
+				&win->buffer.cursor.buffer)) {
+			dlg_warn("failed to create cursor dumb buffer");
+			return;
+		}
+
+		win->buffer.cursor.width = w;
+		win->buffer.cursor.height = h;
+	}
+
+	if(cursor_image.width > win->buffer.cursor.width ||
+			cursor_image.height > win->buffer.cursor.height) {
+		dlg_error("cursor image too large");
+		return;
+	}
+
+	// clear first (important for overflow)
+	memset(win->buffer.cursor.buffer.data, 0x0, win->buffer.cursor.buffer.size);
+	if(valid) {
+		struct swa_image dst = {
+			.width = cursor_image.width,
+			.height = cursor_image.height,
+			.stride = win->buffer.cursor.buffer.stride,
+			.format = swa_image_format_bgra32,
+			.data = win->buffer.cursor.buffer.data,
+		};
+		swa_convert_image(&cursor_image, &dst);
+	}
 }
 
 static void win_refresh(struct swa_window* base) {
@@ -280,18 +515,6 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 	return true;
 }
 
-struct atomic {
-	drmModeAtomicReq *req;
-	bool failed;
-};
-
-static void atomic_add(struct atomic* atom, uint32_t id, uint32_t prop, uint64_t val) {
-	if(!atom->failed && drmModeAtomicAddProperty(atom->req, id, prop, val) < 0) {
-		dlg_error("Failed to add atomic DRM property: %s", strerror(errno));
-		atom->failed = true;
-	}
-}
-
 static void win_apply_buffer(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
 	if(win->surface_type != swa_surface_buffer) {
@@ -305,14 +528,14 @@ static void win_apply_buffer(struct swa_window* base) {
 	}
 
 	drmModeAtomicReq* req = drmModeAtomicAlloc();
-	uint32_t plane_id = win->output->primary_plane_id;
-	union drm_plane_props* pprops = &win->output->props.plane;
+	uint32_t plane_id = win->output->primary_plane.id;
+	union drm_plane_props* pprops = &win->output->primary_plane.props;
 
-	uint32_t width = win->output->mode.hdisplay;
-	uint32_t height = win->output->mode.vdisplay;
+	uint64_t width = win->output->mode.hdisplay;
+	uint64_t height = win->output->mode.vdisplay;
 
 	struct atomic atom = {req, false};
-	atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc_id);
+	atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
 	atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.active->fb_id);
 	atomic_add(&atom, plane_id, pprops->src_x, 0);
 	atomic_add(&atom, plane_id, pprops->src_y, 0);
@@ -324,14 +547,33 @@ static void win_apply_buffer(struct swa_window* base) {
 	atomic_add(&atom, plane_id, pprops->crtc_w, width);
 	atomic_add(&atom, plane_id, pprops->crtc_h, height);
 
-	union drm_connector_props* conn_props = &win->output->props.connector;
-	uint32_t conn_id = win->output->connector_id;
-	atomic_add(&atom, conn_id, conn_props->crtc_id, win->output->crtc_id);
+	union drm_connector_props* conn_props = &win->output->connector.props;
+	uint32_t conn_id = win->output->connector.id;
+	atomic_add(&atom, conn_id, conn_props->crtc_id, win->output->crtc.id);
 
-	union drm_crtc_props* crtc_props = &win->output->props.crtc;
-	uint32_t crtc_id = win->output->crtc_id;
+	union drm_crtc_props* crtc_props = &win->output->crtc.props;
+	uint32_t crtc_id = win->output->crtc.id;
 	atomic_add(&atom, crtc_id, crtc_props->mode_id, win->output->mode_id);
 	atomic_add(&atom, crtc_id, crtc_props->active, 1);
+
+	if(win->buffer.cursor.buffer.fb_id) {
+		uint32_t plane_id = win->output->cursor_plane.id;
+		union drm_plane_props* pprops = &win->output->cursor_plane.props;
+		uint64_t width = win->buffer.cursor.width;
+		uint64_t height = win->buffer.cursor.height;
+
+		atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
+		atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.cursor.buffer.fb_id);
+		atomic_add(&atom, plane_id, pprops->src_x, 0);
+		atomic_add(&atom, plane_id, pprops->src_y, 0);
+		atomic_add(&atom, plane_id, pprops->src_w, width << 16);
+		atomic_add(&atom, plane_id, pprops->src_h, height << 16);
+
+		atomic_add(&atom, plane_id, pprops->crtc_x, win->dpy->input.pointer.x);
+		atomic_add(&atom, plane_id, pprops->crtc_y, win->dpy->input.pointer.y);
+		atomic_add(&atom, plane_id, pprops->crtc_w, width);
+		atomic_add(&atom, plane_id, pprops->crtc_h, height);
+	}
 
 	uint32_t flags = (DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT);
 	if(win->output->needs_modeset) {
@@ -339,13 +581,16 @@ static void win_apply_buffer(struct swa_window* base) {
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
 	}
 
-	int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
-	if(ret != 0) {
-		dlg_error("drmModeAtomicCommit: %s", strerror(errno));
-	} else {
-		dlg_assert(!win->buffer.pending);
-		win->buffer.active->in_use = true;
-		win->buffer.pending = win->buffer.active;
+	if(!atom.failed) {
+		int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
+		if(ret != 0) {
+			dlg_error("drmModeAtomicCommit: %s", strerror(errno));
+		} else {
+			dlg_assert(!win->buffer.pending);
+			win->buffer.active->in_use = true;
+			win->buffer.pending = win->buffer.active;
+		}
+
 	}
 
 	win->buffer.active = NULL;
@@ -416,9 +661,7 @@ static void display_destroy(struct swa_display* base) {
 
 static bool display_dispatch(struct swa_display* base, bool block) {
 	struct drm_display* dpy = get_display_drm(base);
-	dlg_info("before dispatch");
 	pml_iterate(dpy->pml, block);
-	dlg_info("after dispatch");
 	return !dpy->quit;
 }
 
@@ -469,20 +712,42 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 #endif
 }
 
-// TODO
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return false;
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.keyboard.present) {
+		dlg_warn("display has no keyboard");
+		return false;
+	}
+
+	const unsigned n_bits = 8 * sizeof(dpy->input.keyboard.key_states);
+	if(key >= n_bits) {
+		dlg_warn("keycode not tracked (too high)");
+		return false;
+	}
+
+	unsigned idx = key / 64;
+	unsigned bit = key % 64;
+	return (dpy->input.keyboard.key_states[idx] & (1 << bit));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return NULL;
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.keyboard.keymap) {
+		dlg_warn("display has no keyboard");
+		return NULL;
+	}
+
+	return swa_xkb_key_name_keymap(dpy->input.keyboard.keymap, key);
 }
 
 static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return swa_keyboard_mod_none;
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.keyboard.state) {
+		dlg_warn("display has no keyboard");
+		return swa_keyboard_mod_none;
+	}
+
+	return swa_xkb_modifiers_state(dpy->input.keyboard.state);
 }
 
 static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
@@ -495,13 +760,34 @@ static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	return &dpy->input.keyboard.focus->base;
 }
 
-static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
-	// struct drm_display* dpy = get_display_drm(base);
-	return false;
+static bool display_mouse_button_pressed(struct swa_display* base,
+		enum swa_mouse_button button) {
+	struct drm_display* dpy = get_display_drm(base);
+	if(!dpy->input.pointer.present) {
+		dlg_warn("display has no mouse");
+		return NULL;
+	}
+
+	if(button >= 64) {
+		dlg_warn("mouse button code not tracked (too high)");
+		return false;
+	}
+
+	return (dpy->input.pointer.button_states & (1 << button));
 }
+
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
-	// struct drm_display* dpy = get_display_drm(base);
+	struct drm_display* dpy = get_display_drm(base);
+	dlg_assert(x && y);
+	if(!dpy->input.pointer.present) {
+		dlg_error("no pointer present");
+		return;
+	}
+
+	*x = (int) dpy->input.pointer.x;
+	*y = (int) dpy->input.pointer.y;
 }
+
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct drm_display* dpy = get_display_drm(base);
 	if(!dpy->input.pointer.present) {
@@ -526,90 +812,6 @@ static bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
-static bool init_dumb_buffer(struct drm_display* dpy,
-		struct drm_output* output, struct drm_dumb_buffer* buf) {
-	// The create ioctl uses the combination of depth and bpp to infer
-	// a format; 24/32 refers to DRM_FORMAT_XRGB8888 as defined in
-	// the drm_fourcc.h header. These arguments are the same as given
-	// to drmModeAddFB, which has since been superseded by
-	// drmModeAddFB2 as the latter takes an explicit format token.
-	//
-	// We only specify these arguments; the driver calculates the
-	// pitch (also known as stride or row length) and total buffer size
-	// for us, also returning us the GEM handle.
-	//
-	// For more information on pixel formats, a very useful reference
-	// is the Pixel Format Guide to the Galaxy, which covers most of the
-	// pixel formats used across the low-level graphics stack:
-	// https://afrantzis.com/pixel-format-guide/
-	struct drm_mode_create_dumb create = {
-		.width = output->mode.hdisplay,
-		.height = output->mode.vdisplay,
-		.bpp = 32,
-	};
-	int err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_CREATE_DUMB, &create);
-	if(err != 0) {
-		dlg_error("Failed to create %u x %u dumb buffer: %s",
-			create.width, create.height, strerror(errno));
-		goto err;
-	}
-
-	assert(create.handle > 0);
-	assert(create.pitch >= create.width * (create.bpp / 8));
-	assert(create.size >= create.pitch * create.height);
-
-	buf->gem_handle = create.handle;
-	buf->stride = create.pitch;
-
-	// In order to map the buffer, we call an ioctl specific to the buffer
-	// type, which returns us a fake offset to use with the mmap syscall.
-	// mmap itself then works as you expect.
-	//
-	// Note this means it is not possible to map arbitrary offsets of
-	// buffers without specifically requesting it from the kernel.
-	struct drm_mode_map_dumb map = {
-		.handle = buf->gem_handle,
-	};
-	err = drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_MAP_DUMB, &map);
-	if(err != 0) {
-		dlg_error("failed to get %u x %u mmap offset: %s",
-			create.width, create.height, strerror(errno));
-		goto err_dumb;
-	}
-
-	buf->data = mmap(NULL, create.size, PROT_WRITE, MAP_SHARED,
-		dpy->drm.fd, map.offset);
-	if(buf->data == MAP_FAILED) {
-		dlg_error("failed to mmap %u x %u dumb buffer: %s",
-			create.width, create.height, strerror(errno));
-		goto err_dumb;
-	}
-
-	buf->size = create.size;
-
-	// create framebuffer
-	// TODO: use modifier api
-	uint32_t pitches[4] = {buf->stride, 0, 0, 0};
-	uint32_t gem_handles[4] = {buf->gem_handle, 0, 0, 0};
-	uint32_t offsets[4] = {0, 0, 0, 0};
-	err = drmModeAddFB2(dpy->drm.fd, create.width, create.height,
-		DRM_FORMAT_XRGB8888, gem_handles, pitches,
-		offsets, &buf->fb_id, 0);
-
-	if(err != 0 || buf->fb_id == 0) {
-		dlg_error("AddFB2 failed: %s", strerror(errno));
-		goto err_dumb;
-	}
-
-	return true;
-
-err_dumb:;
-	struct drm_mode_destroy_dumb destroy = { .handle = create.handle };
-	drmIoctl(dpy->drm.fd, DRM_IOCTL_MODE_DESTROY_DUMB, &destroy);
-err:
-	return false;
-}
-
 static void win_send_draw(struct pml_defer* defer) {
 	struct drm_window* win = pml_defer_get_data(defer);
 	pml_defer_enable(defer, false);
@@ -626,7 +828,7 @@ static void page_flip_handler(int fd, unsigned seq,
 
 	struct drm_output* output = NULL;
 	for(unsigned i = 0u; i < dpy->drm.n_outputs; ++i) {
-		if(dpy->drm.outputs[i].crtc_id == crtc_id) {
+		if(dpy->drm.outputs[i].crtc.id == crtc_id) {
 			output = &dpy->drm.outputs[i];
 			break;
 		}
@@ -722,19 +924,42 @@ static bool output_init(struct drm_display* dpy,struct drm_output* output,
 	// by drmModeSetCrtc), but if it's already active then we can cheat
 	// by looking for something displaying the same framebuffer ID,
 	// since that information is duplicated.
-	drmModePlanePtr plane = NULL;
 	for(unsigned p = 0; p < dpy->drm.n_planes; p++) {
-		dlg_debug("[PLANE: %" PRIu32 "] CRTC ID %" PRIu32 ", FB %" PRIu32,
+		union drm_plane_props props = {0};
+		uint32_t plane_id = dpy->drm.planes[p]->plane_id;
+		if(!get_drm_plane_props(dpy->drm.fd, plane_id, &props)) {
+			continue;
+		}
+
+		uint64_t type;
+		if(!get_drm_prop(dpy->drm.fd, plane_id, props.type, &type)) {
+			dlg_error("Couldn't get type of plane");
+			continue;
+		}
+
+		dlg_debug("[PLANE: %" PRIu32 "] CRTC ID %" PRIu32 ", FB %" PRIu32 ", type %" PRIu64,
 			dpy->drm.planes[p]->plane_id,
 			dpy->drm.planes[p]->crtc_id,
-			dpy->drm.planes[p]->fb_id);
-		if(dpy->drm.planes[p]->crtc_id == crtc->crtc_id &&
-		    	dpy->drm.planes[p]->fb_id == crtc->buffer_id) {
-			plane = dpy->drm.planes[p];
-			break;
+			dpy->drm.planes[p]->fb_id,
+			type);
+		if(type == DRM_PLANE_TYPE_CURSOR && !output->cursor_plane.id) {
+				dlg_debug("  used as cursor plane");
+				output->cursor_plane.id = dpy->drm.planes[p]->plane_id;
+				output->cursor_plane.props = props;
+		} else if(type == DRM_PLANE_TYPE_PRIMARY && !output->primary_plane.id) {
+			if(dpy->drm.planes[p]->crtc_id == crtc->crtc_id &&
+					dpy->drm.planes[p]->fb_id == crtc->buffer_id) {
+				dlg_debug("  used as primary plane");
+				output->primary_plane.id = dpy->drm.planes[p]->plane_id;
+				output->primary_plane.props = props;
+			}
 		}
 	}
-	assert(plane);
+
+	if(!output->primary_plane.id) {
+		dlg_error("Couldn't find a primary plane");
+		goto out_crtc;
+	}
 
 	// DRM is supposed to provide a refresh interval, but often doesn't;
 	// calculate our own in milliHz for higher precision anyway.
@@ -742,19 +967,18 @@ static bool output_init(struct drm_display* dpy,struct drm_output* output,
 		   (crtc->mode.vtotal / 2)) / crtc->mode.vtotal;
 	dlg_debug("[CRTC:%" PRIu32 ", CONN %" PRIu32 ", PLANE %" PRIu32 "]: "
 		"active at %u x %u, %" PRIu64 " mHz",
-		crtc->crtc_id, connector->connector_id, plane->plane_id,
+		crtc->crtc_id, connector->connector_id, output->primary_plane.id,
 	    crtc->width, crtc->height, refresh);
 
-	output->primary_plane_id = plane->plane_id;
-	output->crtc_id = crtc->crtc_id;
-	output->connector_id = connector->connector_id;
+	output->crtc.id = crtc->crtc_id;
+	output->connector.id = connector->connector_id;
 	output->mode = crtc->mode;
 
 	int ret = drmModeCreatePropertyBlob(dpy->drm.fd, &output->mode,
 		sizeof(output->mode), &output->mode_id);
 	if(ret != 0) {
 		dlg_error("Unable to create property blob: %s", strerror(errno));
-		goto out_plane;
+		goto out_crtc;
 	}
 
 	// Just reuse the CRTC's existing mode: requires it to already be
@@ -764,23 +988,17 @@ static bool output_init(struct drm_display* dpy,struct drm_output* output,
 	// output->mode = crtc->mode;
 	// output->refresh_interval_nsec = millihz_to_nsec(refresh);
 	// output->mode_blob_id = mode_blob_create(device, &output->mode);
-	if(!get_drm_connector_props(dpy->drm.fd, output->connector_id,
-				&output->props.connector)) {
-		goto out_plane;
+	if(!get_drm_connector_props(dpy->drm.fd, output->connector.id,
+				&output->connector.props)) {
+		goto out_crtc;
 	}
-	if(!get_drm_plane_props(dpy->drm.fd, output->primary_plane_id,
-				&output->props.plane)) {
-		goto out_plane;
-	}
-	if(!get_drm_crtc_props(dpy->drm.fd, output->crtc_id,
-				&output->props.crtc)) {
-		goto out_plane;
+	if(!get_drm_crtc_props(dpy->drm.fd, output->crtc.id,
+				&output->crtc.props)) {
+		goto out_crtc;
 	}
 
 	success = true;
 
-out_plane:
-	// drmModeFreePlane(plane);
 out_crtc:
 	drmModeFreeCrtc(crtc);
 out_encoder:
@@ -919,8 +1137,18 @@ static bool init_drm(struct drm_display* dpy) {
 	return true;
 }
 
-// TODO: handle it for vulkan as well
-// we have to set the mode again somehow? see wlroots vk_display backend
+// TODO: handle drmSetMaster equivalent for vulkan as well
+// see vk_display wlroots branch. We have to re-set the saved
+// mode.
+// should we destroy the surface and use the
+// surface_created and surface_destroyed events?
+//
+// TODO: send focus and mouse cross events
+// TODO: restart drawing for vulkan as well
+// TODO: when not active we should probably fail buffer_apply
+//   and gl swap calls right? but we can't really do anything
+//   about vulkan. Maybe use surface created/destroyed to make
+//   sure it's not used? Or is it even a problem if used?
 static void sigusr_handler(struct pml_io* io, unsigned revents) {
 	struct drm_display* dpy = pml_io_get_data(io);
 	dlg_assert(pml_io_get_fd(io) == dpy->session.sigusrfd);
@@ -937,6 +1165,7 @@ static void sigusr_handler(struct pml_io* io, unsigned revents) {
 	}
 
 	if(dpy->session.active) {
+		dlg_trace("releasing vt");
 		dpy->session.active = false;
 
 		if(dpy->drm.fd) {
@@ -957,6 +1186,7 @@ static void sigusr_handler(struct pml_io* io, unsigned revents) {
 
 		ioctl(dpy->session.tty_fd, VT_RELDISP, 1);
 	} else {
+		dlg_trace("reacquiring vt");
 		ioctl(dpy->session.tty_fd, VT_RELDISP, VT_ACKACQ);
 
 		if(dpy->drm.fd) {
@@ -968,6 +1198,7 @@ static void sigusr_handler(struct pml_io* io, unsigned revents) {
 					continue;
 				}
 
+				pml_defer_enable(dpy->drm.outputs[i].window->defer_draw, true);
 				struct swa_window* base = &dpy->drm.outputs[i].window->base;
 				if(base->listener->focus) {
 					base->listener->focus(base, true);
@@ -1011,6 +1242,7 @@ static int vt_setup(struct drm_display* dpy) {
 			return -1;
 		}
 		snprintf(tty_dev, sizeof(tty_dev), "/dev/tty%d", tty_num);
+		dlg_trace("tty num %d from env $TTYNO", tty_num);
 	} else if(ttyname(STDIN_FILENO)) {
 		// Otherwise, if we're running from a VT ourselves, just reuse that
 		ttyname_r(STDIN_FILENO, tty_dev, sizeof(tty_dev));
@@ -1031,6 +1263,7 @@ static int vt_setup(struct drm_display* dpy) {
 		}
 		close(tty0);
 		sprintf(tty_dev, "/dev/tty%d", tty_num);
+		dlg_trace("free tty num %d from tty0", tty_num);
 	}
 
 	dpy->session.tty_fd = open(tty_dev, O_RDWR | O_NOCTTY);
@@ -1051,6 +1284,7 @@ static int vt_setup(struct drm_display* dpy) {
 		}
 
 		tty_num = minor(buf.st_rdev);
+		dlg_trace("tty num %d from stdin", tty_num);
 	}
 	assert(tty_num != 0);
 
@@ -1145,6 +1379,7 @@ static int vt_setup(struct drm_display* dpy) {
 	}
 
 	pml_io_set_data(dpy->session.sigtermio, dpy);
+	dpy->session.active = true;
 	return 0;
 }
 
@@ -1156,6 +1391,13 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->base.impl = &window_impl;
 	win->base.listener = settings->listener;
 	win->dpy = dpy;
+
+	if(!dpy->session.tty_fd) {
+		if(vt_setup(dpy) != 0) {
+			dlg_error("couldn't set up VT: %s", strerror(errno));
+			goto error;
+		}
+	}
 
 	win->surface_type = settings->surface;
 	if(win->surface_type == swa_surface_vk) {
@@ -1202,9 +1444,12 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		win->output = output;
 		win->output->needs_modeset = true;
 
+		unsigned width = output->mode.hdisplay;
+		unsigned height = output->mode.vdisplay;
 		if(win->surface_type == swa_surface_buffer) {
 			for(unsigned i = 0u; i < 3u; ++i) {
-				if(!init_dumb_buffer(dpy, output, &win->buffer.buffers[i])) {
+				if(!init_dumb_buffer(dpy, width, height,
+						DRM_FORMAT_XRGB8888, &win->buffer.buffers[i])) {
 					goto error;
 				}
 			}
@@ -1215,19 +1460,14 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 	}
 
-	if(!dpy->session.tty_fd) {
-		if(vt_setup(dpy) != 0) {
-			dlg_error("couldn't set up VT: %s", strerror(errno));
-			goto error;
-		}
-	}
+	win_set_cursor(&win->base, settings->cursor);
 
 	// TODO: also send initial size event
 	// queue initial events
 	win->defer_draw = pml_defer_new(dpy->pml, win_send_draw);
 	pml_defer_set_data(win->defer_draw, win);
 
-	// TODO: somewhat hacky
+	// TODO: hacky! fix for multi monitor support
 	if(dpy->input.pointer.present && !dpy->input.pointer.over) {
 		dpy->input.pointer.over = win;
 	}
@@ -1328,6 +1568,25 @@ static const struct libinput_interface libinput_impl = {
 	.close_restricted = libinput_close_restricted
 };
 
+static bool init_xkb(struct drm_display* dpy) {
+	struct xkb_rule_names rules = { 0 };
+	struct xkb_context* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+	dpy->input.keyboard.keymap = xkb_map_new_from_names(context, &rules,
+		XKB_KEYMAP_COMPILE_NO_FLAGS);
+	if(!dpy->input.keyboard.keymap) {
+		dlg_error("Failed to create xkb keymap: %s", strerror(errno));
+		return false;
+	}
+	dpy->input.keyboard.state = xkb_state_new(dpy->input.keyboard.keymap);
+	if(!dpy->input.keyboard.state) {
+		dlg_error("Failed to create xkb state: %s", strerror(errno));
+		return false;
+	}
+
+	xkb_context_unref(context);
+	return true;
+}
+
 static void handle_device_added(struct drm_display* dpy,
 		struct libinput_device* dev) {
 	int vendor = libinput_device_get_id_vendor(dev);
@@ -1336,7 +1595,11 @@ static void handle_device_added(struct drm_display* dpy,
 	dlg_info("Added libinput device %s [%d:%d]", name, vendor, product);
 
 	if(libinput_device_has_capability(dev, LIBINPUT_DEVICE_CAP_KEYBOARD)) {
-		dpy->input.keyboard.present = true;
+		if(!dpy->input.keyboard.keymap) {
+			if(init_xkb(dpy)) {
+				dpy->input.keyboard.present = true;
+			}
+		}
 	}
 	if(libinput_device_has_capability(dev, LIBINPUT_DEVICE_CAP_POINTER)) {
 		dpy->input.pointer.present = true;
@@ -1346,32 +1609,107 @@ static void handle_device_added(struct drm_display* dpy,
 	}
 }
 
+static bool check_binding(struct drm_display* dpy, xkb_keysym_t sym) {
+	// TODO: probably the wrong place for this.
+	// We should inhibit all input when not active...
+	if(!dpy->session.active) {
+		return false;
+	}
+
+	// switch vt
+	if(sym >= XKB_KEY_XF86Switch_VT_1 && sym <= XKB_KEY_XF86Switch_VT_12) {
+		int vt = 1 + sym - XKB_KEY_XF86Switch_VT_1;
+		dlg_info("requested terminal switch to vt %d", vt);
+		int err = ioctl(dpy->session.tty_fd, VT_ACTIVATE, vt);
+		dlg_assertm(!err, "ioctl: %s", strerror(errno));
+		return true;
+	}
+
+	return false;
+}
+
 static void handle_keyboard_key(struct drm_display* dpy,
 		struct libinput_event* event) {
 	struct libinput_event_keyboard* kbevent = libinput_event_get_keyboard_event(event);
 	uint32_t keycode = libinput_event_keyboard_get_key(kbevent);
 	enum libinput_key_state state = libinput_event_keyboard_get_key_state(kbevent);
-	bool pressed = false;
 
+	uint32_t xkb_keycode = keycode + 8;
+	const xkb_keysym_t* syms;
+	int nsyms = xkb_state_key_get_syms(dpy->input.keyboard.state,
+		xkb_keycode, &syms);
+
+	bool pressed = false;
 	switch(state) {
 	case LIBINPUT_KEY_STATE_RELEASED:
-		pressed = true;
+		pressed = false;
 		break;
 	case LIBINPUT_KEY_STATE_PRESSED:
-		pressed = false;
+		pressed = true;
 		break;
 	}
 
+	// check for internal keyboard binding handlers
+	// mainly for switching vts
+	if(pressed) {
+		for(int i = 0; i < nsyms; ++i) {
+			char buf[64];
+			xkb_keysym_get_name(syms[i], buf, 64);
+			dlg_info("keysym: %s", buf);
+
+			if(check_binding(dpy, syms[i])) {
+				return;
+			}
+		}
+	}
+
+	xkb_state_update_key(dpy->input.keyboard.state, xkb_keycode,
+		pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
+
 	struct drm_window* focus = dpy->input.keyboard.focus;
 	if(focus && focus->base.listener->key) {
+		char buf[8] = {0};
+		const char* utf8 = NULL;
+		if(nsyms && xkb_keysym_to_utf8(syms[0], buf, 8)) {
+			utf8 = buf;
+		}
+
 		struct swa_key_event ev = {
 			.keycode = keycode,
 			.pressed = pressed,
-			.utf8 = "",
+			.utf8 = utf8,
 			.repeated = false,
-			.modifiers = swa_keyboard_mod_none,
+			.modifiers = swa_xkb_modifiers_state(dpy->input.keyboard.state),
 		};
 		focus->base.listener->key(&focus->base, &ev);
+	}
+
+	// TODO: manually trigger repeat events via a timer
+}
+
+static void handle_pointer_motion(struct drm_display* dpy,
+		struct libinput_event* base_ev) {
+	struct libinput_event_pointer* ev =
+		libinput_event_get_pointer_event(base_ev);
+
+	// TODO: use unaccelerated versions?
+	// libinput_event_pointer_get_dx_unaccelerated(ev);
+	// libinput_event_pointer_get_dy_unaccelerated(ev);
+
+	double dx = libinput_event_pointer_get_dx(ev);
+	double dy = libinput_event_pointer_get_dy(ev);
+	dpy->input.pointer.x += dx;
+	dpy->input.pointer.y += dy;
+
+	struct drm_window* over = dpy->input.pointer.over;
+	if(over && over->base.listener->mouse_move) {
+		struct swa_mouse_move_event ev = {
+			.x = (int) dpy->input.pointer.x,
+			.y = (int) dpy->input.pointer.y,
+			.dx = (int) dx,
+			.dy = (int) dy,
+		};
+		over->base.listener->mouse_move(&over->base, &ev);
 	}
 }
 
@@ -1390,7 +1728,7 @@ static void handle_libinput_event(struct drm_display* dpy,
 		handle_keyboard_key(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_MOTION:
-		// handle_pointer_motion(event, libinput_dev);
+		handle_pointer_motion(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_MOTION_ABSOLUTE:
 		// handle_pointer_motion_abs(event, libinput_dev);

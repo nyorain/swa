@@ -534,7 +534,7 @@ void drm_vk_surface_frame(struct drm_vk_surface* surf) {
 	}
 
 	dlg_assert(surf->device && surf->frame.thread);
-	VkDevice device = swa_vk_drm_device ? swa_vk_drm_device : surf->device;
+	VkDevice device = surf->device;
 
 	PFN_vkRegisterDisplayEventEXT registerDisplayEventEXT =
 		(PFN_vkRegisterDisplayEventEXT)
@@ -565,7 +565,7 @@ void drm_vk_surface_frame(struct drm_vk_surface* surf) {
 	pthread_mutex_unlock(&surf->frame.mutex);
 }
 
-void drm_vk_surface_refresh(struct drm_vk_surface* surf) {
+bool drm_vk_surface_refresh(struct drm_vk_surface* surf) {
 	bool pending;
 	pthread_mutex_lock(&surf->frame.mutex);
 	pending = (bool)surf->frame.fence || (bool)surf->frame.next_fence;

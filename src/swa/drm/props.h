@@ -60,6 +60,7 @@ union drm_plane_props {
 bool get_drm_connector_props(int fd, uint32_t id, union drm_connector_props *out);
 bool get_drm_crtc_props(int fd, uint32_t id, union drm_crtc_props *out);
 bool get_drm_plane_props(int fd, uint32_t id, union drm_plane_props *out);
+bool get_drm_prop(int fd, uint32_t obj, uint32_t prop, uint64_t *ret);
 
 #ifdef __cplusplus
 }
