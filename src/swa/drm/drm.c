@@ -40,6 +40,11 @@
   #include "vulkan.h"
 #endif
 
+#ifdef SWA_WITH_GL
+  #include <swa/egl.h>
+  #include <gbm.h>
+#endif
+
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 
@@ -389,10 +394,17 @@ static void win_refresh(struct swa_window* base) {
 		dlg_error("window has vk surface but swa was built without vulkan");
 #endif
 	} else if(win->surface_type == swa_surface_gl) {
-		// TODO: implement
-		// when using gbm_surface, it can probably be handled comparably
-		// to the dumb buffer approach.
-		dlg_info("TODO: unimplemented");
+#ifdef SWA_WITH_GL
+		if(!win->gl.pending) {
+			if(win->base.listener->draw) {
+				pml_defer_enable(win->defer_draw, true);
+			}
+		} else {
+			win->redraw = true;
+		}
+#else
+		dlg_error("window has gl surface but swa was built without gl");
+#endif
 	} else {
 		dlg_warn("can't refresh window without surface");
 	}
@@ -457,13 +469,167 @@ static uint64_t win_get_vk_surface(struct swa_window* base) {
 }
 
 static bool win_gl_make_current(struct swa_window* base) {
-	dlg_error("TODO: not implemented");
+#ifdef SWA_WITH_GL
+	struct drm_window* win = get_window_drm(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+	return eglMakeCurrent(win->dpy->egl->display, win->gl.surface,
+		win->gl.surface, win->gl.context);
+#else
+	dlg_warn("swa was compiled without gl suport");
 	return false;
+#endif
+}
+
+static void free_fb(struct gbm_bo *bo, void *data) {
+	uint32_t id = (uintptr_t)data;
+	if(id) {
+		struct gbm_device *gbm = gbm_bo_get_device(bo);
+		drmModeRmFB(gbm_device_get_fd(gbm), id);
+	}
+}
+
+static uint32_t fb_for_bo(struct gbm_bo* bo, uint32_t drm_format) {
+	uint32_t id = (uintptr_t) gbm_bo_get_user_data(bo);
+	if(id) {
+		return id;
+	}
+
+	struct gbm_device* gbm = gbm_bo_get_device(bo);
+	int fd = gbm_device_get_fd(gbm);
+	uint32_t width = gbm_bo_get_width(bo);
+	uint32_t height = gbm_bo_get_height(bo);
+
+	uint32_t handles[4] = {0};
+	uint32_t strides[4] = {0};
+	uint32_t offsets[4] = {0};
+	for(int i = 0; i < gbm_bo_get_plane_count(bo); i++) {
+		handles[i] = gbm_bo_get_handle_for_plane(bo, i).u32;
+		strides[i] = gbm_bo_get_stride_for_plane(bo, i);
+		offsets[i] = gbm_bo_get_offset(bo, i);
+	}
+
+	int err = drmModeAddFB2(fd, width, height, drm_format, handles, strides,
+		offsets, &id, 0);
+	if(err) {
+		dlg_error("drmModeAddFB2: %s", strerror(errno));
+		return 0;
+	}
+
+	gbm_bo_set_user_data(bo, (void*)(uintptr_t)id, free_fb);
+	return id;
+}
+
+static bool pageflip(struct drm_window* win, uint32_t fb_id,
+		uint64_t width, uint64_t height) {
+	drmModeAtomicReq* req = drmModeAtomicAlloc();
+	struct atomic atom = {req, false};
+
+	uint32_t plane_id = win->output->primary_plane.id;
+	union drm_plane_props* pprops = &win->output->primary_plane.props;
+	atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
+	atomic_add(&atom, plane_id, pprops->fb_id, fb_id);
+	atomic_add(&atom, plane_id, pprops->src_x, 0);
+	atomic_add(&atom, plane_id, pprops->src_y, 0);
+	atomic_add(&atom, plane_id, pprops->src_w, width << 16);
+	atomic_add(&atom, plane_id, pprops->src_h, height << 16);
+
+	atomic_add(&atom, plane_id, pprops->crtc_x, 0);
+	atomic_add(&atom, plane_id, pprops->crtc_y, 0);
+	atomic_add(&atom, plane_id, pprops->crtc_w, width);
+	atomic_add(&atom, plane_id, pprops->crtc_h, height);
+
+	union drm_connector_props* conn_props = &win->output->connector.props;
+	uint32_t conn_id = win->output->connector.id;
+	atomic_add(&atom, conn_id, conn_props->crtc_id, win->output->crtc.id);
+
+	union drm_crtc_props* crtc_props = &win->output->crtc.props;
+	uint32_t crtc_id = win->output->crtc.id;
+	atomic_add(&atom, crtc_id, crtc_props->mode_id, win->output->mode_id);
+	atomic_add(&atom, crtc_id, crtc_props->active, 1);
+
+	if(win->surface_type == swa_surface_buffer && win->buffer.cursor.buffer.fb_id) {
+		uint32_t plane_id = win->output->cursor_plane.id;
+		union drm_plane_props* pprops = &win->output->cursor_plane.props;
+		uint64_t width = win->buffer.cursor.width;
+		uint64_t height = win->buffer.cursor.height;
+
+		atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
+		atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.cursor.buffer.fb_id);
+		atomic_add(&atom, plane_id, pprops->src_x, 0);
+		atomic_add(&atom, plane_id, pprops->src_y, 0);
+		atomic_add(&atom, plane_id, pprops->src_w, width << 16);
+		atomic_add(&atom, plane_id, pprops->src_h, height << 16);
+
+		atomic_add(&atom, plane_id, pprops->crtc_x, win->dpy->input.pointer.x);
+		atomic_add(&atom, plane_id, pprops->crtc_y, win->dpy->input.pointer.y);
+		atomic_add(&atom, plane_id, pprops->crtc_w, width);
+		atomic_add(&atom, plane_id, pprops->crtc_h, height);
+	}
+
+	uint32_t flags = (DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT);
+	if(win->output->needs_modeset) {
+		win->output->needs_modeset = false;
+		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
+	}
+
+	if(atom.failed) {
+		return false;
+	}
+
+	int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
+	if(ret != 0) {
+		dlg_error("drmModeAtomicCommit: %s", strerror(errno));
+		return false;
+	}
+
+	drmModeAtomicFree(req);
+	return true;
 }
 
 static bool win_gl_swap_buffers(struct swa_window* base) {
-	dlg_error("TODO: not implemented");
+#ifdef SWA_WITH_GL
+	struct drm_window* win = get_window_drm(base);
+	if(win->surface_type != swa_surface_gl) {
+		dlg_error("Window doesn't have gl surface");
+		return false;
+	}
+
+	dlg_assert(win->dpy->egl && win->dpy->egl->display);
+	dlg_assert(win->gl.context && win->gl.surface);
+
+	// This happens when swap_buffers is called before the previous
+	// page flipping completes.
+	// TODO: we probably want to allow this. Not sure if supported by
+	// gbm_surface though. But this requires some
+	// modifications, we e.g. have to track a list/array of pending
+	// buffers.
+	if(win->gl.pending) {
+		dlg_error("Can't swap buffers before buffers were flipped");
+		return false;
+	}
+
+	if(!eglSwapBuffers(win->dpy->egl->display, win->gl.surface)) {
+		dlg_error("eglSwapBuffers: %d", eglGetError());
+		return false;
+	}
+
+	win->gl.pending = gbm_surface_lock_front_buffer(win->gl.gbm_surface);
+
+	uint32_t fb_id = fb_for_bo(win->gl.pending, DRM_FORMAT_ARGB8888);
+	uint64_t width = win->output->mode.hdisplay;
+	uint64_t height = win->output->mode.vdisplay;
+	return pageflip(win, fb_id, width, height);
+
+#else
+	dlg_warn("swa was compiled without gl suport");
 	return false;
+#endif
 }
 
 static bool win_gl_set_swap_interval(struct swa_window* base, int interval) {
@@ -528,74 +694,14 @@ static void win_apply_buffer(struct swa_window* base) {
 		return;
 	}
 
-	drmModeAtomicReq* req = drmModeAtomicAlloc();
-	uint32_t plane_id = win->output->primary_plane.id;
-	union drm_plane_props* pprops = &win->output->primary_plane.props;
-
 	uint64_t width = win->output->mode.hdisplay;
 	uint64_t height = win->output->mode.vdisplay;
-
-	struct atomic atom = {req, false};
-	atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
-	atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.active->fb_id);
-	atomic_add(&atom, plane_id, pprops->src_x, 0);
-	atomic_add(&atom, plane_id, pprops->src_y, 0);
-	atomic_add(&atom, plane_id, pprops->src_w, width << 16);
-	atomic_add(&atom, plane_id, pprops->src_h, height << 16);
-
-	atomic_add(&atom, plane_id, pprops->crtc_x, 0);
-	atomic_add(&atom, plane_id, pprops->crtc_y, 0);
-	atomic_add(&atom, plane_id, pprops->crtc_w, width);
-	atomic_add(&atom, plane_id, pprops->crtc_h, height);
-
-	union drm_connector_props* conn_props = &win->output->connector.props;
-	uint32_t conn_id = win->output->connector.id;
-	atomic_add(&atom, conn_id, conn_props->crtc_id, win->output->crtc.id);
-
-	union drm_crtc_props* crtc_props = &win->output->crtc.props;
-	uint32_t crtc_id = win->output->crtc.id;
-	atomic_add(&atom, crtc_id, crtc_props->mode_id, win->output->mode_id);
-	atomic_add(&atom, crtc_id, crtc_props->active, 1);
-
-	if(win->buffer.cursor.buffer.fb_id) {
-		uint32_t plane_id = win->output->cursor_plane.id;
-		union drm_plane_props* pprops = &win->output->cursor_plane.props;
-		uint64_t width = win->buffer.cursor.width;
-		uint64_t height = win->buffer.cursor.height;
-
-		atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
-		atomic_add(&atom, plane_id, pprops->fb_id, win->buffer.cursor.buffer.fb_id);
-		atomic_add(&atom, plane_id, pprops->src_x, 0);
-		atomic_add(&atom, plane_id, pprops->src_y, 0);
-		atomic_add(&atom, plane_id, pprops->src_w, width << 16);
-		atomic_add(&atom, plane_id, pprops->src_h, height << 16);
-
-		atomic_add(&atom, plane_id, pprops->crtc_x, win->dpy->input.pointer.x);
-		atomic_add(&atom, plane_id, pprops->crtc_y, win->dpy->input.pointer.y);
-		atomic_add(&atom, plane_id, pprops->crtc_w, width);
-		atomic_add(&atom, plane_id, pprops->crtc_h, height);
+	if(pageflip(win, win->buffer.active->fb_id, width, height)) {
+		dlg_assert(!win->buffer.pending);
+		win->buffer.active->in_use = true;
+		win->buffer.pending = win->buffer.active;
 	}
-
-	uint32_t flags = (DRM_MODE_ATOMIC_NONBLOCK | DRM_MODE_PAGE_FLIP_EVENT);
-	if(win->output->needs_modeset) {
-		win->output->needs_modeset = false;
-		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
-	}
-
-	if(!atom.failed) {
-		int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
-		if(ret != 0) {
-			dlg_error("drmModeAtomicCommit: %s", strerror(errno));
-		} else {
-			dlg_assert(!win->buffer.pending);
-			win->buffer.active->in_use = true;
-			win->buffer.pending = win->buffer.active;
-		}
-
-	}
-
 	win->buffer.active = NULL;
-	drmModeAtomicFree(req);
 }
 
 static const struct swa_window_interface window_impl = {
@@ -678,11 +784,10 @@ static void display_wakeup(struct swa_display* base) {
 }
 
 static enum swa_display_cap display_capabilities(struct swa_display* base) {
-	// TODO: implement gl support
 	struct drm_display* dpy = get_display_drm(base);
 	enum swa_display_cap caps =
 #ifdef SWA_WITH_GL
-		// swa_display_cap_gl |
+		swa_display_cap_gl |
 #endif
 #ifdef SWA_WITH_VK
 		swa_display_cap_vk |
@@ -840,20 +945,32 @@ static void page_flip_handler(int fd, unsigned seq,
 		return;
 	}
 
+	// This might happen if the window is destroyed in between i guess
 	if(!output->window) {
 		dlg_debug("[CRTC:%u] atomic completion for windowless output", crtc_id);
 		return;
 	}
 
 	// manage buffers
-	dlg_assert(output->window->buffer.pending);
-	dlg_assert(output->window->buffer.pending->in_use);
-	if(output->window->buffer.last) {
-		dlg_assert(output->window->buffer.last->in_use);
-		output->window->buffer.last->in_use = false;
+	struct drm_window* win = output->window;
+	if(win->surface_type == swa_surface_buffer) {
+		dlg_assert(win->buffer.pending);
+		dlg_assert(win->buffer.pending->in_use);
+		if(win->buffer.last) {
+			dlg_assert(win->buffer.last->in_use);
+			win->buffer.last->in_use = false;
+		}
+		win->buffer.last = win->buffer.pending;
+		win->buffer.pending = NULL;
+	} else if(win->surface_type == swa_surface_gl) {
+		dlg_assert(win->gl.pending);
+		if(win->gl.front) {
+			gbm_surface_release_buffer(win->gl.gbm_surface, win->gl.front);
+		}
+
+		output->window->gl.front = output->window->gl.pending;
+		output->window->gl.pending = NULL;
 	}
-	output->window->buffer.last = output->window->buffer.pending;
-	output->window->buffer.pending = NULL;
 
 	// redraw, if requested
 	if(output->window->redraw) {
@@ -1420,6 +1537,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		goto error;
 #endif // SWA_WITH_VK
 	} else {
+		// TODO: fail creation (or fix it, if possible) if there is
+		// an active vulkan window (for the gpu we use?). They might
+		// interfer with each other.
+
 		if(!dpy->drm.fd) {
 			if(!init_drm(dpy)) {
 				goto error;
@@ -1455,9 +1576,49 @@ static struct swa_window* display_create_window(struct swa_display* base,
 				}
 			}
 		} else if(win->surface_type == swa_surface_gl) {
-			// TODO
-			dlg_error("TODO: Not implemented");
+#ifdef SWA_WITH_GL
+			if(!dpy->gbm_device) {
+				errno = 0;
+				dpy->gbm_device = gbm_create_device(dpy->drm.fd);
+				if(!dpy->gbm_device) {
+					dlg_error("Failed to create gbm device: %s", strerror(errno));
+					goto error;
+				}
+			}
+
+			if(!dpy->egl) {
+				dpy->egl = swa_egl_display_create(EGL_PLATFORM_GBM_KHR,
+					dpy->gbm_device);
+				if(!dpy->egl) {
+					goto error;
+				}
+			}
+
+			uint32_t format = GBM_FORMAT_ARGB8888;
+			uint32_t flags = GBM_BO_USE_RENDERING | GBM_BO_USE_SCANOUT;
+			win->gl.gbm_surface = gbm_surface_create(dpy->gbm_device,
+				width, height, format, flags);
+			if(!win->gl.gbm_surface) {
+				dlg_error("Failed to create gbm surface: %s", strerror(errno));
+				goto error;
+			}
+
+			const struct swa_gl_surface_settings* gls = &settings->surface_settings.gl;
+			bool alpha = settings->transparent;
+			EGLContext* ctx = &win->gl.context;
+			EGLConfig egl_config;
+			if(!swa_egl_init_context(dpy->egl, gls, alpha, &egl_config, ctx)) {
+				goto error;
+			}
+
+			if(!(win->gl.surface = swa_egl_create_surface(dpy->egl,
+					win->gl.gbm_surface, egl_config, gls->srgb))) {
+				goto error;
+			}
+#else // SWA_WITH_GL
+			dlg_error("swa was built without GL");
 			goto error;
+#endif
 		}
 	}
 

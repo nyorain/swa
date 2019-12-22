@@ -1,12 +1,12 @@
 #pragma once
 
-// TODO: implement gl/egl using gbm_surface
-//  make that definitely optional since it's a mesa thing
+// TODO: add extra compile time flag for gl support in drm backend?
+//   something like SWA_WITH_GBM?
 // TODO: full input support
 //  - support for touch
 //  - support for keyboard key repeat
 // TODO: make cursor movement independent from pageflips
-// TODO: cursor plane support for vulkan
+// TODO: cursor plane support for vulkan and gl
 // TODO: multi output support
 // TODO: support other session types (e.g. logind)
 // TODO: for direct session, use fork and ipc (see wlroots)?
@@ -33,6 +33,9 @@ struct drm_vk_surface;
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+typedef void* EGLSurface;
+typedef void* EGLContext;
 
 struct drm_display {
 	struct swa_display base;
@@ -95,6 +98,9 @@ struct drm_display {
 	} input;
 
 	struct swa_xcursor_theme* cursor_theme;
+
+	struct gbm_device* gbm_device;
+	struct swa_egl_display* egl;
 };
 
 struct drm_output {
@@ -154,6 +160,20 @@ struct drm_buffer_surface {
 	} cursor;
 };
 
+struct drm_gl_surface {
+	EGLSurface surface;
+	EGLContext context;
+	struct gbm_surface* gbm_surface;
+
+	// The currently shown buffer.
+	// We have to track it since we unlock it (i.e. make it available for
+	// rendering again) when page flipping completes.
+	struct gbm_bo* front;
+
+	// The buffer that was rendered (and queued for pageflip) last.
+	struct gbm_bo* pending;
+};
+
 struct drm_window {
 	struct swa_window base;
 	struct drm_display* dpy;
@@ -166,6 +186,7 @@ struct drm_window {
 	union {
 		struct drm_buffer_surface buffer;
 		struct drm_vk_surface* vk;
+		struct drm_gl_surface gl;
 	};
 };
 

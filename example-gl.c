@@ -12,14 +12,18 @@ static bool run = true;
 static bool premult = false;
 
 static void window_draw(struct swa_window* win) {
+	dlg_info("draw");
+
 	float alpha = 0.1;
 	float mult = premult ? alpha : 1.f;
 	glClearColor(mult * 0.8, mult * 0.6, mult * 0.3, alpha);
 	glClear(GL_COLOR_BUFFER_BIT);
-	swa_window_gl_swap_buffers(win);
+	if(!swa_window_gl_swap_buffers(win)) {
+		dlg_error("swa_window_gl_swap_buffers failed");
+	}
 
 	// for continous redrawing:
-	// swa_window_refresh(win);
+	swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -34,10 +38,20 @@ static void window_mouse_button(struct swa_window* win,
 	}
 }
 
+static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
+	dlg_trace("key: %d %d, utf8: %s", ev->keycode, ev->pressed,
+		ev->utf8 ? ev->utf8 : "<null>");
+	if(ev->pressed && ev->keycode == swa_key_escape) {
+		dlg_info("Escape pressed, exiting");
+		run = false;
+	}
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.mouse_button = window_mouse_button,
 	.close = window_close,
+	.key = window_key,
 };
 
 int main() {
@@ -59,9 +73,10 @@ int main() {
 	settings.surface = swa_surface_gl;
 	settings.surface_settings.gl.major = 4;
 	settings.surface_settings.gl.minor = 0;
-	settings.surface_settings.gl.srgb = true;
-	settings.surface_settings.gl.debug = true;
-	settings.surface_settings.gl.compatibility = false;
+	settings.surface_settings.gl.api = swa_api_gl;
+	// settings.surface_settings.gl.srgb = true;
+	// settings.surface_settings.gl.debug = true;
+	// settings.surface_settings.gl.compatibility = false;
 	struct swa_window* win = swa_display_create_window(dpy, &settings);
 	if(!win) {
 		dlg_fatal("Failed to create window");

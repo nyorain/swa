@@ -4,6 +4,9 @@
 #include <dlg/dlg.h>
 #include <string.h>
 
+// TODO: we could use/try eglGetDisplay as a fallback when
+// eglGetPlatformDisplay is not available (ancient implementations)
+
 struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
 	struct swa_egl_display* dpy = calloc(1, sizeof(*dpy));
 
@@ -37,7 +40,7 @@ struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
 
 	dpy->display = dpy->api.getPlatformDisplay(platform, ndpy, NULL);
 	if(!dpy->display) {
-		dlg_error("Failed to get egl display");
+		dlg_error("Failed to get egl display: %s", swa_egl_last_error_msg());
 		goto err;
 	}
 
@@ -90,6 +93,12 @@ bool swa_egl_find_ext(const char* exts, const char* ext) {
 bool swa_egl_init_context(struct swa_egl_display* egl,
 		const struct swa_gl_surface_settings* gls, bool transparent,
 		EGLConfig* cfg, EGLContext* ctx) {
+	dlg_assert(egl);
+	dlg_assert(cfg);
+	dlg_assert(ctx);
+	dlg_assert(gls);
+	dlg_assert(egl->display);
+
 	EGLint api_bit;
 	EGLint api;
 	if(gls->api == swa_api_gl) {
@@ -141,38 +150,67 @@ bool swa_egl_init_context(struct swa_egl_display* egl,
 	EGLint count;
 	EGLBoolean ret = eglChooseConfig(edpy, ca, cfg, 1, &count);
 	if(ret == EGL_FALSE || count == 0) {
-		dlg_error("eglChooseConfig returned false");
+		dlg_error("Couldn't find a config using eglChooseConfig");
 		return false;
+	}
+
+	unsigned flags = 0u;
+	unsigned mask = 0u;
+	if(gls->api == swa_api_gl) {
+		if(egl->major <= 1 && egl->minor < 4) {
+			dlg_error("Creating an OpenGL EGL context requires EGL 1.4");
+			return false;
+		}
+
+		api = EGL_OPENGL_API;
+		api_bit = EGL_OPENGL_BIT;
+
+		if(gls->forward_compatible) {
+			flags |= EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE_BIT_KHR;
+		}
+		if(gls->compatibility) {
+			mask = EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT_KHR;
+		} else {
+			mask = EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT_KHR;
+		}
+	}
+
+	if(gls->debug) {
+		flags |= EGL_CONTEXT_OPENGL_DEBUG_BIT_KHR;
 	}
 
 	// create context
 	const char* exts = eglQueryString(edpy, EGL_EXTENSIONS);
 	EGLint ctxa[32];
+	unsigned ci = 0u;
 	if(swa_egl_find_ext(exts, "EGL_KHR_create_context")) {
-		ctxa[0] = EGL_CONTEXT_MAJOR_VERSION;
-		ctxa[1] = gls->major;
-		ctxa[2] = EGL_CONTEXT_MINOR_VERSION;
-		ctxa[3] = gls->minor;
-		ctxa[4] = EGL_CONTEXT_OPENGL_DEBUG;
-		ctxa[5] = gls->debug;
-		ctxa[6] = EGL_CONTEXT_OPENGL_FORWARD_COMPATIBLE;
-		ctxa[7] = gls->forward_compatible;
-		ctxa[8] = EGL_CONTEXT_OPENGL_PROFILE_MASK;
-		ctxa[9] = gls->compatibility ?
-			EGL_CONTEXT_OPENGL_COMPATIBILITY_PROFILE_BIT :
-			EGL_CONTEXT_OPENGL_CORE_PROFILE_BIT;
-		ctxa[10] = EGL_NONE;
+		ctxa[ci++] = EGL_CONTEXT_MAJOR_VERSION;
+		ctxa[ci++] = gls->major;
+		ctxa[ci++] = EGL_CONTEXT_MINOR_VERSION;
+		ctxa[ci++] = gls->minor;
+
+		if(mask) {
+			ctxa[ci++] = EGL_CONTEXT_OPENGL_PROFILE_MASK_KHR;
+			ctxa[ci++] = mask;
+		}
+
+		if(flags) {
+			ctxa[ci++] = EGL_CONTEXT_FLAGS_KHR;
+			ctxa[ci++] = flags;
+		}
+
+		ctxa[ci++] = EGL_NONE;
 	} else {
 		dlg_warn("EGL_KHR_create_context not available, "
 			"can't respect gl context creation settings");
-		ctxa[0] = EGL_CONTEXT_CLIENT_VERSION;
-		ctxa[1] = gls->major;
-		ctxa[2] = EGL_NONE;
+		ctxa[ci++] = EGL_CONTEXT_CLIENT_VERSION;
+		ctxa[ci++] = gls->major;
+		ctxa[ci++] = EGL_NONE;
 	}
 
 	*ctx = eglCreateContext(edpy, *cfg, NULL, ctxa);
 	if(!*ctx) {
-		dlg_error("eglCreateContext failed");
+		dlg_error("eglCreateContext: %s", swa_egl_last_error_msg());
 		return false;
 	}
 
@@ -199,9 +237,34 @@ EGLSurface swa_egl_create_surface(struct swa_egl_display* egl,
 	EGLSurface surface = egl->api.createPlatformWindowSurface(
 		egl->display, config, handle, sa);
 	if(!surface) {
-		dlg_error("eglCreatePlatformWindowSurface failed");
+		dlg_error("eglCreatePlatformWindowSurface: %s", swa_egl_last_error_msg());
 		return NULL;
 	}
 
 	return surface;
+}
+
+const char* swa_egl_error_msg(int code) {
+	switch(code) {
+		case EGL_BAD_ACCESS: return "EGL_BAD_ACCESS";
+		case EGL_SUCCESS: return "EGL_SUCCESS";
+		case EGL_NOT_INITIALIZED: return "EGL_NOT_INITIALIZED";
+		case EGL_BAD_ALLOC: return "EGL_BAD_ALLOC";
+		case EGL_BAD_ATTRIBUTE: return "EGL_BAD_ATTRIBUTE";
+		case EGL_BAD_CONFIG: return "EGL_BAD_CONFIG";
+		case EGL_BAD_CONTEXT: return "EGL_BAD_CONTEXT";
+		case EGL_BAD_CURRENT_SURFACE: return "EGL_BAD_CURRENT_SURFACE";
+		case EGL_BAD_DISPLAY: return "EGL_BAD_DISPLAY";
+		case EGL_BAD_MATCH: return "EGL_BAD_MATCH";
+		case EGL_BAD_NATIVE_PIXMAP: return "EGL_BAD_NATIVE_PIXMAP";
+		case EGL_BAD_NATIVE_WINDOW: return "EGL_BAD_NATIVE_WINDOW";
+		case EGL_BAD_PARAMETER: return "EGL_BAD_PARAMETER";
+		case EGL_BAD_SURFACE: return "EGL_BAD_SURFACE";
+		case EGL_CONTEXT_LOST: return "EGL_CONTEXT_LOST";
+		default: return "<unknown egl error>";
+	}
+}
+
+const char* swa_egl_last_error_msg(void) {
+	return swa_egl_error_msg(eglGetError());
 }
