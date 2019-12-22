@@ -572,9 +572,11 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	memcpy(enable_exts, dpy_exts, sizeof(*dpy_exts) * n_dpy_exts);
 	uint32_t enable_extc = n_dpy_exts;
 
+	bool use_layers = false;
 	const char* req = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 	bool has_debug = has_extension(avail_exts, avail_extc, req);
-	if(has_debug) {
+	bool use_debug = has_debug && use_layers;
+	if(use_debug) {
 		enable_exts[enable_extc++] = req;
 	}
 
@@ -600,8 +602,11 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 	instance_info.pApplicationInfo = &application_info;
 	instance_info.enabledExtensionCount = enable_extc;
 	instance_info.ppEnabledExtensionNames = enable_exts;
-	instance_info.enabledLayerCount = sizeof(layers) / sizeof(layers[0]);
-	instance_info.ppEnabledLayerNames = layers;
+
+	if(use_layers) {
+		instance_info.enabledLayerCount = sizeof(layers) / sizeof(layers[0]);
+		instance_info.ppEnabledLayerNames = layers;
+	}
 
 	res = vkCreateInstance(&instance_info, NULL, &state->instance);
 	free(enable_exts);
@@ -612,7 +617,7 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 
 	// debug callback
 	VkDebugUtilsMessengerEXT messenger = VK_NULL_HANDLE;
-	if(has_debug) {
+	if(use_debug) {
 		state->api.createDebugUtilsMessengerEXT =
 			(PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(
 					state->instance, "vkCreateDebugUtilsMessengerEXT");
@@ -672,7 +677,7 @@ bool init_renderer(struct state* state) {
 
 	res = vkEnumerateDeviceExtensionProperties(state->phdev, NULL,
 		&phdev_extc, NULL);
-	if ((res != VK_SUCCESS) || (phdev_extc == 0)) {
+	if((res != VK_SUCCESS) || (phdev_extc == 0)) {
 		vk_error(res, "Could not enumerate device extensions (1)");
 		return false;
 	}
@@ -680,12 +685,13 @@ bool init_renderer(struct state* state) {
 	phdev_exts = malloc(sizeof(*phdev_exts) * phdev_extc);
 	res = vkEnumerateDeviceExtensionProperties(state->phdev, NULL,
 		&phdev_extc, phdev_exts);
-	if (res != VK_SUCCESS) {
+	if(res != VK_SUCCESS) {
+		free(phdev_exts);
 		vk_error(res, "Could not enumerate device extensions (2)");
 		return false;
 	}
 
-	for (size_t j = 0; j < phdev_extc; ++j) {
+	for(size_t j = 0; j < phdev_extc; ++j) {
 		dlg_debug("Vulkan Device extensions %s", phdev_exts[j].extensionName);
 	}
 
@@ -694,6 +700,16 @@ bool init_renderer(struct state* state) {
 		dlg_error("Device has no support for swapchain extension");
 		free(phdev_exts);
 		return false;
+	}
+
+	const char* exts[2];
+
+	unsigned n_exts = 1u;
+	exts[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
+
+	dev_ext = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
+	if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
+		exts[n_exts++] = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
 	}
 
 	free(phdev_exts);
@@ -755,8 +771,8 @@ bool init_renderer(struct state* state) {
 	dev_info.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
 	dev_info.queueCreateInfoCount = n_qis;
 	dev_info.pQueueCreateInfos = qis;
-	dev_info.enabledExtensionCount = 1;
-	dev_info.ppEnabledExtensionNames = &dev_ext;
+	dev_info.enabledExtensionCount = n_exts;
+	dev_info.ppEnabledExtensionNames = exts;
 
 	VkDevice dev;
 	res = vkCreateDevice(state->phdev, &dev_info, NULL, &dev);

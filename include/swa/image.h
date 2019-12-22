@@ -15,10 +15,11 @@ extern "C" {
 // This means the representation is independent from the endianess
 // of the system, but extracting the components from a pixel word using
 // logical C operations requires knowledge about the endianess.
-// This definition is consistent with OpenGL and Vulkan (when not
-// using packed formats) but different to SDL (uses native type),
-// cairo (uses native type) and wayland (uses little endian)
-// format definitions. You can use swa_image_format_toggle_byte_word
+// This definition is consistent with OpenGL & Vulkan (when not
+// using packed formats) and android but different to SDL (uses native type),
+// cairo (uses native type) and drm/wayland (uses little endian,
+// i.e. reversed byte order) format definitions.
+// You can use swa_image_format_toggle_byte_word
 // to get the equivalent format for another semantic.
 // https://github.com/afrantzis/pixel-format-guide is a useful tool
 // to understand pixel formats, swa is comparable to the non-packed
@@ -63,7 +64,9 @@ SWA_API void swa_write_pixel(uint8_t* data, enum swa_image_format, struct swa_pi
 // Expects `src` to be a valid image.
 // Expects `dst` to already have enough data allocated and width, height,
 // stride and format set which will be used for conversion.
-// Width and height of the both images must match.
+// Width and height of the both images must match. If you want to e.g.
+// copy an image into a larger image you can achieve this by offsetting
+// data and modifying the stride.
 SWA_API void swa_convert_image(const struct swa_image* src,
 	const struct swa_image* dst);
 

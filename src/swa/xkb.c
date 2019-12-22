@@ -71,7 +71,7 @@ void swa_xkb_finish(struct swa_xkb_context* xkb) {
 	memset(xkb, 0, sizeof(*xkb));
 }
 
-enum swa_keyboard_mod swa_xkb_modifiers(struct swa_xkb_context* xkb) {
+enum swa_keyboard_mod swa_xkb_modifiers_state(struct xkb_state* state) {
 	struct {
 		const char* xkb;
 		enum swa_keyboard_mod modifier;
@@ -87,7 +87,7 @@ enum swa_keyboard_mod swa_xkb_modifiers(struct swa_xkb_context* xkb) {
 	enum swa_keyboard_mod ret = swa_keyboard_mod_none;
 	const unsigned count = sizeof(map) / sizeof(map[0]);
 	for(unsigned i = 0u; i < count; ++i) {
-		bool active = xkb_state_mod_name_is_active(xkb->state,
+		bool active = xkb_state_mod_name_is_active(state,
 			map[i].xkb, XKB_STATE_MODS_EFFECTIVE);
 		if(active) {
 			ret |= map[i].modifier;
@@ -95,6 +95,10 @@ enum swa_keyboard_mod swa_xkb_modifiers(struct swa_xkb_context* xkb) {
 	}
 
 	return ret;
+}
+
+enum swa_keyboard_mod swa_xkb_modifiers(struct swa_xkb_context* xkb) {
+	return swa_xkb_modifiers_state(xkb->state);
 }
 
 void swa_xkb_key(struct swa_xkb_context* xkb, uint8_t keycode,
@@ -124,10 +128,10 @@ void swa_xkb_key(struct swa_xkb_context* xkb, uint8_t keycode,
 	}
 }
 
-const char* swa_xkb_key_name(struct swa_xkb_context* xkb, enum swa_key key) {
+const char* swa_xkb_key_name_keymap(struct xkb_keymap* keymap, enum swa_key key) {
 	uint8_t code = (uint8_t)key - 8;
 	// temporary dummy state, nothing pressed
-	struct xkb_state* state = xkb_state_new(xkb->keymap);
+	struct xkb_state* state = xkb_state_new(keymap);
 	if(!state) {
 		dlg_error("xkb_state_new failed");
 		return NULL;
@@ -138,6 +142,10 @@ const char* swa_xkb_key_name(struct swa_xkb_context* xkb, enum swa_key key) {
 	xkb_state_key_get_utf8(state, code, name, count + 1);
 	xkb_state_unref(state);
 	return name;
+}
+
+const char* swa_xkb_key_name(struct swa_xkb_context* xkb, enum swa_key key) {
+	return swa_xkb_key_name_keymap(xkb->keymap, key);
 }
 
 void swa_xkb_update_state(struct swa_xkb_context* xkb, int mods[static 3],
