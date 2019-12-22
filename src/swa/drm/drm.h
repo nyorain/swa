@@ -1,20 +1,23 @@
 #pragma once
 
-// TODO: make dependency on drm stuff optional?
-//  research whether they all of them are available everywhere or a mesa thing
 // TODO: implement gl/egl using gbm_surface
 //  make that definitely optional since it's a mesa thing
 // TODO: full input support
-//  - support for pointer movement
 //  - support for touch
-//  - support for keyboard utf via keymap
 //  - support for keyboard key repeat
-//  - support for keyboard modifiers
-// TODO: cursor plane support
-//  has to be treated completely differently for vulkan
+// TODO: make cursor movement independent from pageflips
+// TODO: cursor plane support for vulkan
 // TODO: multi output support
+// TODO: support other session types (e.g. logind)
+// TODO: for direct session, use fork and ipc (see wlroots)?
+//  so the program doesn't have to run as root.
+//  Might be a bad idea to fork like this in a library though...
+//  Low prio, we should rather focus on logind as best solution
 // TODO: check for DRM_CAP_DUMB_BUFFER, otherwise don't return
 //  buffer surface cap
+// TODO: make dependency on drm stuff optional?
+//  research whether they all of them are available everywhere or a mesa thing.
+//  In that case we could at least offer a vkdisplay backend
 
 #include "props.h"
 #include <swa/impl.h>

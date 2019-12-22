@@ -34,6 +34,7 @@
 #include <drm.h>
 #include <drm_fourcc.h>
 #include <drm_mode.h>
+#include <linux/input-event-codes.h>
 
 #ifdef SWA_WITH_VK
   #include "vulkan.h"
@@ -1663,6 +1664,14 @@ static void handle_keyboard_key(struct drm_display* dpy,
 		}
 	}
 
+	unsigned idx = keycode / 64;
+	unsigned bit = keycode % 64;
+	if(pressed) {
+		dpy->input.keyboard.key_states[idx] |= (uint64_t)(1 << bit);
+	} else {
+		dpy->input.keyboard.key_states[idx] &= ~(uint64_t)(1 << bit);
+	}
+
 	xkb_state_update_key(dpy->input.keyboard.state, xkb_keycode,
 		pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
 
@@ -1692,10 +1701,6 @@ static void handle_pointer_motion(struct drm_display* dpy,
 	struct libinput_event_pointer* ev =
 		libinput_event_get_pointer_event(base_ev);
 
-	// TODO: use unaccelerated versions?
-	// libinput_event_pointer_get_dx_unaccelerated(ev);
-	// libinput_event_pointer_get_dy_unaccelerated(ev);
-
 	double dx = libinput_event_pointer_get_dx(ev);
 	double dy = libinput_event_pointer_get_dy(ev);
 	dpy->input.pointer.x += dx;
@@ -1710,6 +1715,83 @@ static void handle_pointer_motion(struct drm_display* dpy,
 			.dy = (int) dy,
 		};
 		over->base.listener->mouse_move(&over->base, &ev);
+	}
+}
+
+static void handle_pointer_motion_abs(struct drm_display* dpy,
+		struct libinput_event* base_ev) {
+	struct libinput_event_pointer* ev =
+		libinput_event_get_pointer_event(base_ev);
+	double x = libinput_event_pointer_get_absolute_x_transformed(ev, 1);
+	double y = libinput_event_pointer_get_absolute_y_transformed(ev, 1);
+
+	double dx = x - dpy->input.pointer.x;
+	double dy = y - dpy->input.pointer.y;
+	dpy->input.pointer.x = x;
+	dpy->input.pointer.y = y;
+
+	struct drm_window* over = dpy->input.pointer.over;
+	if(over && over->base.listener->mouse_move) {
+		struct swa_mouse_move_event ev = {
+			.x = (int) dpy->input.pointer.x,
+			.y = (int) dpy->input.pointer.y,
+			.dx = (int) dx,
+			.dy = (int) dy,
+		};
+		over->base.listener->mouse_move(&over->base, &ev);
+	}
+}
+
+static enum swa_mouse_button linux_to_button(uint32_t buttoncode) {
+	switch(buttoncode) {
+		case BTN_LEFT: return swa_mouse_button_left;
+		case BTN_RIGHT: return swa_mouse_button_right;
+		case BTN_MIDDLE: return swa_mouse_button_middle;
+		case BTN_SIDE: return swa_mouse_button_custom1;
+		case BTN_EXTRA: return swa_mouse_button_custom2;
+		case BTN_FORWARD: return swa_mouse_button_custom3;
+		case BTN_BACK: return swa_mouse_button_custom4;
+		case BTN_TASK: return swa_mouse_button_custom5;
+		default: return swa_mouse_button_none;
+	}
+}
+
+static void handle_pointer_button(struct drm_display* dpy,
+		struct libinput_event* base_ev) {
+	struct libinput_event_pointer* ev =
+		libinput_event_get_pointer_event(base_ev);
+
+	bool pressed = false;
+	switch(libinput_event_pointer_get_button_state(ev)) {
+	case LIBINPUT_BUTTON_STATE_PRESSED:
+		pressed = true;
+		break;
+	case LIBINPUT_BUTTON_STATE_RELEASED:
+		pressed = false;
+		break;
+	default:
+		dlg_error("Invalid libinput pointer button state");
+		return;
+	}
+
+	struct drm_window* over = dpy->input.pointer.over;
+	uint32_t linux_button = libinput_event_pointer_get_button(ev);
+	enum swa_mouse_button button = linux_to_button(linux_button);
+
+	if(pressed) {
+		dpy->input.pointer.button_states |= (uint64_t)(1 << button);
+	} else {
+		dpy->input.pointer.button_states &= ~(uint64_t)(1 << button);
+	}
+
+	if(over && over->base.listener->mouse_button) {
+		struct swa_mouse_button_event ev = {
+			.x = (int) dpy->input.pointer.x,
+			.y = (int) dpy->input.pointer.y,
+			.button = button,
+			.pressed = pressed,
+		};
+		over->base.listener->mouse_button(&over->base, &ev);
 	}
 }
 
@@ -1731,10 +1813,10 @@ static void handle_libinput_event(struct drm_display* dpy,
 		handle_pointer_motion(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_MOTION_ABSOLUTE:
-		// handle_pointer_motion_abs(event, libinput_dev);
+		handle_pointer_motion_abs(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_BUTTON:
-		// handle_pointer_button(event, libinput_dev);
+		handle_pointer_button(dpy, event);
 		break;
 	case LIBINPUT_EVENT_POINTER_AXIS:
 		// handle_pointer_axis(event, libinput_dev);
