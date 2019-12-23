@@ -208,16 +208,6 @@ static void atomic_add(struct atomic* atom, uint32_t id, uint32_t prop, uint64_t
 
 
 // window
-static bool win_pageflip_pending(struct drm_window* win) {
-	switch(win->surface_type) {
-		case swa_surface_gl:
-			return win->gl.pending;
-		case swa_surface_buffer:
-			return win->buffer.pending;
-		default: return false;
-	}
-}
-
 static void win_destroy(struct swa_window* base) {
 	struct drm_window* win = get_window_drm(base);
 	if(win->output) win->output->window = NULL;
@@ -366,6 +356,9 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		dlg_assertlm(dlg_level_warn, !err, "%d (%s)", err, strerror(errno));
 		h = err ? 64 : h;
 
+		// TODO: we don't really need a drm framebuffer for this
+		// buffer. Maybe add an additional function that doesn't
+		// create one?
 		if(!init_dumb_buffer(win->dpy, w, h, DRM_FORMAT_ARGB8888,
 				&win->cursor.buffer.buffer)) {
 			dlg_warn("failed to create cursor dumb buffer");
@@ -395,51 +388,7 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 			};
 			swa_convert_image(&cursor_image, &dst);
 		}
-	}
 
-	/*
-	// If the initial modeset wasn't done yet, we will set the cursor
-	// when we do it. Otherwise, we can apply it immediately.
-	if(!win->output->needs_modeset) {
-		drmModeAtomicReq* req = drmModeAtomicAlloc();
-		struct atomic atom = {req, false};
-
-		uint32_t plane_id = win->output->cursor_plane.id;
-		union drm_plane_props* pprops = &win->output->cursor_plane.props;
-		uint64_t width = win->cursor.buffer.width;
-		uint64_t height = win->cursor.buffer.height;
-		uint32_t crtc_id = valid ? win->output->crtc.id : 0;
-
-		atomic_add(&atom, plane_id, pprops->crtc_id, crtc_id);
-		atomic_add(&atom, plane_id, pprops->fb_id, win->cursor.buffer.buffer.fb_id);
-
-		if(valid) {
-			atomic_add(&atom, plane_id, pprops->src_x, 0);
-			atomic_add(&atom, plane_id, pprops->src_y, 0);
-			atomic_add(&atom, plane_id, pprops->src_w, width << 16);
-			atomic_add(&atom, plane_id, pprops->src_h, height << 16);
-
-			int32_t x = win->dpy->input.pointer.x - win->cursor.buffer.hx;
-			int32_t y = win->dpy->input.pointer.y - win->cursor.buffer.hy;
-			atomic_add(&atom, plane_id, pprops->crtc_x, x);
-			atomic_add(&atom, plane_id, pprops->crtc_y, y);
-			atomic_add(&atom, plane_id, pprops->crtc_w, width);
-			atomic_add(&atom, plane_id, pprops->crtc_h, height);
-		}
-
-		if(!atom.failed) {
-			uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
-			int ret = drmModeAtomicCommit(win->dpy->drm.fd, req, flags, win->dpy);
-			if(ret != 0) {
-				dlg_error("drmModeAtomicCommit: %s", strerror(errno));
-			}
-
-			drmModeAtomicFree(req);
-		}
-	}
-	*/
-
-	if(valid) {
 		int err = drmModeSetCursor(win->dpy->drm.fd, win->output->crtc.id,
 			win->cursor.buffer.buffer.gem_handle,
 			win->cursor.buffer.width, win->cursor.buffer.height);
@@ -629,30 +578,6 @@ static bool pageflip(struct drm_window* win, uint32_t fb_id,
 	if(win->output->needs_modeset) {
 		win->output->needs_modeset = false;
 		flags |= DRM_MODE_ATOMIC_ALLOW_MODESET;
-
-		/*
-		uint32_t cfb_id = win->cursor.buffer.buffer.fb_id;
-		if(cfb_id) {
-			uint32_t plane_id = win->output->cursor_plane.id;
-			union drm_plane_props* pprops = &win->output->cursor_plane.props;
-			uint64_t width = win->cursor.buffer.width;
-			uint64_t height = win->cursor.buffer.height;
-
-			atomic_add(&atom, plane_id, pprops->crtc_id, win->output->crtc.id);
-			atomic_add(&atom, plane_id, pprops->fb_id, cfb_id);
-			atomic_add(&atom, plane_id, pprops->src_x, 0);
-			atomic_add(&atom, plane_id, pprops->src_y, 0);
-			atomic_add(&atom, plane_id, pprops->src_w, width << 16);
-			atomic_add(&atom, plane_id, pprops->src_h, height << 16);
-
-			int32_t x = win->dpy->input.pointer.x - win->cursor.buffer.hx;
-			int32_t y = win->dpy->input.pointer.y - win->cursor.buffer.hy;
-			atomic_add(&atom, plane_id, pprops->crtc_x, x);
-			atomic_add(&atom, plane_id, pprops->crtc_y, y);
-			atomic_add(&atom, plane_id, pprops->crtc_w, width);
-			atomic_add(&atom, plane_id, pprops->crtc_h, height);
-		}
-		*/
 	}
 
 	if(atom.failed) {
@@ -1949,38 +1874,6 @@ static void update_cursor_position(struct drm_display* dpy) {
 	int32_t y = win->dpy->input.pointer.y - win->cursor.buffer.hy;
 	int err = drmModeMoveCursor(dpy->drm.fd, output->crtc.id, x, y);
 	dlg_assertm(!err, "drmModeMoveCursor: %s", strerror(errno));
-
-	/*
-	if(output->needs_modeset) {
-		return;
-	}
-
-	if(win_pageflip_pending(win)) {
-		win->cursor.buffer.update = true;
-		return;
-	}
-
-	drmModeAtomicReq* req = drmModeAtomicAlloc();
-	struct atomic atom = {req, false};
-
-	uint32_t plane_id = output->cursor_plane.id;
-	union drm_plane_props* pprops = &output->cursor_plane.props;
-
-	int32_t x = win->dpy->input.pointer.x - win->cursor.buffer.hx;
-	int32_t y = win->dpy->input.pointer.y - win->cursor.buffer.hy;
-	atomic_add(&atom, plane_id, pprops->crtc_x, x);
-	atomic_add(&atom, plane_id, pprops->crtc_y, y);
-
-	if(!atom.failed) {
-		uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
-		int ret = drmModeAtomicCommit(dpy->drm.fd, req, flags, dpy);
-		if(ret != 0) {
-			dlg_error("drmModeAtomicCommit: %s", strerror(errno));
-		}
-	}
-
-	drmModeAtomicFree(req);
-	*/
 }
 
 static void handle_pointer_motion(struct drm_display* dpy,
