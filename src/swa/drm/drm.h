@@ -1,13 +1,12 @@
 #pragma once
 
-// TODO: add extra compile time flag for gl support in drm backend?
-//   something like SWA_WITH_GBM?
 // TODO: full input support
 //  - support for touch
 //  - support for keyboard key repeat (see wayland)
-// TODO: make cursor movement independent from pageflips
 // TODO: support for animated cursors (see wayland)
 // TODO: cursor plane support for vulkan
+// TODO: add extra compile time flag for gl support in drm backend?
+//   something like SWA_WITH_GBM?
 // TODO: multi output support
 //   track on which output the cursor currently sits
 //   send focus and mouse cross events
@@ -174,7 +173,10 @@ struct drm_gl_surface {
 struct drm_buffer_cursor {
 	unsigned width;
 	unsigned height;
+	int hx;
+	int hy;
 	struct drm_dumb_buffer buffer;
+	bool update;
 };
 
 struct drm_window {
