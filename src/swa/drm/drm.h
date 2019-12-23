@@ -4,10 +4,14 @@
 //   something like SWA_WITH_GBM?
 // TODO: full input support
 //  - support for touch
-//  - support for keyboard key repeat
+//  - support for keyboard key repeat (see wayland)
 // TODO: make cursor movement independent from pageflips
-// TODO: cursor plane support for vulkan and gl
+// TODO: support for animated cursors (see wayland)
+// TODO: cursor plane support for vulkan
 // TODO: multi output support
+//   track on which output the cursor currently sits
+//   send focus and mouse cross events
+//   probably makes sense to couple focus and mouse_over state
 // TODO: support other session types (e.g. logind)
 // TODO: for direct session, use fork and ipc (see wlroots)?
 //  so the program doesn't have to run as root.

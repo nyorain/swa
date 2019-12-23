@@ -378,6 +378,9 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 		};
 		swa_convert_image(&cursor_image, &dst);
 	}
+
+	// TODO: apply it. If needs_modeset for output is true,
+	// defer it until the first draw is done.
 }
 
 static void win_refresh(struct swa_window* base) {
@@ -1882,6 +1885,8 @@ static void handle_pointer_motion(struct drm_display* dpy,
 		};
 		over->base.listener->mouse_move(&over->base, &ev);
 	}
+
+	// TODO: move pointer plane
 }
 
 static void handle_pointer_motion_abs(struct drm_display* dpy,
@@ -1906,6 +1911,8 @@ static void handle_pointer_motion_abs(struct drm_display* dpy,
 		};
 		over->base.listener->mouse_move(&over->base, &ev);
 	}
+
+	// TODO: move pointer plane
 }
 
 static enum swa_mouse_button linux_to_button(uint32_t buttoncode) {
