@@ -17,6 +17,7 @@
 #include <stdio.h>
 #include <sys/mman.h>
 #include <poll.h>
+#include <linux/input-event-codes.h>
 
 #ifdef SWA_WITH_VK
   #include <vulkan/vulkan.h>
@@ -1305,7 +1306,8 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 	if(dpy->keyboard) caps |= swa_display_cap_keyboard;
 	if(dpy->pointer) caps |= swa_display_cap_mouse;
 	if(dpy->touch) caps |= swa_display_cap_touch;
-	if(dpy->data_dev) caps |= swa_display_cap_dnd | swa_display_cap_clipboard;
+	// TODO: implement dnd
+	if(dpy->data_dev) caps |= /*swa_display_cap_dnd |*/ swa_display_cap_clipboard;
 	// NOTE: we don't know this for sure. But it's at least worth
 	// a shot in this case. And the final result should always be determined
 	// using win_is_client_decorated anyways
@@ -1330,6 +1332,11 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	struct swa_display_wl* dpy = get_display_wl(base);
+	if(!dpy->keyboard) {
+		dlg_warn("display has no keyboard");
+		return false;
+	}
+
 	const unsigned n_bits = 8 * sizeof(dpy->key_states);
 	if(key >= n_bits) {
 		dlg_warn("keycode not tracked (too high)");
@@ -2005,16 +2012,16 @@ static void pointer_motion(void *data, struct wl_pointer *wl_pointer,
 	dpy->mouse_y = y;
 }
 
-static enum swa_mouse_button convert_button(uint32_t buttoncode) {
+static enum swa_mouse_button linux_to_button(uint32_t buttoncode) {
 	switch(buttoncode) {
-		case 0x110: return swa_mouse_button_left;
-		case 0x111: return swa_mouse_button_right;
-		case 0x112: return swa_mouse_button_middle;
-		case 0x113: return swa_mouse_button_custom1;
-		case 0x114: return swa_mouse_button_custom2;
-		case 0x115: return swa_mouse_button_custom3;
-		case 0x116: return swa_mouse_button_custom4;
-		case 0x117: return swa_mouse_button_custom5;
+		case BTN_LEFT: return swa_mouse_button_left;
+		case BTN_RIGHT: return swa_mouse_button_right;
+		case BTN_MIDDLE: return swa_mouse_button_middle;
+		case BTN_SIDE: return swa_mouse_button_custom1;
+		case BTN_EXTRA: return swa_mouse_button_custom2;
+		case BTN_FORWARD: return swa_mouse_button_custom3;
+		case BTN_BACK: return swa_mouse_button_custom4;
+		case BTN_TASK: return swa_mouse_button_custom5;
 		default: return swa_mouse_button_none;
 	}
 }
@@ -2027,7 +2034,7 @@ static void pointer_button(void* data, struct wl_pointer* wl_pointer,
 		return;
 	}
 
-	enum swa_mouse_button button = convert_button(wl_button);
+	enum swa_mouse_button button = linux_to_button(wl_button);
 	if(button == swa_mouse_button_none) {
 		dlg_info("Unknown wayland mouse button: %d", button);
 		return;

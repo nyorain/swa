@@ -5,13 +5,16 @@
 #include <string.h>
 
 #ifdef SWA_WITH_WL
- #include <swa/wayland.h>
+  #include <swa/wayland.h>
 #endif
 #ifdef SWA_WITH_WIN
- #include <swa/winapi.h>
+  #include <swa/winapi.h>
 #endif
 #ifdef SWA_WITH_X11
- #include <swa/x11.h>
+  #include <swa/x11.h>
+#endif
+#ifdef SWA_WITH_KMS
+  #include <swa/kms/kms.h>
 #endif
 
 typedef struct swa_display* (*display_constructor)(const char*);
@@ -23,14 +26,17 @@ struct {
 #ifdef SWA_WITH_WL
 	{"wayland", swa_display_wl_create},
 #endif
-#ifdef SWA_WITH_WL
+#ifdef SWA_WITH_X11
 	{"x11", swa_display_x11_create},
 #endif
 #ifdef SWA_WITH_WIN
 	{"winapi", swa_display_win_create},
 #endif
 #ifdef SWA_WITH_ANDROID
-	{"android", swa_display_win_create},
+	{"android", swa_display_android_create},
+#endif
+#ifdef SWA_WITH_KMS
+	{"kms", swa_display_kms_create},
 #endif
 };
 
@@ -213,12 +219,16 @@ void swa_convert_image(const struct swa_image* src, const struct swa_image* dst)
 	const uint8_t* src_data = src->data;
 	uint8_t* dst_data = dst->data;
 	for(unsigned y = 0u; y < src->height; ++y) {
+		const uint8_t* src_row = src_data;
+		uint8_t* dst_row = dst_data;
 		for(unsigned x = 0u; x < src->width; ++x) {
 			struct swa_pixel pixel = swa_read_pixel(src_data, src->format);
-			swa_write_pixel(dst_data, src->format, pixel);
+			swa_write_pixel(dst_data, dst->format, pixel);
 			src_data += src_size;
 			dst_data += dst_size;
 		}
+		src_data = src_row + src->stride;
+		dst_data = dst_row + dst->stride;
 	}
 }
 

@@ -40,12 +40,13 @@ source_root = '/'.join(meson.source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
+dep_threads = dependency('threads', required: false)
 dep_dlg = dependency('dlg',
 	fallback: ['dlg', 'dlg_dep'],
 	static: true
 )
 
-swa_deps = [dep_dlg]
+swa_deps = [dep_dlg, dep_threads]
 swa_args = []
 conf_data = configuration_data()
 conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
@@ -64,6 +65,7 @@ if build_machine.system() == 'windows'
 	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', false, description: 'Compiled with X11 support')
 	conf_data.set('SWA_WITH_WIN', true, description: 'Compiled with Winapi support')
+	conf_data.set('SWA_WITH_KMS', false, description: 'Compiled with KMS/DRM support')
 
 	if shared
 		swa_args += '-DSWA_API=__declspec(dllexport)'
@@ -180,6 +182,27 @@ else
 	conf_data.set('SWA_WITH_WL', true, description: 'Compiled with Wayland support')
 	conf_data.set('SWA_WITH_X11', true, description: 'Compiled with X11 support')
 	conf_data.set('SWA_WITH_WIN', false, description: 'Compiled with Winapi support')
+	conf_data.set('SWA_WITH_KMS', true, description: 'Compiled with KMS/DRM support')
+
+	# drm backend
+	dep_drm = dependency('libdrm', version: '>=2.4.95')
+	dep_gbm = dependency('gbm', version: '>=17.1.0')
+	dep_libinput = dependency('libinput', version: '>=1.9.0')
+	dep_udev = dependency('libudev')
+
+	swa_deps += [
+		dep_drm,
+		dep_gbm,
+		dep_libinput,
+		dep_udev,
+	]
+
+	swa_src += files(
+		'src/swa/kms/kms.c',
+		'src/swa/kms/props.c',
+		'src/swa/kms/xcursor.c',
+		'src/swa/kms/vulkan.c',
+	)
 endif
 
 subdir('include/swa')

@@ -23,6 +23,7 @@ static void window_draw(struct swa_window* win) {
 
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 
+	/*
 	unsigned fmt_size = swa_image_format_size(img.format);
 	for(unsigned y = 0u; y < img.height; ++y) {
 		for(unsigned x = 0u; x < img.width; ++x) {
@@ -37,18 +38,32 @@ static void window_draw(struct swa_window* win) {
 			swa_write_pixel(&img.data[off], img.format, pixel);
 		}
 	}
+	*/
+
+	unsigned size = img.height * img.stride;
+	memset(img.data, 255, size);
 
 	swa_window_apply_buffer(win);
-	// swa_window_refresh(win);
+	swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
 	run = false;
 }
 
+static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
+	dlg_trace("key: %d %d, utf8: %s", ev->keycode, ev->pressed,
+		ev->utf8 ? ev->utf8 : "<null>");
+	if(ev->pressed && ev->keycode == swa_key_escape) {
+		dlg_info("Escape pressed, exiting");
+		run = false;
+	}
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.close = window_close,
+	.key = window_key,
 };
 
 int main() {
@@ -58,8 +73,9 @@ int main() {
 		return EXIT_FAILURE;
 	}
 
+	// optional: set cursor
 	struct swa_cursor cursor;
-	cursor.type = swa_cursor_load;
+	cursor.type = swa_cursor_left_pointer;
 
 	struct swa_window_settings settings;
 	swa_window_settings_default(&settings);
@@ -79,12 +95,14 @@ int main() {
 	// timespec_get(&last_redraw, TIME_UTC);
 
 	while(run) {
-		dlg_info("dispatching");
 		if(!swa_display_dispatch(dpy, true)) {
 			break;
 		}
 	}
 
+	dlg_trace("Destroying swa window...");
 	swa_window_destroy(win);
+	dlg_trace("Destroying swa display...");
 	swa_display_destroy(dpy);
+	dlg_trace("Exiting cleanly");
 }

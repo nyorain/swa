@@ -35,6 +35,8 @@ bool swa_egl_init_context(struct swa_egl_display* egl,
 	EGLConfig* cfg, EGLContext* ctx);
 EGLSurface swa_egl_create_surface(struct swa_egl_display* egl,
 	void* handle, EGLConfig config, bool srgb);
+const char* swa_egl_error_msg(int code);
+const char* swa_egl_last_error_msg(void);
 
 #ifdef __cplusplus
 }

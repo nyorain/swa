@@ -9,6 +9,9 @@
 // Built with x11 backend?
 #mesondefine SWA_WITH_X11
 
+// Built with drm/kms backend?
+#mesondefine SWA_WITH_KMS
+
 // Built with vulkan support?
 #mesondefine SWA_WITH_VK
 
