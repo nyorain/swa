@@ -1017,10 +1017,11 @@ static void handle_event(struct swa_display_x11* dpy,
 
 		break;
 	} case 0u: {
-		int code = ((xcb_generic_error_t*)ev)->error_code;
+		xcb_generic_error_t* eev = (xcb_generic_error_t*) ev;
+		int code = eev->error_code;
 		char buf[256];
 		XGetErrorText(dpy->display, code, buf, sizeof(buf));
-		dlg_error("retrieved x11 error code:: %s (%d)", buf, code);
+		dlg_error("retrieved x11 error code: %s (%d)", buf, code);
 		break;
 	} default:
 		break;

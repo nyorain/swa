@@ -241,6 +241,10 @@ if dep_vulkan.found()
 	executable('example-vulkan',
 		'example-vulkan.c',
 		dependencies: [swa_dep, dep_dlg, dep_vulkan])
+
+	executable('example-vulkan-loop',
+		'example-vulkan-loop.c',
+		dependencies: [swa_dep, dep_dlg, dep_vulkan])
 endif
 
 executable('example-gl',

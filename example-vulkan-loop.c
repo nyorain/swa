@@ -6,10 +6,15 @@
 #include <time.h>
 #include <signal.h>
 
+// TODO: handle surface lost
+
 struct render_buffer {
 	VkCommandBuffer cb;
 	VkImageView iv;
 	VkFramebuffer fb;
+
+	// TODO: use
+	// VkFence fence;
 };
 
 struct state {
@@ -25,6 +30,8 @@ struct state {
 	VkRenderPass rp;
 	VkSemaphore acquire_sem;
 	VkSemaphore render_sem;
+
+	VkFence fence;
 
 	unsigned n_bufs;
 	struct render_buffer* bufs;
@@ -59,92 +66,6 @@ static void cleanup(struct state* state);
 static bool run = true;
 // struct timespec last_redraw;
 
-static void window_draw(struct swa_window* win) {
-	struct state* state = swa_window_get_userdata(win);
-	dlg_info("Redrawing");
-	VkResult res;
-
-	if(!state->swapchain) {
-		dlg_warn("No swapchain!");
-		return;
-	}
-
-	// struct timespec now;
-	// timespec_get(&now, TIME_UTC);
-	// float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
-	// ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
-	// dlg_info("Time between redraws: %f", ms);
-	// last_redraw = now;
-
-	// TODO: use per-buffer fences making sure the previous
-	// rendering into this buffer finished
-	vkDeviceWaitIdle(state->device);
-
-	// acquire image
-	uint32_t id;
-	res = vkAcquireNextImageKHR(state->device, state->swapchain,
-		UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
-	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
-			dlg_warn("Got out of date swapchain (acquire)");
-			return;
-		}
-
-		vk_error(res, "vkAcquireNextImageKHR");
-		run = false;
-		return;
-	}
-
-	// submit render commands
-	VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-
-	VkSubmitInfo si = {0};
-	si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-	si.pCommandBuffers = &state->bufs[id].cb;
-	si.commandBufferCount = 1u;
-	si.waitSemaphoreCount = 1u;
-	si.pWaitSemaphores = &state->acquire_sem;
-	si.pWaitDstStageMask = &stage;
-	si.signalSemaphoreCount = 1u;
-	si.pSignalSemaphores = &state->render_sem;
-
-	res = vkQueueSubmit(state->qs.gfx, 1, &si, VK_NULL_HANDLE);
-	if(res != VK_SUCCESS) {
-		vk_error(res, "vkQueueSubmit");
-		run = false;
-		return;
-	}
-
-	swa_window_surface_frame(win);
-
-	// present
-	VkPresentInfoKHR present_info = {0};
-	present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
-	present_info.swapchainCount = 1;
-	present_info.pSwapchains = &state->swapchain;
-	present_info.pImageIndices = &id;
-	present_info.waitSemaphoreCount = 1;
-	present_info.pWaitSemaphores = &state->render_sem;
-
-	res = vkQueuePresentKHR(state->qs.present, &present_info);
-	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
-			dlg_warn("Got out of date swapchain (acquire)");
-			return;
-		}
-
-		vk_error(res, "vkQueuePresentKHR");
-		run = false;
-		return;
-	}
-
-	swa_window_refresh(win);
-}
-
-static void window_close(struct swa_window* win) {
-	run = false;
-}
-
 static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	struct state* state = swa_window_get_userdata(win);
 	dlg_info("resized to %d %d", w, h);
@@ -157,7 +78,7 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	} else {
 		// make sure all previous rendering has finished since we will
 		// destroy rendering resources
-		vkDeviceWaitIdle(state->device);
+		// vkDeviceWaitIdle(state->device);
 		destroy_render_buffers(state);
 	}
 
@@ -203,6 +124,94 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	}
 }
 
+static void window_draw(struct swa_window* win) {
+	struct state* state = swa_window_get_userdata(win);
+	dlg_info("Redrawing");
+	VkResult res;
+
+	if(!state->swapchain) {
+		dlg_warn("No swapchain!");
+		return;
+	}
+
+	// struct timespec now;
+	// timespec_get(&now, TIME_UTC);
+	// float ms = (now.tv_nsec - last_redraw.tv_nsec) / (1000.f * 1000.f);
+	// ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
+	// dlg_info("Time between redraws: %f", ms);
+	// last_redraw = now;
+
+	// TODO: use per-buffer fences making sure the previous
+	// rendering into this buffer finished
+	// vkDeviceWaitIdle(state->device);
+
+	// acquire image
+	uint32_t id;
+	while(true) {
+		res = vkAcquireNextImageKHR(state->device, state->swapchain,
+			UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
+		if(res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
+			break;
+		} else if(res == VK_ERROR_OUT_OF_DATE_KHR) {
+			// TODO! don't pass dummy sizes
+			dlg_warn("Got out of date swapchain (acquire)");
+			window_resize(win, 0, 0);
+		} else {
+			vk_error(res, "vkAcquireNextImageKHR");
+			run = false;
+			return;
+		}
+	}
+
+	// submit render commands
+	VkPipelineStageFlags stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+	VkSubmitInfo si = {0};
+	si.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	si.pCommandBuffers = &state->bufs[id].cb;
+	si.commandBufferCount = 1u;
+	si.waitSemaphoreCount = 1u;
+	si.pWaitSemaphores = &state->acquire_sem;
+	si.pWaitDstStageMask = &stage;
+	si.signalSemaphoreCount = 1u;
+	si.pSignalSemaphores = &state->render_sem;
+
+	res = vkQueueSubmit(state->qs.gfx, 1, &si, state->fence);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "vkQueueSubmit");
+		run = false;
+		return;
+	}
+
+	vkWaitForFences(state->device, 1, &state->fence, true, UINT64_MAX);
+	vkResetFences(state->device, 1, &state->fence);
+
+	// present
+	VkPresentInfoKHR present_info = {0};
+	present_info.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+	present_info.swapchainCount = 1;
+	present_info.pSwapchains = &state->swapchain;
+	present_info.pImageIndices = &id;
+	present_info.waitSemaphoreCount = 1;
+	present_info.pWaitSemaphores = &state->render_sem;
+
+	res = vkQueuePresentKHR(state->qs.present, &present_info);
+	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+		if(res == VK_ERROR_OUT_OF_DATE_KHR /* || res == VK_SUBOPTIMAL_KHR*/) {
+			dlg_warn("Got out of date swapchain (present)");
+			return;
+		}
+
+		vk_error(res, "vkQueuePresentKHR");
+		run = false;
+		return;
+	}
+}
+
+static void window_close(struct swa_window* win) {
+	run = false;
+}
+
 static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
 	if(ev->pressed && ev->keycode == swa_key_escape) {
 		dlg_info("Escape pressed, exiting");
@@ -211,7 +220,7 @@ static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
 }
 
 static const struct swa_window_listener window_listener = {
-	.draw = window_draw,
+	// .draw = window_draw,
 	.close = window_close,
 	.resize = window_resize,
 	.key = window_key,
@@ -294,9 +303,11 @@ int main() {
 
 	// main loop
 	while(run) {
-		if(!swa_display_dispatch(dpy, true)) {
+		if(!swa_display_dispatch(dpy, false)) {
 			break;
 		}
+
+		window_draw(win);
 	}
 
 cleanup_win:
@@ -588,7 +599,7 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 
 	// TODO: layers seem to crash when using VkDisplayKHR api (used by
 	// swa kms backend).
-	bool use_layers = false;
+	bool use_layers = true;
 	const char* req = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 	bool has_debug = has_extension(avail_exts, avail_extc, req);
 	bool use_debug = has_debug && use_layers;
@@ -700,8 +711,6 @@ static bool init_swapchain(struct state* state, unsigned width, unsigned height)
 				break;
 			} else if (present_modes[i] == VK_PRESENT_MODE_IMMEDIATE_KHR) {
 				info->presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
-			} else if (present_modes[i] == VK_PRESENT_MODE_FIFO_RELAXED_KHR) {
-				info->presentMode = VK_PRESENT_MODE_FIFO_RELAXED_KHR;
 			}
 		}
 	}
@@ -985,6 +994,14 @@ bool init_renderer(struct state* state) {
 	cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	cpool_info.queueFamilyIndex = gfx_qfam;
 	res = vkCreateCommandPool(dev, &cpool_info, NULL, &state->cmd_pool);
+
+	VkFenceCreateInfo fence_info = {0};
+	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+	res = vkCreateFence(dev, &fence_info, NULL, &state->fence);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "vkCreateFence");
+		return false;
+	}
 
 	// semaphore
 	VkSemaphoreCreateInfo sem_info = {0};
