@@ -16,6 +16,9 @@
 #ifdef SWA_WITH_KMS
   #include <swa/kms/kms.h>
 #endif
+#ifdef SWA_WITH_ANDROID
+  #include <swa/android.h>
+#endif
 
 typedef struct swa_display* (*display_constructor)(const char*);
 

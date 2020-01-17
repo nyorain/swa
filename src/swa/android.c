@@ -1,11 +1,13 @@
 #include <swa/android.h>
 #include <dlg/dlg.h>
+#include <dlg/output.h>
 #include <string.h>
 #include <errno.h>
 #include <android/input.h>
 #include <android/looper.h>
 #include <android/log.h>
 #include <android/keycodes.h>
+#include <jni.h>
 
 #if __ANDROID_API__ >= 24
   #include <android/choreographer.h>
@@ -24,7 +26,7 @@
 extern int main(int argc, char** argv);
 
 enum event_type {
-	event_type_win_created,
+	event_type_win_created = 1,
 	event_type_win_destroyed,
 	event_type_input_queue_created,
 	event_type_input_queue_destroyed,
@@ -38,7 +40,7 @@ struct event {
 };
 
 // File-global storing the entrypoint data
-static struct activity {
+struct activity {
 	ANativeActivity* activity;
 	ANativeWindow* window;
 	AInputQueue* input_queue;
@@ -50,10 +52,12 @@ static struct activity {
 	bool thread_running;
 	bool destroyed;
 	struct swa_display_android* dpy;
-} static_data;
+};
+
+static struct activity* g_current_activity;
 
 static struct {
-	unsigned int android;
+	int32_t android;
 	enum swa_key keycode;
 } keycode_map[] = {
 	{AKEYCODE_0, swa_key_k0},
@@ -182,8 +186,15 @@ static struct {
 static const struct swa_display_interface display_impl;
 static const struct swa_window_interface window_impl;
 
-enum swa_key android_to_key(int32_t keycode);
-enum swa_keyboard_mod android_to_modifiers(int32_t meta_state);
+enum swa_key android_to_key(int32_t keycode) {
+	for(unsigned int i = 0u; i < sizeof(keycode_map) / sizeof(keycode_map[0]); ++i) {
+		if(keycode == keycode_map[i].android) {
+			return keycode_map[i].keycode;
+		}
+	}
+
+	return swa_key_none;
+}
 
 enum swa_keyboard_mod android_to_modifiers(int32_t meta_state) {
 	enum swa_keyboard_mod mods = swa_keyboard_mod_none;
@@ -206,10 +217,52 @@ static struct swa_window_android* get_window_android(struct swa_window* base) {
 	return (struct swa_window_android*) base;
 }
 
+static void output_handler(const struct dlg_origin* origin, const char* str,
+		void* data) {
+	enum dlg_output_feature features = dlg_output_file_line;
+
+	size_t size;
+	dlg_generic_output_buf(NULL, &size, features, origin,
+		str, dlg_default_output_styles);
+	++size;
+	char* buf = malloc(size);
+	dlg_generic_output_buf(buf, &size, features, origin, str,
+		dlg_default_output_styles);
+
+	int prio = ANDROID_LOG_DEFAULT;
+	switch(origin->level) {
+		case dlg_level_trace: // fallthrough
+		case dlg_level_debug:
+			prio = ANDROID_LOG_DEBUG;
+			break;
+		case dlg_level_info:
+			prio = ANDROID_LOG_INFO;
+			break;
+		case dlg_level_warn:
+			prio = ANDROID_LOG_WARN;
+			break;
+		case dlg_level_error:
+			prio = ANDROID_LOG_ERROR;
+			break;
+		case dlg_level_fatal:
+			prio = ANDROID_LOG_FATAL;
+			break;
+		default:
+			break;
+	}
+
+	// struct activity* activity = data;
+	// const char* tag = activity->dpy ? activity->dpy->appname : "swa";
+	const char* tag = "swa"; // TODO
+	__android_log_write(prio, tag, buf);
+	free(buf);
+}
+
 // window api
 static bool create_surface(struct swa_window_android* win,
 		ANativeWindow* nwin, const struct swa_window_settings* settings) {
 	struct swa_display_android* dpy = win->dpy;
+	(void) dpy;
 
 	if(win->surface_type == swa_surface_buffer) {
 		// TODO: handle more data formats. Respect the surface
@@ -254,7 +307,7 @@ static bool create_surface(struct swa_window_android* win,
 			return false;
 		}
 
-		VkAndroidSurfaceCreateInfoKHR info = {};
+		VkAndroidSurfaceCreateInfoKHR info = {0};
 		info.sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR;
 		info.window = nwin;
 
@@ -329,6 +382,8 @@ static void destroy_surface(struct swa_window_android* win) {
 
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_android* win = get_window_android(base);
+	dlg_assert(win == win->dpy->window);
+	win->dpy->window = NULL;
 	destroy_surface(win);
 	free(win);
 }
@@ -363,7 +418,8 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	dlg_error("win_set_cursor not supported");
 }
 
-static void frame_callback64(int64_t frameTimeNanos, void* data) {
+static void frame_callback64(int64_t frame_time_nanos, void* data) {
+	(void) frame_time_nanos;
 	struct swa_window_android* win = data;
 	if(win->redraw) {
 		win->redraw = false;
@@ -373,8 +429,8 @@ static void frame_callback64(int64_t frameTimeNanos, void* data) {
 	}
 }
 
-static void frame_callback(long frameTimeNanos, void* data) {
-	frame_callback64(frameTimeNanos, data);
+static void frame_callback(long frame_time_nanos, void* data) {
+	frame_callback64(frame_time_nanos, data);
 }
 
 // TODO: somehow handle case when choreographer isn't available.
@@ -400,7 +456,8 @@ static void win_surface_frame(struct swa_window* base) {
 #elif __ANDROID_API__ >= 24
 		AChoreographer_postFrameCallback(dpy->choreographer,
 			frame_callback, win);
-		done = true;
+#else
+		dlg_error("Unreachable");
 #endif // __ANDROID_API__
 	} else {
 		dlg_warn("can't use choreographer to schedule redraws");
@@ -433,6 +490,7 @@ static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {
+	(void) base;
 	// it's neither client nor server decoration i guess
 	return false;
 }
@@ -536,16 +594,18 @@ static bool win_get_buffer(struct swa_window* base, struct swa_image* img) {
 		return false;
 	}
 
-	dlg_assert(static_data.window);
+	ANativeWindow* awin = win->dpy->activity->window;
+	dlg_assert(awin);
+
 	ARect dirty = {0};
 	ANativeWindow_Buffer buffer;
-	int res = ANativeWindow_lock(static_data.window, &buffer, &dirty);
+	int res = ANativeWindow_lock(awin, &buffer, &dirty);
 	dlg_assertm(!res, "ANativeWindow_lock: %d", res);
 
 	img->data = buffer.bits;
 	img->width = buffer.width;
 	img->height = buffer.height;
-	img->stride = buffer.stride;
+	img->stride = 4 * buffer.stride;
 	img->format = swa_image_format_rgba32;
 	win->buffer.active = true;
 	return true;
@@ -570,8 +630,10 @@ static void win_apply_buffer(struct swa_window* base) {
 		return;
 	}
 
-	dlg_assert(static_data.window);
-	int res = ANativeWindow_unlockAndPost(static_data.window);
+	ANativeWindow* awin = win->dpy->activity->window;
+	dlg_assert(awin);
+
+	int res = ANativeWindow_unlockAndPost(awin);
 	dlg_assertm(!res, "ANativeWindow_unlockAndPost: %d", res);
 	win->buffer.active = false;
 }
@@ -603,39 +665,104 @@ static const struct swa_window_interface window_impl = {
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_android* dpy = get_display_android(base);
+	dpy->activity->dpy = NULL;
 	// TODO
 	free(dpy);
 }
 
-static bool is_destroyed(void) {
-	pthread_mutex_lock(&static_data.mutex);
-	bool res = static_data.destroyed;
-	pthread_mutex_unlock(&static_data.mutex);
+static bool is_destroyed(struct activity* activity) {
+	pthread_mutex_lock(&activity->mutex);
+	bool res = activity->destroyed;
+	pthread_mutex_unlock(&activity->mutex);
 	return res;
 }
 
-// Returns whether the event was handled or not
-static bool handle_input_event(struct swa_display_android* dpy, AInputEvent* ev) {
-	// There isn't a window yet, so we don't care for any events at all yet.
-	if(!dpy->window) {
+// https://encoding.spec.whatwg.org/#utf-8-encoder
+static void encode_utf8(char* out, uint32_t unicode) {
+	if(unicode <= 0x7F) { // 1-byte (ascii)
+		out[0] = (char) unicode;
+		out[1] = '\0';
+	} else if(unicode <= 0x07FF) { // 2-byte
+		out[0] = (char) (((unicode >> 6) & 0x1F) | 0xC0);
+		out[1] = (char) (((unicode >> 0) & 0x3F) | 0x80);
+		out[2] = '\0';
+	} else if(unicode <= 0xFFFF) { // 3-byte
+		out[0] = (char) (((unicode >> 12) & 0x0F) | 0xE0);
+		out[1] = (char) (((unicode >>  6) & 0x3F) | 0x80);
+		out[2] = (char) (((unicode >>  0) & 0x3F) | 0x80);
+		out[3] = '\0';
+	} else if(unicode <= 0x10FFFF) { // 4-byte
+		out[0] = (char) (((unicode >> 18) & 0x07) | 0xF0);
+		out[1] = (char) (((unicode >> 12) & 0x3F) | 0x80);
+		out[2] = (char) (((unicode >>  6) & 0x3F) | 0x80);
+		out[3] = (char) (((unicode >>  0) & 0x3F) | 0x80);
+		out[4] = '\0';
+	} else {
+		dlg_error("Invalid unicode char: %d", unicode);
+		out[0] = '\0';
+	}
+}
+
+// TODO: don't attach thread and query function *every time*
+// do it just once.
+static void get_utf8(struct activity* activity, char* out,
+		unsigned akeycode, unsigned ameta) {
+    JavaVMAttachArgs attach_args;
+    attach_args.version = JNI_VERSION_1_6;
+    attach_args.name = "NativeThread";
+    attach_args.group = NULL;
+
+	JNIEnv* jni_env;
+	JavaVM* vm = activity->activity->vm;
+    jint res = (*vm)->AttachCurrentThread(vm, &jni_env, &attach_args);
+    if(res == JNI_ERR) {
+		dlg_error("AttachCurrentThread failed");
+		out[0] = '\0';
+		return;
+    }
+
+	jclass jni_key_event = (*jni_env)->FindClass(jni_env, "android/view/KeyEvent");
+
+	jmethodID jni_key_event_ctor;
+	jmethodID jni_get_unicode_char;
+	if(ameta) {
+		jni_get_unicode_char = (*jni_env)->GetMethodID(jni_env,
+			jni_key_event, "getUnicodeChar", "(I)I");
+	} else {
+ 		jni_get_unicode_char = (*jni_env)->GetMethodID(jni_env,
+			jni_key_event, "getUnicodeChar", "()I");
+	}
+	jni_key_event_ctor = (*jni_env)->GetMethodID(jni_env,
+		jni_key_event, "<init>", "(II)V");
+
+	if(!jni_key_event || !jni_get_unicode_char || !jni_key_event_ctor) {
+    	(*vm)->DetachCurrentThread(vm);
+		dlg_warn("could not load all jni symbols");
+		out[0] = '\0';
+		return;
+	}
+
+	jobject eventObj = (*jni_env)->NewObject(jni_env, jni_key_event,
+		jni_key_event_ctor, AKEY_EVENT_ACTION_DOWN, akeycode);
+	uint32_t unicode = (*jni_env)->CallIntMethod(jni_env, eventObj,
+		jni_get_unicode_char, ameta);
+	(*vm)->DetachCurrentThread(vm);
+	encode_utf8(out, unicode);
+}
+
+static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
+	dlg_assert(AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_KEY);
+
+	int action = AKeyEvent_getAction(ev);
+	bool pressed = false;
+	if(action == AKEY_EVENT_ACTION_DOWN) {
+		pressed = true;
+	} else if(action != AKEY_EVENT_ACTION_UP) {
+		dlg_debug("Unknown key action %d", action);
 		return false;
 	}
 
-	int32_t type = AInputEvent_getType(ev);
-	if(type == AINPUT_EVENT_TYPE_KEY) {
-		int action = AKeyEvent_getAction(ev);
-		bool pressed = false;
-		if(action == AKEY_EVENT_ACTION_DOWN) {
-			pressed = true;
-		} else if(action != AKEY_EVENT_ACTION_UP) {
-			dlg_debug("Unknown key action %d", action);
-			return false;
-		}
-
-		int32_t metaState = AKeyEvent_getMetaState(ev);
-		dpy->keyboard_mods = android_to_modifiers(metaState);
-
-	auto akeycode = AKeyEvent_getKeyCode(&event);
+	int32_t akeycode = AKeyEvent_getKeyCode(ev);
 
 	// we skip this keycode so that is handled by android
 	// the application can't handle it anyways (at the moment - TODO?!)
@@ -644,8 +771,42 @@ static bool handle_input_event(struct swa_display_android* dpy, AInputEvent* ev)
 		return false;
 	}
 
-		return true;
+	int32_t ameta = AKeyEvent_getMetaState(ev);
+	enum swa_keyboard_mod mods = android_to_modifiers(ameta);
+	dpy->keyboard_mods = mods;
+
+	if(!dpy->window || !dpy->window->base.listener->key) {
+		return false;
+	}
+
+	char utf8[5];
+	get_utf8(dpy->activity, utf8, akeycode, ameta);
+	struct swa_key_event kev = {
+		.utf8 = utf8,
+		.keycode = android_to_key(akeycode),
+		.modifiers = mods,
+		.pressed = pressed,
+		.repeated = AKeyEvent_getRepeatCount(ev) != 0,
+	};
+
+	dpy->window->base.listener->key(&dpy->window->base, &kev);
+	return true;
+}
+
+static bool handle_motion_event(struct swa_display_android* dpy, AInputEvent* ev) {
+	dlg_assert(AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_MOTION);
+	return false;
+}
+
+// Returns whether the event was handled or not
+static bool handle_input_event(struct swa_display_android* dpy, AInputEvent* ev) {
+	dlg_trace("input event!");
+
+	int32_t type = AInputEvent_getType(ev);
+	if(type == AINPUT_EVENT_TYPE_KEY) {
+		return handle_key_event(dpy, ev);
 	} else if(type == AINPUT_EVENT_TYPE_MOTION) {
+		return handle_motion_event(dpy, ev);
 	} else {
 		dlg_debug("Unknown event type %d", type);
 	}
@@ -654,25 +815,32 @@ static bool handle_input_event(struct swa_display_android* dpy, AInputEvent* ev)
 }
 
 static int input_queue_readable(int fd, int events, void* data) {
-	struct swa_display_android* dpy = data;
-	dlg_assert(dpy->input_queue);
+	(void) fd;
+	(void) events;
 
+	struct swa_display_android* dpy = data;
+	AInputQueue* q = dpy->activity->input_queue;
+	dlg_assert(q);
+
+	dlg_trace("input readable");
 	int ret = 0;
-	while((ret = AInputQueue_hasEvents(dpy->input_queue)) > 0) {
+	while((ret = AInputQueue_hasEvents(q)) > 0) {
+		dlg_trace("0!");
 		AInputEvent* event = NULL;
-		ret = AInputQueue_getEvent(dpy->input_queue, &event);
+		ret = AInputQueue_getEvent(q, &event);
 		if(ret < 0) {
 			dlg_warn("getEvent returned error code %d", ret);
 			continue;
 		}
 
-		ret = AInputQueue_preDispatchEvent(dpy->input_queue, event);
+		ret = AInputQueue_preDispatchEvent(q, event);
 		if(ret != 0) {
 			continue;
 		}
 
+		dlg_trace("event!");
 		bool handled = handle_input_event(dpy, event);
-		AInputQueue_finishEvent(dpy->input_queue, event, handled);
+		AInputQueue_finishEvent(q, event, handled);
 	}
 
 	if(ret < 0) {
@@ -683,7 +851,15 @@ static int input_queue_readable(int fd, int events, void* data) {
 	return 1;
 }
 
+static void init_input_queue(struct swa_display_android* dpy,
+		AInputQueue* queue) {
+	dlg_assert(queue == dpy->activity->input_queue);
+	AInputQueue_attachLooper(queue, dpy->looper, 1u,
+		input_queue_readable, dpy);
+}
+
 static void handle_event(struct swa_display_android* dpy, const struct event* ev) {
+	dlg_trace("handle event type %d", ev->type);
 	switch(ev->type) {
 		case event_type_draw:
 			if(dpy->window && dpy->window->base.listener->draw) {
@@ -714,8 +890,7 @@ static void handle_event(struct swa_display_android* dpy, const struct event* ev
 			break;
 		case event_type_input_queue_created: {
 			AInputQueue* queue = (AInputQueue*)(uintptr_t) ev->data;
-			AInputQueue_attachLooper(queue, dpy->looper, ALOOPER_POLL_CALLBACK,
-				input_queue_readable, dpy);
+			init_input_queue(dpy, queue);
 			break;
 		} case event_type_input_queue_destroyed: {
 			AInputQueue* queue = (AInputQueue*)(uintptr_t) ev->data;
@@ -729,23 +904,24 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_android* dpy = get_display_android(base);
 
 	// process events from activity thread
-	pthread_mutex_lock(&static_data.mutex);
-	if(static_data.destroyed) {
-		pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_lock(&dpy->activity->mutex);
+	if(dpy->activity->destroyed) {
+		dlg_trace("destroyed....");
+		pthread_mutex_unlock(&dpy->activity->mutex);
 		return false;
 	}
 
+	dlg_trace("dispatch: %d", dpy->n_events);
 	while(dpy->n_events) {
 		struct event ev = dpy->events[0];
 		--dpy->n_events;
-		memcpy(dpy->events, dpy->events + 1, sizeof(*dpy->events) * dpy->n_events);
-		pthread_mutex_unlock(&static_data.mutex);
+		memmove(dpy->events, dpy->events + 1, sizeof(*dpy->events) * dpy->n_events);
+		pthread_mutex_unlock(&dpy->activity->mutex);
 		handle_event(dpy, &ev);
-		pthread_mutex_lock(&static_data.mutex);
+		pthread_mutex_lock(&dpy->activity->mutex);
 	}
 
-	dpy->n_events = 0;
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_unlock(&dpy->activity->mutex);
 
 	// process looper events
 	int outFd, outEvents;
@@ -756,7 +932,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 		dlg_error("ALooper_pollAll error");
 	}
 
-	return !is_destroyed();
+	return !is_destroyed(dpy->activity);
 
 }
 
@@ -766,6 +942,7 @@ static void display_wakeup(struct swa_display* base) {
 }
 
 static enum swa_display_cap display_capabilities(struct swa_display* base) {
+	(void) base;
 	enum swa_display_cap caps =
 		// NOTE: reasonable assumptions but may be wrong.
 		// android devices work without touch and could e.g. have a
@@ -810,21 +987,20 @@ static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base,
 }
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
-	struct swa_display_android* dpy = get_display_android(base);
+	// struct swa_display_android* dpy = get_display_android(base);
 	// TODO
 	return false;
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
-	struct swa_display_android* dpy = get_display_android(base);
+	// struct swa_display_android* dpy = get_display_android(base);
 	// TODO
 	return NULL;
 }
 
 static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
 	struct swa_display_android* dpy = get_display_android(base);
-	// TODO
-	return swa_keyboard_mod_none;
+	return dpy->keyboard_mods;
 }
 
 static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
@@ -834,12 +1010,12 @@ static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 
 static bool display_mouse_button_pressed(struct swa_display* base,
 		enum swa_mouse_button button) {
-	struct swa_display_android* dpy = get_display_android(base);
+	// struct swa_display_android* dpy = get_display_android(base);
 	// TODO
 	return false;
 }
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
-	struct swa_display_android* dpy = get_display_android(base);
+	// struct swa_display_android* dpy = get_display_android(base);
 	// TODO
 }
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
@@ -865,12 +1041,16 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_android* dpy = get_display_android(base);
 	struct swa_window_android* win = calloc(1, sizeof(*win));
+
+	win->base.impl = &window_impl;
+	win->base.listener = settings->listener;
+
 	win->dpy = dpy;
 	win->surface_type = settings->surface;
-	if(static_data.window) {
+	if(dpy->activity->window) {
 		// TODO: send deferred size event
 		// TODO: send initial draw event?
-		if(!create_surface(win, static_data.window, settings)) {
+		if(!create_surface(win, dpy->activity->window, settings)) {
 			goto error;
 		}
 	} else {
@@ -906,56 +1086,67 @@ static const struct swa_display_interface display_impl = {
 };
 
 struct swa_display* swa_display_android_create(const char* appname) {
-	(void) apppname;
+	(void) appname;
+	dlg_assert(g_current_activity);
 
 	struct swa_display_android* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->looper = ALooper_prepare(0);
+	dpy->activity = g_current_activity;
+	dpy->appname = appname ? appname : "swa";
 
 #if __ANDROID_API__ >= 24
 	dpy->choreographer = AChoreographer_getInstance();
 #endif // __ANDROID_API__ >= 24
 
+	if(dpy->activity->input_queue) {
+		init_input_queue(dpy, dpy->activity->input_queue);
+	}
+
+	dpy->activity->dpy = dpy;
 	return &dpy->base;
 }
 
 // activity api
 static void* main_thread(void* data) {
+	struct activity* activity = data;
+	dlg_assert(activity);
+
 	main(0, NULL);
 
-	ANativeActivity_finish(static_data.activity);
+	ANativeActivity_finish(activity->activity);
 	return NULL;
 }
 
-static void push_event_locked(struct event ev) {
-	struct swa_display_android* dpy = static_data.dpy;
+static void push_event_locked(struct activity* activity, struct event ev) {
+	struct swa_display_android* dpy = activity->dpy;
 	if(!dpy) {
 		return;
 	}
 
-	if(++dpy->n_events < dpy->cap_events) {
+	if(++dpy->n_events > dpy->cap_events) {
 		dpy->cap_events = 2 * dpy->n_events;
 		unsigned size = sizeof(*dpy->events) * dpy->cap_events;
 		dpy->events = realloc(dpy->events, size);
 	}
 
 	dpy->events[dpy->n_events - 1] = ev;
-	ALooper_wake(static_data.dpy->looper);
+	ALooper_wake(activity->dpy->looper);
 }
 
-static inline void push_event(struct event ev) {
-	pthread_mutex_lock(&static_data.mutex);
-	push_event_locked(ev);
-	pthread_mutex_unlock(&static_data.mutex);
+static inline void push_event(struct activity* activity, struct event ev) {
+	pthread_mutex_lock(&activity->mutex);
+	push_event_locked(activity, ev);
+	pthread_mutex_unlock(&activity->mutex);
 }
 
-static void push_event_wait_locked(struct event ev) {
-	struct swa_display_android* dpy = static_data.dpy;
+static void push_event_wait_locked(struct activity* activity, struct event ev) {
+	struct swa_display_android* dpy = activity->dpy;
 	if(!dpy) {
 		return;
 	}
 
-	if(++dpy->n_events < dpy->cap_events) {
+	if(++dpy->n_events > dpy->cap_events) {
 		dpy->cap_events = 2 * dpy->n_events;
 		unsigned size = sizeof(*dpy->events) * dpy->cap_events;
 		dpy->events = realloc(dpy->events, size);
@@ -964,18 +1155,18 @@ static void push_event_wait_locked(struct event ev) {
 	dpy->events[dpy->n_events - 1] = ev;
 
 	bool done = false;
-	static_data.cond_wakeup = &done;
-	ALooper_wake(static_data.dpy->looper);
+	activity->cond_wakeup = &done;
+	ALooper_wake(activity->dpy->looper);
 	while(!done) {
-		pthread_cond_wait(&static_data.cond, &static_data.mutex);
+		pthread_cond_wait(&activity->cond, &activity->mutex);
 	}
 }
 
-static void push_event_wait(struct event ev) {
-	pthread_mutex_lock(&static_data.mutex);
-	push_event_wait_locked(ev);
-	pthread_mutex_unlock(&static_data.mutex);
-}
+// static void push_event_wait(struct activity* activity, struct event ev) {
+// 	pthread_mutex_lock(&activity->mutex);
+// 	push_event_wait_locked(activity, ev);
+// 	pthread_mutex_unlock(&activity->mutex);
+// }
 
 static void activity_onStart(ANativeActivity* activity) {
 	(void) activity;
@@ -1003,64 +1194,82 @@ static void activity_onStop(ANativeActivity* activity) {
 	// no-op
 }
 
-static void activity_onDestroy(ANativeActivity* activity) {
-	pthread_mutex_lock(&static_data.mutex);
-	static_data.destroyed = true;
-	if(static_data.dpy) {
-		ALooper_wake(static_data.dpy->looper);
+static void activity_onDestroy(ANativeActivity* aactivity) {
+	dlg_trace("onDestroy");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
+	pthread_mutex_lock(&activity->mutex);
+	activity->destroyed = true;
+	if(activity->dpy) {
+		ALooper_wake(activity->dpy->looper);
 	}
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_unlock(&activity->mutex);
+
+	// TODO: join the thread?
+	// free(activity)
+	// aactivity->instance = NULL;
+	// if(g_current_activity == activity) {
+	// 	g_current_activity = NULL;
+	// 	dlg_set_handler(dlg_default_output, stdout);
+	// }
+	dlg_trace("done");
 }
 
-static void activity_onWindowFocusChanged(ANativeActivity* activity,
+static void activity_onWindowFocusChanged(ANativeActivity* aactivity,
 		int has_focus) {
+	dlg_trace("onWindowFocusChanged");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
 	struct event ev = {
 		.type = event_type_focus,
 		.data = has_focus,
 	};
 
-	push_event(ev);
+	push_event(activity, ev);
+	dlg_trace("done");
 }
 
-static void activity_onNativeWindowCreated(ANativeActivity* activity,
+static void activity_onNativeWindowCreated(ANativeActivity* aactivity,
 		ANativeWindow* window) {
+	dlg_trace("onNativeWindowCreated");
+
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
 	struct event ev = {
 		.type = event_type_win_created,
 		.data = (uint64_t)(uintptr_t) window,
 	};
 
-	pthread_mutex_lock(&static_data.mutex);
-	static_data.window = window;
-	if(static_data.thread_running) {
-		push_event_locked(ev);
+	pthread_mutex_lock(&activity->mutex);
+	activity->window = window;
+	if(activity->thread_running) {
+		push_event_locked(activity, ev);
 	} else {
 		// initialization complete, start the main thread
-		int err = pthread_create(&static_data.main_thread, NULL,
-			main_thread, NULL);
+		int err = pthread_create(&activity->main_thread, NULL,
+			main_thread, activity);
 		dlg_assertm(!err, "pthread_create: %s", strerror(errno));
 
 		// TODO: join the thread later on instead?
-		pthread_detach(static_data.main_thread);
-		static_data.thread_running = true;
+		pthread_detach(activity->main_thread);
+		activity->thread_running = true;
 	}
 
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_unlock(&activity->mutex);
+	dlg_trace("done");
 }
 
-static void activity_onNativeWindowResized(ANativeActivity* activity,
+static void activity_onNativeWindowResized(ANativeActivity* aactivity,
 		ANativeWindow* window) {
-	int64_t width = ANativeWindow_getWidth(window);
-	int32_t height = ANativeWindow_getHeight(window);
-	struct event ev = {
-		.type = event_type_focus,
-		.data = (width << 32 | height),
-	};
+	dlg_trace("onNativeWindowResized");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
 
-	push_event_wait(ev);
-}
-
-static void activity_onNativeWindowRedrawNeeded(ANativeActivity* activity,
-		ANativeWindow* window) {
+	// TODO: add event i guess?
+	/*
 	int64_t width = ANativeWindow_getWidth(window);
 	int32_t height = ANativeWindow_getHeight(window);
 	struct event ev = {
@@ -1068,46 +1277,80 @@ static void activity_onNativeWindowRedrawNeeded(ANativeActivity* activity,
 		.data = (width << 32 | height),
 	};
 
-	push_event(ev);
+	push_event_wait(activity, ev);
+	*/
+	dlg_trace("done");
 }
 
-static void activity_onNativeWindowDestroyed(ANativeActivity* activity,
+static void activity_onNativeWindowRedrawNeeded(ANativeActivity* aactivity,
 		ANativeWindow* window) {
+	dlg_trace("onNativeWindowRedrawNeeded");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
+	int64_t width = ANativeWindow_getWidth(window);
+	int32_t height = ANativeWindow_getHeight(window);
+	struct event ev = {
+		.type = event_type_draw,
+		.data = (width << 32 | height),
+	};
+
+	push_event(activity, ev);
+	dlg_trace("done");
+}
+
+static void activity_onNativeWindowDestroyed(ANativeActivity* aactivity,
+		ANativeWindow* window) {
+	dlg_trace("onNativeWindowDestroyed");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
 	struct event ev = {
 		.type = event_type_win_destroyed,
 	};
 
-	pthread_mutex_lock(&static_data.mutex);
-	static_data.window = NULL;
-	push_event_wait_locked(ev);
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_lock(&activity->mutex);
+	activity->window = NULL;
+	push_event_wait_locked(activity, ev);
+	pthread_mutex_unlock(&activity->mutex);
+	dlg_trace("done");
 }
 
-static void activity_onInputQueueCreated(ANativeActivity* activity,
+static void activity_onInputQueueCreated(ANativeActivity* aactivity,
 		AInputQueue* queue) {
+	dlg_trace("onInputQueueCreated");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
 	struct event ev = {
 		.type = event_type_input_queue_created,
 		.data = (uint64_t)(uintptr_t) queue,
 	};
 
-	pthread_mutex_lock(&static_data.mutex);
-	static_data.input_queue = queue;
-	push_event_locked(ev);
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_lock(&activity->mutex);
+	activity->input_queue = queue;
+	push_event_locked(activity, ev);
+	pthread_mutex_unlock(&activity->mutex);
+	dlg_trace("done");
 }
 
-static void activity_onInputQueueDestroyed(ANativeActivity* activity,
+static void activity_onInputQueueDestroyed(ANativeActivity* aactivity,
 		AInputQueue* queue) {
-	dlg_assert(static_data.input_queue = queue);
+	dlg_trace("onInputQueueDestroyed");
+	struct activity* activity = aactivity->instance;
+	dlg_assert(activity);
+
+	dlg_assert(activity->input_queue = queue);
 	struct event ev = {
 		.type = event_type_input_queue_destroyed,
 		.data = (uint64_t)(uintptr_t) queue,
 	};
 
-	pthread_mutex_lock(&static_data.mutex);
-	static_data.input_queue = NULL;
-	push_event_wait_locked(ev);
-	pthread_mutex_unlock(&static_data.mutex);
+	pthread_mutex_lock(&activity->mutex);
+	activity->input_queue = NULL;
+	push_event_wait_locked(activity, ev);
+	pthread_mutex_unlock(&activity->mutex);
+	dlg_trace("done");
 }
 
 static void activity_onContentRectChanged(ANativeActivity* activity, const ARect* rect) {
@@ -1127,13 +1370,13 @@ static void activity_onLowMemory(ANativeActivity* activity) {
 }
 
 // App entrypoint
-void ANativeActivity_onCreate(ANativeActivity* activity,
+void ANativeActivity_onCreate(ANativeActivity* aactivity,
 		void* savedState, size_t savedStateSize) {
 	(void) savedState;
 	(void) savedStateSize;
 
 	// set native activity callbacks
-	*activity->callbacks = (struct ANativeActivityCallbacks) {
+	*aactivity->callbacks = (struct ANativeActivityCallbacks) {
 		.onStart = activity_onStart,
 		.onResume = activity_onResume,
 		.onSaveInstanceState = activity_onSaveInstanceState,
@@ -1154,13 +1397,21 @@ void ANativeActivity_onCreate(ANativeActivity* activity,
 
 	// init static data
 	int err;
-	static_data.activity = activity;
-	static_data.thread_running = false;
-	static_data.destroyed = false;
+	struct activity* activity = calloc(1, sizeof(*activity));
+	activity->activity = aactivity;
+	activity->thread_running = false;
+	activity->destroyed = false;
 
-	err = pthread_mutex_init(&static_data.mutex, NULL);
+	err = pthread_mutex_init(&activity->mutex, NULL);
 	dlg_assertm(!err, "pthread_mutex_init: %s", strerror(errno));
 
-	err = pthread_cond_init(&static_data.cond, NULL);
+	err = pthread_cond_init(&activity->cond, NULL);
 	dlg_assertm(!err, "pthread_cond_init: %s", strerror(errno));
+
+	aactivity->instance = activity;
+	g_current_activity = activity;
+
+	// set dlg log handler
+	dlg_set_handler(output_handler, activity);
+	dlg_trace("onCreate done");
 }

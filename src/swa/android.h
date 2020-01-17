@@ -18,9 +18,10 @@ extern "C" {
 
 struct swa_display_android {
 	struct swa_display base;
+	struct activity* activity;
 
+	const char* appname;
 	ALooper* looper;
-	AInputQueue* input_queue;
 	AChoreographer* choreographer;
 
 	struct swa_window_android* window;
@@ -29,6 +30,7 @@ struct swa_display_android {
 	unsigned n_events;
 	unsigned cap_events;
 	struct event* events;
+	enum swa_keyboard_mod keyboard_mods;
 
 	struct swa_egl_display* egl;
 };
@@ -62,7 +64,7 @@ struct swa_window_android {
 	};
 };
 
-struct swa_display* swa_display_android_create(void);
+struct swa_display* swa_display_android_create(const char*);
 
 #ifdef __cplusplus
 }

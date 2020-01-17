@@ -3,7 +3,7 @@ project(
 	'c',
 	version: '0.1.0',
 	license: 'MIT',
-	meson_version: '>=0.48.0',
+	meson_version: '>=0.51.0',
 	default_options: [
 		'c_std=c11',
 		'warning_level=3',
@@ -17,6 +17,7 @@ cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
 	# gcc/clang
 	'-Wno-unused-parameter',
+	'-Wno-missing-braces',
 	'-Wundef',
 	'-Wvla',
 
@@ -32,6 +33,11 @@ args = cc.get_supported_arguments([
 	'/wd4204', # non-constant aggregate initializer
 	'/wd4201', # anonymous union extension
 ])
+
+if meson.get_compiler('c').get_id() == 'clang'
+	args += '-Wno-missing-braces'
+endif
+
 add_project_arguments(args, language: 'c')
 
 swa_src = files('src/swa/swa.c')
@@ -58,14 +64,39 @@ swa_inc = [
 	include_directories('include'),
 ]
 
-if build_machine.system() == 'windows'
+with_x11 = false
+with_wl = false
+with_win = false
+with_android = false
+with_kms = false
+with_gl = false
+with_vk = dep_vulkan.found()
+
+if host_machine.system() == 'android'
+	dep_egl = dependency('egl', required: false)
+	dep_log = cc.find_library('log')
+	dep_android = cc.find_library('android')
+
+	with_android = true
+	with_gl = dep_egl.found()
+
+	swa_src += files('src/swa/android.c')
+
+	if with_gl
+		swa_src += files('src/swa/egl.c')
+	endif
+
+	swa_deps += [
+		dep_log,
+		dep_android,
+		dep_egl,
+		dep_vulkan,
+	]
+elif host_machine.system() == 'windows'
 	dep_gl = dependency('gl', required: false)
-	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
-	conf_data.set('SWA_WITH_GL', dep_gl.found(), description: 'Compiled with OpenGL support')
-	conf_data.set('SWA_WITH_WL', false, description: 'Compiled with Wayland support')
-	conf_data.set('SWA_WITH_X11', false, description: 'Compiled with X11 support')
-	conf_data.set('SWA_WITH_WIN', true, description: 'Compiled with Winapi support')
-	conf_data.set('SWA_WITH_KMS', false, description: 'Compiled with KMS/DRM support')
+
+	with_win = true
+	win_gl = dep_gl.found()
 
 	if shared
 		swa_args += '-DSWA_API=__declspec(dllexport)'
@@ -83,7 +114,8 @@ if build_machine.system() == 'windows'
 else
 	dep_pml = dependency('pml',
 		fallback: ['pml', 'pml_dep'],
-		static: true
+		static: true,
+		default_options: ['examples=false', 'tests=false'],
 	)
 
 	swa_src += files(
@@ -177,12 +209,14 @@ else
 
 	swa_deps += x11_deps
 
-	conf_data.set('SWA_WITH_VK', dep_vulkan.found(), description: 'Compiled with Vulkan support')
-	conf_data.set('SWA_WITH_GL', true, description: 'Compiled with OpenGL support')
-	conf_data.set('SWA_WITH_WL', true, description: 'Compiled with Wayland support')
-	conf_data.set('SWA_WITH_X11', true, description: 'Compiled with X11 support')
-	conf_data.set('SWA_WITH_WIN', false, description: 'Compiled with Winapi support')
-	conf_data.set('SWA_WITH_KMS', true, description: 'Compiled with KMS/DRM support')
+	with_vk = dep_vulkan.found()
+	with_win = false
+
+	# TODO
+	with_gl = true
+	with_wl = true
+	with_x11 = true
+	with_kms = true
 
 	# drm backend
 	dep_drm = dependency('libdrm', version: '>=2.4.95')
@@ -205,15 +239,32 @@ else
 	)
 endif
 
+conf_data.set('SWA_WITH_VK', with_vk, description: 'Compiled with Vulkan support')
+conf_data.set('SWA_WITH_ANDROID', with_android, description: 'Compiled with Android support')
+conf_data.set('SWA_WITH_GL', with_gl, description: 'Compiled with OpenGL support')
+conf_data.set('SWA_WITH_WL', with_wl, description: 'Compiled with Wayland support')
+conf_data.set('SWA_WITH_X11', with_x11, description: 'Compiled with X11 support')
+conf_data.set('SWA_WITH_WIN', with_win, description: 'Compiled with Winapi support')
+conf_data.set('SWA_WITH_KMS', with_kms, description: 'Compiled with KMS/DRM support')
+
 subdir('include/swa')
 
 if shared
-	lib_type = 'shared_library'
+	if with_android
+		lib_type = 'shared_module'
+	else
+		lib_type = 'shared_library'
+	endif
 else
 	lib_type = 'static_library'
 endif
 
-lib_swa = build_target('swa',
+exe_type = 'executable'
+if with_android
+	exe_type = 'shared_module'
+endif
+
+swa_lib = build_target('swa',
 	swa_src,
 	include_directories: swa_inc,
 	dependencies: swa_deps,
@@ -222,15 +273,16 @@ lib_swa = build_target('swa',
 	install: true)
 
 swa_dep = declare_dependency(
-	link_with: lib_swa,
+	link_with: swa_lib,
 	include_directories: include_directories('include'))
 
 executable('example',
 	'example.c',
 	dependencies: [swa_dep, dep_dlg])
 
-executable('example-buffer',
+ex_buffer = build_target('example_buffer',
 	'example-buffer.c',
+	target_type: exe_type,
 	dependencies: [swa_dep, dep_dlg])
 
 executable('example-exchange',
@@ -247,11 +299,23 @@ if dep_vulkan.found()
 		dependencies: [swa_dep, dep_dlg, dep_vulkan])
 endif
 
-executable('example-gl',
-	'example-gl.c',
-	dependencies: [swa_dep, dep_dlg, dependency('gl', required: true)])
+if with_android
+	dep_gl = cc.find_library('GLES2', required: false)
+else
+	dep_gl = dependency('gl', required: false)
+endif
+
+if dep_gl.found()
+	executable('example-gl',
+		'example-gl.c',
+		dependencies: [swa_dep, dep_dlg, dep_gl])
+endif
 
 dep_threads = dependency('threads')
 executable('example-wakeup',
 	'example-wakeup.c',
 	dependencies: [swa_dep, dep_threads, dep_dlg])
+
+if with_android
+	subdir('apk')
+endif

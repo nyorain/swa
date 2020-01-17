@@ -20,7 +20,6 @@ static void window_draw(struct swa_window* win) {
 	// ms += 1000.f * (now.tv_sec - last_redraw.tv_sec);
 	// dlg_info("Time between redraws: %f", ms);
 	// last_redraw = now;
-
 	dlg_info("drawing window, size: %d %d", img.width, img.height);
 
 	/*

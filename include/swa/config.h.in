@@ -9,6 +9,9 @@
 // Built with x11 backend?
 #mesondefine SWA_WITH_X11
 
+// Built with android backend?
+#mesondefine SWA_WITH_ANDROID
+
 // Built with drm/kms backend?
 #mesondefine SWA_WITH_KMS
 
