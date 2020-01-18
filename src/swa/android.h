@@ -26,7 +26,8 @@ struct swa_display_android {
 
 	struct swa_window_android* window;
 
-	// TODO: could use a ringbuffer here
+	// NOTE: could use a ringbuffer here
+	// probably not worth it
 	unsigned n_events;
 	unsigned cap_events;
 	struct event* events;
@@ -55,7 +56,11 @@ struct swa_window_android {
 	bool valid;
 	bool redraw;
 	bool focus;
+	bool initial_events;
 
+	// TODO: needed for surface re-creation
+	// should probably be removed by only the information we actually need
+	struct swa_window_settings settings;
 	enum swa_surface_type surface_type;
 	union {
 		struct swa_android_buffer_surface buffer;

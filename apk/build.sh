@@ -23,7 +23,7 @@ cd $out
 libpath=$libpath
 libfile=$(basename -- $libpath)
 libname=$(echo $libfile | sed -e "s/^lib//; s/\.so$//")
-pkgname=$libname
+pkgname=$(echo $libname | sed -e "s/-/_/")
 name=${libname^}
 
 sed "s/SWA_APP/$name/g; \

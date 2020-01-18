@@ -6,6 +6,7 @@
 
 // TODO: we could use/try eglGetDisplay as a fallback when
 // eglGetPlatformDisplay is not available (ancient implementations)
+// yes, apparently needed for android
 
 struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
 	struct swa_egl_display* dpy = calloc(1, sizeof(*dpy));

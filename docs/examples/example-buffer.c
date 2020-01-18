@@ -43,7 +43,7 @@ static void window_draw(struct swa_window* win) {
 	memset(img.data, 255, size);
 
 	swa_window_apply_buffer(win);
-	swa_window_refresh(win);
+	// swa_window_refresh(win);
 }
 
 static void window_close(struct swa_window* win) {
@@ -51,8 +51,6 @@ static void window_close(struct swa_window* win) {
 }
 
 static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
-	dlg_trace("key: %d %d, utf8: %s", ev->keycode, ev->pressed,
-		ev->utf8 ? ev->utf8 : "<null>");
 	if(ev->pressed && ev->keycode == swa_key_escape) {
 		dlg_info("Escape pressed, exiting");
 		run = false;

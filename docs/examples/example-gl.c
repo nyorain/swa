@@ -2,15 +2,21 @@
 #include <swa/key.h>
 #include <dlg/dlg.h>
 #include <string.h>
+#include <stdlib.h>
+
 // this is important as a msvc workaround: their gl.h header is
 // broken windows.h has to be included first (which is pulled by stdlib.h)
 // Thanks Bill!
 #ifdef _WIN32
-#include <windows.h>
+  #include <windows.h>
 #endif
 
-#include <stdlib.h>
-#include <GL/gl.h>
+#ifdef __ANDROID__
+  #include <GLES2/gl2.h>
+#else
+  #include <GL/gl.h>
+#endif
+
 #define GL_FRAMEBUFFER_SRGB 0x8DB9
 
 static bool run = true;
@@ -76,9 +82,15 @@ int main() {
 	settings.cursor = cursor;
 	settings.transparent = true;
 	settings.surface = swa_surface_gl;
+#ifdef __ANDROID__
+	settings.surface_settings.gl.major = 2;
+	settings.surface_settings.gl.minor = 0;
+	settings.surface_settings.gl.api = swa_api_gles;
+#else
 	settings.surface_settings.gl.major = 4;
 	settings.surface_settings.gl.minor = 0;
 	settings.surface_settings.gl.api = swa_api_gl;
+#endif
 	// settings.surface_settings.gl.srgb = true;
 	// settings.surface_settings.gl.debug = true;
 	// settings.surface_settings.gl.compatibility = false;

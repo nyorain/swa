@@ -1,5 +1,11 @@
 apks = {
 	'ex_buffer': ex_buffer,
+	'ex_vulkan': ex_vulkan,
+	'ex_vulkan_loop': ex_vulkan_loop,
+	'ex_gl': ex_gl,
+	'ex_wakeup': ex_wakeup,
+	'ex_simple': ex_simple,
+	'ex_input': ex_input,
 }
 
 setupsh = files('setup.sh')

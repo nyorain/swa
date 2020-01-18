@@ -18,13 +18,6 @@ x11:
 the ones with [low] are probably not worth it.
 We should evaluate and document the reasons.
 
-known issues:
-- currently, egl transparency is broken with mesa (because of a year-long bug)
-  see https://bugs.freedesktop.org/show_bug.cgi?id=67676.
-  The MR (https://gitlab.freedesktop.org/mesa/mesa/merge_requests/1185) that
-  fixes it was merged and will probably be in mesa 20.
-  Workarounds require significant amount of work
-
 - send state change events
 - implement gl swap interval
 - implement data exchange stuff
@@ -39,13 +32,30 @@ known issues:
   which wm is active)
 - [low] use glx instead of egl? Could egl not be available anywhere?
 
+known issues:
+- currently, egl transparency is broken with mesa (because of a year-long bug)
+  see https://bugs.freedesktop.org/show_bug.cgi?id=67676.
+  The MR (https://gitlab.freedesktop.org/mesa/mesa/merge_requests/1185) that
+  fixes it was merged and will probably be in mesa 20.
+  Workarounds require significant amount of work
+
 winapi:
-[not implemented yet at all]
+[not implemented yet at all, really]
 
 - fix redraw/refresh loop
 
+android:
+- add exception catching wrapper around main call?
+  that at least prints the exception to the log?
+- display dispatch currently not re-entrant at all
+  not sure if ALooper is though...
+- implement eglGetDisplay version of egl.c since android doesn't
+  support the platform base extension.
+
 general
 
+- fixup meson for linux/unix: dynmically enable backends/parts
+  of backends
 - add 'refresh' and/or 'frame' to window capabilities?
   it can't be implemented on all backends
 - print egl errors (eglGetError) for easier debugging
@@ -53,9 +63,11 @@ general
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
 - add swa_cursor_disable or something that allows to lock pointer
-  on wayland and grab the cursor on x11
+  on wayland and grab the cursor on x11. windows has probably something
+  like that as well
 - interface to query platform phdev vulkan support, see glfw and
   example-vulkan.c
+  	- evaluate first whether this is really needed
   	- make sure it works for the drm backend prototype
 - figure out when to use events and when just use plain parameters in window listener?
 	- clean up touch events. Really include dx, dy in movement?

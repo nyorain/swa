@@ -150,6 +150,11 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	dlg_info("resized to %d %d", w, h);
 
 	if(!state->swapchain) {
+		if(!state->surface) {
+			dlg_warn("window resize without surface");
+			return;
+		}
+
 		if(!init_swapchain(state, w, h)) {
 			dlg_error("Failed to init swapchain");
 			return;
@@ -210,10 +215,31 @@ static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
 	}
 }
 
+static void surface_destroyed(struct swa_window* win) {
+	dlg_trace("surface destroyed");
+
+	struct state* state = swa_window_get_userdata(win);
+	vkDeviceWaitIdle(state->device);
+	if(state->swapchain) {
+		vkDestroySwapchainKHR(state->device, state->swapchain, NULL);
+		state->swapchain = VK_NULL_HANDLE;
+	}
+
+	state->surface = VK_NULL_HANDLE;
+}
+
+static void surface_created(struct swa_window* win) {
+	dlg_trace("surface created");
+	struct state* state = swa_window_get_userdata(win);
+	state->surface = (VkSurfaceKHR) swa_window_get_vk_surface(win);
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.close = window_close,
 	.resize = window_resize,
+	.surface_destroyed = surface_destroyed,
+	.surface_created = surface_created,
 	.key = window_key,
 };
 

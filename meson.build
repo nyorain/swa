@@ -73,7 +73,7 @@ with_gl = false
 with_vk = dep_vulkan.found()
 
 if host_machine.system() == 'android'
-	dep_egl = dependency('egl', required: false)
+	dep_egl = cc.find_library('EGL')
 	dep_log = cc.find_library('log')
 	dep_android = cc.find_library('android')
 
@@ -111,7 +111,7 @@ elif host_machine.system() == 'windows'
 		'src/swa/winapi.c',
 		'src/swa/wgl.c'
 	)
-else
+else # just assume some posix/unix variant
 	dep_pml = dependency('pml',
 		fallback: ['pml', 'pml_dep'],
 		static: true,
@@ -261,7 +261,7 @@ endif
 
 exe_type = 'executable'
 if with_android
-	exe_type = 'shared_module'
+	exe_type = 'shared_library'
 endif
 
 swa_lib = build_target('swa',
@@ -276,45 +276,7 @@ swa_dep = declare_dependency(
 	link_with: swa_lib,
 	include_directories: include_directories('include'))
 
-executable('example',
-	'example.c',
-	dependencies: [swa_dep, dep_dlg])
-
-ex_buffer = build_target('example_buffer',
-	'example-buffer.c',
-	target_type: exe_type,
-	dependencies: [swa_dep, dep_dlg])
-
-executable('example-exchange',
-	'example-exchange.c',
-	dependencies: [swa_dep, dep_dlg])
-
-if dep_vulkan.found()
-	executable('example-vulkan',
-		'example-vulkan.c',
-		dependencies: [swa_dep, dep_dlg, dep_vulkan])
-
-	executable('example-vulkan-loop',
-		'example-vulkan-loop.c',
-		dependencies: [swa_dep, dep_dlg, dep_vulkan])
-endif
-
-if with_android
-	dep_gl = cc.find_library('GLES2', required: false)
-else
-	dep_gl = dependency('gl', required: false)
-endif
-
-if dep_gl.found()
-	executable('example-gl',
-		'example-gl.c',
-		dependencies: [swa_dep, dep_dlg, dep_gl])
-endif
-
-dep_threads = dependency('threads')
-executable('example-wakeup',
-	'example-wakeup.c',
-	dependencies: [swa_dep, dep_threads, dep_dlg])
+subdir('docs/examples')
 
 if with_android
 	subdir('apk')
