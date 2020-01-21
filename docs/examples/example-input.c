@@ -61,13 +61,13 @@ static void mouse_wheel(struct swa_window* win,
 }
 
 static void touch_begin(struct swa_window* win,
-		const struct swa_touch_begin_event* ev) {
+		const struct swa_touch_event* ev) {
 	dlg_info("touch begin: id = %d, pos = (%d, %d)",
 		ev->id, ev->x, ev->y);
 }
 
 static void touch_update(struct swa_window* win,
-		const struct swa_touch_update_event* ev) {
+		const struct swa_touch_event* ev) {
 	dlg_info("touch update: id = %d, pos = (%d, %d)",
 		ev->id, ev->x, ev->y);
 }

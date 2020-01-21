@@ -197,6 +197,16 @@ enum swa_key android_to_key(int32_t keycode) {
 	return swa_key_none;
 }
 
+int32_t key_to_android(enum swa_key key) {
+	for(unsigned int i = 0u; i < sizeof(keycode_map) / sizeof(keycode_map[0]); ++i) {
+		if(key == keycode_map[i].keycode) {
+			return keycode_map[i].android;
+		}
+	}
+
+	return -1;
+}
+
 enum swa_keyboard_mod android_to_modifiers(int32_t meta_state) {
 	enum swa_keyboard_mod mods = swa_keyboard_mod_none;
 	for(unsigned i = 0u; i < sizeof(mod_map) / sizeof(mod_map[0]); ++i) {
@@ -252,9 +262,8 @@ static void output_handler(const struct dlg_origin* origin, const char* str,
 			break;
 	}
 
-	// struct activity* activity = data;
-	// const char* tag = activity->dpy ? activity->dpy->appname : "swa";
-	const char* tag = "swa"; // TODO
+	struct activity* activity = data;
+	const char* tag = activity->dpy ? activity->dpy->appname : "swa";
 	__android_log_write(prio, tag, buf);
 	free(buf);
 }
@@ -262,6 +271,7 @@ static void output_handler(const struct dlg_origin* origin, const char* str,
 // window api
 static bool create_surface(struct swa_window_android* win,
 		ANativeWindow* nwin, const struct swa_window_settings* settings) {
+	dlg_trace("create_surface");
 	struct swa_display_android* dpy = win->dpy;
 	(void) dpy;
 
@@ -277,8 +287,8 @@ static bool create_surface(struct swa_window_android* win,
 	} else if(win->surface_type == swa_surface_gl) {
 #ifdef SWA_WITH_GL
 		if(!dpy->egl) {
-			dpy->egl = swa_egl_display_create(EGL_PLATFORM_WAYLAND_EXT,
-				dpy->egl);
+			dpy->egl = swa_egl_display_create(EGL_PLATFORM_ANDROID_KHR,
+				EGL_DEFAULT_DISPLAY);
 			if(!dpy->egl) {
 				return false;
 			}
@@ -331,7 +341,7 @@ static bool create_surface(struct swa_window_android* win,
 		win->vk.surface = (uint64_t)surface;
 #else // SWA_WITH_VK
 		dlg_error("swa was compiled without vulkan support");
-		goto err;
+		return false;
 #endif // SWA_WITH_VK
 	}
 
@@ -340,6 +350,7 @@ static bool create_surface(struct swa_window_android* win,
 }
 
 static void destroy_surface(struct swa_window_android* win) {
+	dlg_trace("destroy_surface");
 	win->valid = false;
 
 	if(win->surface_type == swa_surface_buffer) {
@@ -435,8 +446,6 @@ static void frame_callback(long frame_time_nanos, void* data) {
 	frame_callback64(frame_time_nanos, data);
 }
 
-// TODO: somehow handle case when choreographer isn't available.
-// Do refreshing via timer or something
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_android* win = get_window_android(base);
 	win->redraw = true;
@@ -459,10 +468,15 @@ static void win_surface_frame(struct swa_window* base) {
 		AChoreographer_postFrameCallback(dpy->choreographer,
 			frame_callback, win);
 #else
+		// When the choreographer is available, the api has to be
+		// at least 24, otherwise we can't have gotten one
 		dlg_error("Unreachable");
 #endif // __ANDROID_API__
 	} else {
-		dlg_warn("can't use choreographer to schedule redraws");
+		// TODO: somehow handle case when choreographer isn't available.
+		// Do refreshing via timer or something
+		dlg_warn("Unimplemented: no choreographer available. "
+			"Refreshing the surface probably won't work");
 	}
 }
 
@@ -558,7 +572,13 @@ static bool win_gl_swap_buffers(struct swa_window* base) {
 
 	// eglSwapBuffers must commit to the surface in one way or another
 	win_surface_frame(&win->base);
-	return eglSwapBuffers(win->dpy->egl->display, win->gl.surface);
+
+	if(!eglSwapBuffers(win->dpy->egl->display, win->gl.surface)) {
+		dlg_error("eglSwapBuffers: %s", swa_egl_last_error_msg());
+		return false;
+	}
+
+	return true;
 #else
 	dlg_warn("swa was compiled without gl suport");
 	return false;
@@ -669,8 +689,17 @@ static const struct swa_window_interface window_impl = {
 // display api
 static void display_destroy(struct swa_display* base) {
 	struct swa_display_android* dpy = get_display_android(base);
+	dlg_assertm(!dpy->window, "Window wasn't destroyed before display");
+
+#ifdef SWA_WITH_GL
+	if(dpy->egl) {
+		swa_egl_display_destroy(dpy->egl);
+	}
+#endif
+
+	free(dpy->events);
+	free((char*) dpy->appname);
 	dpy->activity->dpy = NULL;
-	// TODO
 	free(dpy);
 }
 
@@ -707,7 +736,7 @@ static void encode_utf8(char* out, uint32_t unicode) {
 	}
 }
 
-// TODO: don't attach thread and query function *every time*
+// TODO(optimization): don't attach thread and query function *every time*
 // do it just once.
 static void get_utf8(struct activity* activity, char* out,
 		unsigned akeycode, unsigned ameta) {
@@ -769,7 +798,7 @@ static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
 	int32_t akeycode = AKeyEvent_getKeyCode(ev);
 
 	// we skip this keycode so that is handled by android
-	// the application can't handle it anyways (at the moment - TODO?!)
+	// the application can't handle it anyways
 	if(akeycode == AKEYCODE_BACK) {
 		dlg_debug("android: skip back key");
 		return false;
@@ -779,6 +808,16 @@ static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
 	enum swa_keyboard_mod mods = android_to_modifiers(ameta);
 	dpy->keyboard_mods = mods;
 
+	// set the key state
+	enum swa_key key = android_to_key(akeycode);
+	unsigned idx = key / 64;
+	unsigned bit = key % 64;
+	if(pressed) {
+		dpy->key_states[idx] |= (uint64_t)(1 << bit);
+	} else {
+		dpy->key_states[idx] &= ~(uint64_t)(1 << bit);
+	}
+
 	if(!dpy->window || !dpy->window->base.listener->key) {
 		return false;
 	}
@@ -787,7 +826,7 @@ static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
 	get_utf8(dpy->activity, utf8, akeycode, ameta);
 	struct swa_key_event kev = {
 		.utf8 = utf8,
-		.keycode = android_to_key(akeycode),
+		.keycode = key,
 		.modifiers = mods,
 		.pressed = pressed,
 		.repeated = AKeyEvent_getRepeatCount(ev) != 0,
@@ -809,7 +848,7 @@ static bool handle_motion_event(struct swa_display_android* dpy, AInputEvent* ev
 		}
 
 		for(size_t i = 0u; i < count; ++i) {
-			struct swa_touch_begin_event tev = {
+			struct swa_touch_event tev = {
 				.id = AMotionEvent_getPointerId(ev, i),
 				.x = AMotionEvent_getX(ev, i),
 				.y = AMotionEvent_getY(ev, i),
@@ -833,12 +872,10 @@ static bool handle_motion_event(struct swa_display_android* dpy, AInputEvent* ev
 		}
 
 		for(size_t i = 0u; i < count; ++i) {
-			// TODO: abandon dx, dy members in event structure?
-			struct swa_touch_update_event tev = {
+			struct swa_touch_event tev = {
 				.id = AMotionEvent_getPointerId(ev, i),
 				.x = AMotionEvent_getX(ev, i),
 				.y = AMotionEvent_getY(ev, i),
-				.dx = 0, .dy = 0
 			};
 
 			dpy->window->base.listener->touch_update(&dpy->window->base, &tev);
@@ -851,8 +888,7 @@ static bool handle_motion_event(struct swa_display_android* dpy, AInputEvent* ev
 		dpy->window->base.listener->touch_cancel(&dpy->window->base);
 		break;
 
-	// weirdly named imo. Those events are generated for secondary touch
-	// points
+	// Those events are generated for secondary touch points up/down
 	} case AMOTION_EVENT_ACTION_POINTER_DOWN: {
 		if(!dpy->window || !dpy->window->base.listener->touch_begin) {
 			return false;
@@ -861,7 +897,7 @@ static bool handle_motion_event(struct swa_display_android* dpy, AInputEvent* ev
 		int32_t idx = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK)
 			>> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
 		unsigned id = AMotionEvent_getPointerId(ev, idx);
-		struct swa_touch_begin_event tev = {
+		struct swa_touch_event tev = {
 			.id = id,
 			.x = AMotionEvent_getX(ev, idx),
 			.y = AMotionEvent_getY(ev, idx),
@@ -978,6 +1014,7 @@ static void handle_event(struct swa_display_android* dpy, const struct event* ev
 			}
 			break;
 		case event_type_focus:
+			memset(dpy->key_states, 0, sizeof(dpy->key_states));
 			if(dpy->window && dpy->window->base.listener->focus) {
 				struct swa_window* win = &dpy->window->base;
 				win->listener->focus(win, ev->data);
@@ -996,6 +1033,7 @@ static void handle_event(struct swa_display_android* dpy, const struct event* ev
 			}
 			break;
 		case event_type_win_destroyed:
+			memset(dpy->key_states, 0, sizeof(dpy->key_states));
 			if(dpy->window && dpy->window->valid) {
 				destroy_surface(dpy->window);
 				if(dpy->window->base.listener->surface_destroyed) {
@@ -1046,7 +1084,6 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 	}
 
 	pthread_mutex_lock(&dpy->activity->mutex);
-	dlg_info("n_events %d", dpy->n_events);
 	while(dpy->n_events) {
 		struct event ev = dpy->events[0];
 		--dpy->n_events;
@@ -1128,15 +1165,29 @@ static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base,
 }
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
-	// struct swa_display_android* dpy = get_display_android(base);
-	// TODO
-	return false;
+	struct swa_display_android* dpy = get_display_android(base);
+	const unsigned n_bits = 8 * sizeof(dpy->key_states);
+	if(key >= n_bits) {
+		dlg_warn("keycode not tracked (too high)");
+		return false;
+	}
+
+	unsigned idx = key / 64;
+	unsigned bit = key % 64;
+	return (dpy->key_states[idx] & (1 << bit));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
-	// struct swa_display_android* dpy = get_display_android(base);
-	// TODO
-	return NULL;
+	struct swa_display_android* dpy = get_display_android(base);
+	int32_t keycode = key_to_android(key);
+	if(keycode == -1) {
+		dlg_warn("Key %d has no android equivalent", key);
+		return "";
+	}
+
+	char* name = malloc(5);
+	get_utf8(dpy->activity, name, keycode, 0);
+	return name;
 }
 
 static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
@@ -1149,15 +1200,15 @@ static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	return dpy->window && dpy->window->focus ? &dpy->window->base : NULL;
 }
 
+// TODO: mouse support
 static bool display_mouse_button_pressed(struct swa_display* base,
 		enum swa_mouse_button button) {
 	// struct swa_display_android* dpy = get_display_android(base);
-	// TODO
 	return false;
 }
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	// struct swa_display_android* dpy = get_display_android(base);
-	// TODO
+	*x = *y = 0;
 }
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct swa_display_android* dpy = get_display_android(base);
@@ -1235,7 +1286,7 @@ struct swa_display* swa_display_android_create(const char* appname) {
 	dpy->base.impl = &display_impl;
 	dpy->looper = ALooper_prepare(0);
 	dpy->activity = g_current_activity;
-	dpy->appname = appname ? appname : "swa";
+	dpy->appname = strdup(appname ? appname : "swa");
 
 #if __ANDROID_API__ >= 24
 	dpy->choreographer = AChoreographer_getInstance();
@@ -1384,6 +1435,7 @@ static void activity_onWindowFocusChanged(ANativeActivity* aactivity,
 static void activity_onNativeWindowCreated(ANativeActivity* aactivity,
 		ANativeWindow* window) {
 
+	dlg_trace("onNativeWindowCreated");
 	struct activity* activity = aactivity->instance;
 	dlg_assert(activity);
 
@@ -1405,6 +1457,7 @@ static void activity_onNativeWindowCreated(ANativeActivity* aactivity,
 	}
 
 	pthread_mutex_unlock(&activity->mutex);
+	dlg_trace("onNativeWindowCreated done");
 }
 
 static void activity_onNativeWindowResized(ANativeActivity* aactivity,
@@ -1424,6 +1477,7 @@ static void activity_onNativeWindowResized(ANativeActivity* aactivity,
 
 static void activity_onNativeWindowRedrawNeeded(ANativeActivity* aactivity,
 		ANativeWindow* window) {
+	dlg_trace("onNativeWindowRedraw");
 	struct activity* activity = aactivity->instance;
 	dlg_assert(activity);
 
@@ -1435,6 +1489,7 @@ static void activity_onNativeWindowRedrawNeeded(ANativeActivity* aactivity,
 	};
 
 	push_event(activity, ev);
+	dlg_trace("onNativeWindowRedraw done");
 }
 
 static void activity_onNativeWindowDestroyed(ANativeActivity* aactivity,

@@ -25,6 +25,7 @@ struct swa_display_android {
 	AChoreographer* choreographer;
 
 	struct swa_window_android* window;
+	uint64_t key_states[16]; // bitset
 
 	// NOTE: could use a ringbuffer here
 	// probably not worth it

@@ -1247,6 +1247,8 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
+
+	free(dpy->appname);
 	free(dpy);
 }
 
@@ -1786,7 +1788,7 @@ static void touch_down(void* data, struct wl_touch* wl_touch, uint32_t serial,
 	const struct swa_window_listener* listener =
 		win->base.listener;
 	if(listener && listener->touch_begin) {
-		struct swa_touch_begin_event ev = {
+		struct swa_touch_event ev = {
 			.id = id,
 			.x = dpy->touch_points[i].x,
 			.y = dpy->touch_points[i].y,
@@ -1847,12 +1849,10 @@ static void touch_motion(void* data, struct wl_touch* wl_touch, uint32_t time,
 	int x = wl_fixed_to_int(sx);
 	int y = wl_fixed_to_int(sy);
 	if(listener && listener->touch_update) {
-		struct swa_touch_update_event ev = {
+		struct swa_touch_event ev = {
 			.id = id,
 			.x = x,
 			.y = y,
-			.dx = x - dpy->touch_points[i].x,
-			.dy = y - dpy->touch_points[i].y,
 		};
 		listener->touch_update(&dpy->touch_points[i].window->base, &ev);
 	}
@@ -2509,7 +2509,7 @@ struct swa_display* swa_display_wl_create(const char* appname) {
 	dpy->base.impl = &display_impl;
 	dpy->display = wld;
 	dpy->pml = pml_new();
-	dpy->appname = appname;
+	dpy->appname = strdup(appname ? appname : "swa");
 	dpy->io_source = pml_io_new(dpy->pml, wl_display_get_fd(wld),
 		POLLIN, dispatch_display);
 	pml_io_set_data(dpy->io_source, dpy);

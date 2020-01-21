@@ -677,7 +677,7 @@ static void handle_xinput_event(struct swa_display_x11* dpy,
 		switch(gev->event_type) {
 		case XCB_INPUT_TOUCH_BEGIN:
 			if(win->base.listener->touch_begin) {
-				struct swa_touch_begin_event ev = {
+				struct swa_touch_event ev = {
 					.id = id,
 					.x = x,
 					.y = y,
@@ -686,12 +686,10 @@ static void handle_xinput_event(struct swa_display_x11* dpy,
 			} return;
 		case XCB_INPUT_TOUCH_UPDATE:
 			if(win->base.listener->touch_update) {
-				struct swa_touch_update_event ev = {
+				struct swa_touch_event ev = {
 					.id = id,
 					.x = x,
 					.y = y,
-					// TODO: dx, dy
-					// or remove them from the event?
 				};
 				win->base.listener->touch_update(&win->base, &ev);
 			}

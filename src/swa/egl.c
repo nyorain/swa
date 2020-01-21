@@ -8,9 +8,8 @@
 // eglGetPlatformDisplay is not available (ancient implementations)
 // yes, apparently needed for android
 
-struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
-	struct swa_egl_display* dpy = calloc(1, sizeof(*dpy));
-
+static bool init_platform_display(struct swa_egl_display* dpy,
+		EGLenum platform, void* ndpy) {
 	// it's important that we do this here since eglGetProcAddress may return
 	// a non-null value even if the extension isn't supported and we
 	// would crash in that case.
@@ -22,8 +21,8 @@ struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
 	// The platform base extension will likely not be supported in
 	// that case anyways.
 	const char* exts = eglQueryString(EGL_NO_DISPLAY, EGL_EXTENSIONS);
-	if(!exts || !swa_egl_find_ext(exts, "EGL_EXT_platform_base")) {
-		dlg_error("EGL_EXT_platform_base not supported");
+	bool has_platform = exts && swa_egl_find_ext(exts, "EGL_EXT_platform_base");
+	if(!has_platform) {
 		goto err;
 	}
 
@@ -35,22 +34,43 @@ struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
 		eglGetProcAddress("eglCreatePlatformWindowSurfaceEXT");
 
 	if(!dpy->api.getPlatformDisplay || !dpy->api.createPlatformWindowSurface) {
-		dlg_error("Couldn't load egl platform api");
+		dlg_warn("Couldn't load egl platform api");
 		goto err;
 	}
 
 	dpy->display = dpy->api.getPlatformDisplay(platform, ndpy, NULL);
 	if(!dpy->display) {
-		dlg_error("Failed to get egl display: %s", swa_egl_last_error_msg());
+		dlg_error("eglGetPlatformDisplay: %s", swa_egl_last_error_msg());
 		goto err;
+	}
+
+	return true;
+
+err:
+	dpy->api.getPlatformDisplay = NULL;
+	dpy->api.createPlatformWindowSurface = NULL;
+	return false;
+}
+
+struct swa_egl_display* swa_egl_display_create(EGLenum platform, void* ndpy) {
+	eglGetError(); // clear the last error
+
+	struct swa_egl_display* dpy = calloc(1, sizeof(*dpy));
+	if(!init_platform_display(dpy, platform, ndpy)) {
+		// try legacy way
+		dpy->display = eglGetDisplay((NativeDisplayType) ndpy);
+		if(!dpy->display) {
+			dlg_error("eglGetDisplay: %s", swa_egl_last_error_msg());
+			goto err;
+		}
 	}
 
 	if(eglInitialize(dpy->display, &dpy->major, &dpy->minor) == EGL_FALSE) {
-		dlg_error("Failed to initialize egl");
+		dlg_error("eglInitialize: %s", swa_egl_last_error_msg());
 		goto err;
 	}
 
-	exts = eglQueryString(dpy->display, EGL_EXTENSIONS);
+	const char* exts = eglQueryString(dpy->display, EGL_EXTENSIONS);
 	dlg_assert(exts);
 	if(!swa_egl_find_ext(exts, "EGL_KHR_get_all_proc_addresses")) {
 		// This is critical since then calls to eglGetProcAddress cannot
@@ -220,8 +240,6 @@ bool swa_egl_init_context(struct swa_egl_display* egl,
 
 EGLSurface swa_egl_create_surface(struct swa_egl_display* egl,
 		void* handle, EGLConfig config, bool srgb) {
-	dlg_assert(egl->api.createPlatformWindowSurface);
-
 	EGLint sa[3] = {EGL_NONE};
 	const char* exts = eglQueryString(egl->display, EGL_EXTENSIONS);
 	if(exts && swa_egl_find_ext(exts, "EGL_KHR_gl_colorspace")) {
@@ -235,11 +253,21 @@ EGLSurface swa_egl_create_surface(struct swa_egl_display* egl,
 		return NULL;
 	}
 
-	EGLSurface surface = egl->api.createPlatformWindowSurface(
-		egl->display, config, handle, sa);
-	if(!surface) {
-		dlg_error("eglCreatePlatformWindowSurface: %s", swa_egl_last_error_msg());
-		return NULL;
+	EGLSurface surface;
+	if(egl->api.createPlatformWindowSurface) {
+		surface = egl->api.createPlatformWindowSurface(
+			egl->display, config, handle, sa);
+		if(!surface) {
+			dlg_error("eglCreatePlatformWindowSurface: %s", swa_egl_last_error_msg());
+			return NULL;
+		}
+	} else {
+		surface = eglCreateWindowSurface(egl->display, config,
+			(NativeWindowType) handle, sa);
+		if(!surface) {
+			dlg_error("eglCreateWindowSurface: %s", swa_egl_last_error_msg());
+			return NULL;
+		}
 	}
 
 	return surface;

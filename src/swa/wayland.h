@@ -71,6 +71,9 @@ struct swa_display_wl {
 		uint32_t serial;
 	} dnd;
 
+	// We have to keep track of touch points to know on which
+	// window the touch points are located. That information is only
+	// sent from wayland when a new touch point is created.
 	unsigned capacity_touch_points;
 	unsigned n_touch_points;
 	struct swa_wl_touch_point* touch_points;

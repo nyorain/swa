@@ -306,29 +306,18 @@ struct swa_dnd_event {
 	int x, y;
 };
 
-struct swa_touch_begin_event {
-	// Identification of the new touch point. This id will passed to further
+struct swa_touch_event {
+	// Identification of the point. This id will passed to further
 	// touch events and can be used to identify this touch point.
 	// Touch point ids are unique as long as they exist (between `touch_begin`
 	// and `touch_end` or `touch_cancel`) but might be reused after that.
 	unsigned id;
-	// Initial position of the new touch point in window-local coordinates.
-	int x, y;
-};
-
-struct swa_touch_update_event {
-	// The identification of the touch point as previously introduced
-	// by `touch_begin`.
-	unsigned id;
 	// Position of the touch point in window-local coordinates.
 	int x, y;
-	// Difference between the current and last touch positions
-	// in window-local coordinates.
-	int dx, dy;
 };
 
 // All callbacks are guaranteed to only be called from inside
-// `swa_display_dispatch(_pending)`
+// `swa_display_dispatch`
 struct swa_window_listener {
 	// Called by the system e.g. when the window contents where invalidated
 	// or emitted in response to a call to `swa_window_refresh`.
@@ -384,9 +373,9 @@ struct swa_window_listener {
 	void (*mouse_wheel)(struct swa_window*, float dx, float dy);
 
 	// Called when a new touch point is created.
-	void (*touch_begin)(struct swa_window*, const struct swa_touch_begin_event*);
+	void (*touch_begin)(struct swa_window*, const struct swa_touch_event*);
 	// Updates the position of a touch point.
-	void (*touch_update)(struct swa_window*, const struct swa_touch_update_event*);
+	void (*touch_update)(struct swa_window*, const struct swa_touch_event*);
 	// touch_end: ends a touch point. No further events for this
 	// touch point will be generated.
 	// id: the identification of the touch point as previously introduced

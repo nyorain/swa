@@ -49,8 +49,7 @@ android:
   that at least prints the exception to the log?
 - display dispatch currently not re-entrant at all
   not sure if ALooper is though...
-- implement eglGetDisplay version of egl.c since android doesn't
-  support the platform base extension.
+- add support for mouse events (and capability)
 
 general
 

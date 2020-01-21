@@ -58,11 +58,17 @@ static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
 	}
 }
 
+static void window_surface_created(struct swa_window* win) {
+	bool ret = swa_window_gl_make_current(win);
+	dlg_assert(ret);
+}
+
 static const struct swa_window_listener window_listener = {
 	.draw = window_draw,
 	.mouse_button = window_mouse_button,
 	.close = window_close,
 	.key = window_key,
+	.surface_created = window_surface_created
 };
 
 int main() {
