@@ -1,8 +1,8 @@
 #pragma once
 
 #include <swa/swa.h>
-#include <swa/impl.h>
-#include <swa/xkb.h>
+#include <swa/private/impl.h>
+#include <swa/private/xkb.h>
 #include <xcb/xcb_ewmh.h>
 #include <xcb/present.h>
 

@@ -1,4 +1,4 @@
-#include <swa/egl.h>
+#include <swa/private/egl.h>
 #include <swa/swa.h>
 #include <stdlib.h>
 #include <dlg/dlg.h>

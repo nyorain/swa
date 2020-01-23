@@ -1,6 +1,6 @@
-#include "vulkan.h"
 #include <swa/swa.h>
-#include <swa/impl.h>
+#include <swa/private/impl.h>
+#include <swa/private/kms/vulkan.h>
 #include <stdlib.h>
 #include <assert.h>
 #include <unistd.h>

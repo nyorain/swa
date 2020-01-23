@@ -1,4 +1,5 @@
 #include <swa/android.h>
+#include <swa/private/android.h>
 #include <dlg/dlg.h>
 #include <dlg/output.h>
 #include <string.h>
@@ -14,7 +15,7 @@
 #endif
 
 #ifdef SWA_WITH_GL
-  #include <swa/egl.h>
+  #include <swa/private/egl.h>
 #endif
 
 #ifdef SWA_WITH_VK
@@ -785,11 +786,19 @@ static void get_utf8(struct activity* activity, char* out,
 
 static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
 	dlg_assert(AInputEvent_getType(ev) == AINPUT_EVENT_TYPE_KEY);
+	dlg_trace("key event");
 
 	int action = AKeyEvent_getAction(ev);
 	bool pressed = false;
 	if(action == AKEY_EVENT_ACTION_DOWN) {
 		pressed = true;
+	} else if(action == AKEY_EVENT_ACTION_MULTIPLE) {
+		// There is no way to retrieve any meaningful information in
+		// this case. Sadly, this will be triggered for all non-standard
+		// characters, i.e. non-english ones.
+		// See https://code.google.com/p/android/issues/detail?id=33998
+		dlg_warn("Can't process ACTION_MULTIPLE key event; ndk issue");
+		return false;
 	} else if(action != AKEY_EVENT_ACTION_UP) {
 		dlg_debug("Unknown key action %d", action);
 		return false;
@@ -799,7 +808,9 @@ static bool handle_key_event(struct swa_display_android* dpy, AInputEvent* ev) {
 
 	// we skip this keycode so that is handled by android
 	// the application can't handle it anyways
-	if(akeycode == AKEYCODE_BACK) {
+	if(akeycode == AKEYCODE_BACK ||
+			akeycode == AKEYCODE_VOLUME_UP ||
+			akeycode == AKEYCODE_VOLUME_DOWN) {
 		dlg_debug("android: skip back key");
 		return false;
 	}
@@ -1278,6 +1289,21 @@ static const struct swa_display_interface display_impl = {
 	.create_window = display_create_window,
 };
 
+// android-specific
+bool swa_display_is_android(struct swa_display* dpy) {
+	return dpy->impl == &display_impl;
+}
+
+ANativeWindow* swa_display_android_get_native_window(struct swa_display* base) {
+	struct swa_display_android* dpy = get_display_android(base);
+	return dpy->activity->window;
+}
+
+ANativeActivity* swa_display_android_get_native_activity(struct swa_display* base) {
+	struct swa_display_android* dpy = get_display_android(base);
+	return dpy->activity->activity;
+}
+
 struct swa_display* swa_display_android_create(const char* appname) {
 	(void) appname;
 	dlg_assert(g_current_activity);
@@ -1610,3 +1636,4 @@ void ANativeActivity_onCreate(ANativeActivity* aactivity,
 	dlg_set_handler(output_handler, activity);
 	dlg_trace("onCreate done");
 }
+

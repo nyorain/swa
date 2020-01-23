@@ -1,4 +1,4 @@
-#include "props.h"
+#include <swa/private/kms/props.h>
 #include <dlg/dlg.h>
 #include <stdlib.h>
 #include <string.h>

@@ -1007,9 +1007,9 @@ xcursor_load_theme(const char *theme, int size,
 }
 
 // wayland xcursor api
-#include "xcursor.h"
-#include "cursor-data.h"
+#include <swa/private/kms/xcursor.h>
 #include <dlg/dlg.h>
+#include "cursor-data.h"
 
 static void xcursor_destroy(struct swa_xcursor *cursor) {
 	for (size_t i = 0; i < cursor->image_count; i++) {

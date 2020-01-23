@@ -1,7 +1,7 @@
 #pragma once
 
-#include <swa/impl.h>
-#include <swa/xkb.h>
+#include <swa/private/impl.h>
+#include <swa/private/xkb.h>
 #include <stdint.h>
 #include <time.h>
 

@@ -1,4 +1,4 @@
-#include <swa/winapi.h>
+#include <swa/private/winapi.h>
 #include <dlg/dlg.h>
 
 #ifdef SWA_WITH_VK

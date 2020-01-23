@@ -22,9 +22,9 @@
 //  research whether they all of them are available everywhere or a mesa thing.
 //  In that case we could at least offer a vkdisplay backend
 
-#include "props.h"
-#include <swa/impl.h>
-#include <swa/xkb.h>
+#include <swa/private/kms/props.h>
+#include <swa/private/impl.h>
+#include <swa/private/xkb.h>
 #include <stdint.h>
 #include <time.h>
 

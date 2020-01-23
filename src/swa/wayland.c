@@ -1,7 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include <swa/config.h>
-#include <swa/wayland.h>
+#include <swa/private/wayland.h>
 #include <dlg/dlg.h>
 #include <pml.h>
 #include <wayland-client-core.h>
@@ -25,7 +25,7 @@
 #endif
 
 #ifdef SWA_WITH_GL
-  #include <swa/egl.h>
+  #include <swa/private/egl.h>
   #include <wayland-egl-core.h>
   #include <EGL/egl.h>
 #endif

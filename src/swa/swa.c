@@ -1,20 +1,20 @@
-#include <swa/config.h>
-#include <swa/impl.h>
+#include <swa/swa.h>
+#include <swa/private/impl.h>
 #include <dlg/dlg.h>
 #include <stdlib.h>
 #include <string.h>
 
 #ifdef SWA_WITH_WL
-  #include <swa/wayland.h>
+  #include <swa/private/wayland.h>
 #endif
 #ifdef SWA_WITH_WIN
-  #include <swa/winapi.h>
+  #include <swa/private/winapi.h>
 #endif
 #ifdef SWA_WITH_X11
-  #include <swa/x11.h>
+  #include <swa/private/x11.h>
 #endif
 #ifdef SWA_WITH_KMS
-  #include <swa/kms/kms.h>
+  #include <swa/private/kms/kms.h>
 #endif
 #ifdef SWA_WITH_ANDROID
   #include <swa/android.h>

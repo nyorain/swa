@@ -1,12 +1,12 @@
 #pragma once
 
-#include <swa/impl.h>
+#include <swa/config.h>
+#include <swa/private/impl.h>
 #include <pthread.h>
 
 #include <android/native_activity.h>
 #include <android/native_window.h>
 
-struct AChoreographer;
 typedef struct AChoreographer AChoreographer;
 
 typedef void* EGLSurface;
@@ -69,8 +69,6 @@ struct swa_window_android {
 		struct swa_android_gl_surface gl;
 	};
 };
-
-struct swa_display* swa_display_android_create(const char*);
 
 #ifdef __cplusplus
 }

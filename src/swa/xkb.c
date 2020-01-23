@@ -1,4 +1,4 @@
-#include <swa/xkb.h>
+#include <swa/private/xkb.h>
 #include <dlg/dlg.h>
 #include <xkbcommon/xkbcommon-compose.h>
 #include <locale.h>

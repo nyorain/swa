@@ -1,4 +1,4 @@
-#include <swa/x11.h>
+#include <swa/private/x11.h>
 #include <dlg/dlg.h>
 #include <string.h>
 #include <unistd.h>
@@ -26,7 +26,7 @@
 #endif
 
 #ifdef SWA_WITH_GL
-  #include <swa/egl.h>
+  #include <swa/private/egl.h>
   #include <EGL/egl.h>
 #endif
 

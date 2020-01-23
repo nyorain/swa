@@ -55,36 +55,16 @@ general
 
 - fixup meson for linux/unix: dynmically enable backends/parts
   of backends
-- add 'refresh' and/or 'frame' to window capabilities?
-  it can't be implemented on all backends
-- print egl errors (eglGetError) for easier debugging
-- set xkbcommon logging function
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
-- add swa_cursor_disable or something that allows to lock pointer
-  on wayland and grab the cursor on x11. windows has probably something
-  like that as well
-- interface to query platform phdev vulkan support, see glfw and
-  example-vulkan.c
-  	- evaluate first whether this is really needed
-  	- make sure it works for the drm backend prototype
-- figure out when to use events and when just use plain parameters in window listener?
-	- clean up touch events. Really include dx, dy in movement?
-	  would make some backend implementations *way* more complicated
-- gl transparency semantics. Does the platform use premultiplied alpha?
-  e.g. on wayland we have to use premultiplied alpha, on other platforms
-  probably not
 - error checking. Make sure we cleanup everything?
 	- or don't do that in places where errors aren't expected?
 	  tradeoff maintainability and possibly usability here i guess?
 	  like do we really have to check the return value of
 	  wl_compositor_create_surface? i don't know any condition we can/want
 	  to handle in which it returns NULL.
-- re-entrant callbacks. Allowed to modify window state in handler?
-  allowed to call data_offer_destroy in data offer callback?
-  etc
 
-laster/low prio
+later/low prio
 
 - public apis per backend. E.g. retrieve x11/wayland display from
   display, get android native activity etc.
@@ -112,6 +92,24 @@ laster/low prio
 - allow to share gl contexts between windows
 	- or maybe not create one context per window? not important though,
 	  hundreds of windows isn't a priority usecase 
+- could add `struct swa_display* swa_window_get_display(struct swa_window*)`
+- could add 'refresh' and/or 'frame' to window capabilities
+  it can't be implemented on all backends
+- set xkbcommon logging function
+- add swa_cursor_disable or something that allows to lock pointer
+  on wayland and grab the cursor on x11. windows has probably something
+  like that as well
+- add interface to query platform phdev vulkan support, see glfw and
+  example-vulkan.c
+  	- evaluate first whether this is really needed
+  	- make sure it works for the drm backend prototype
+- gl transparency semantics. Does the platform use premultiplied alpha?
+  e.g. on wayland we have to use premultiplied alpha, on other platforms
+  probably not. Applications have to know that i guess
+- re-entrant callbacks. Allowed to modify window state in handler?
+  allowed to call data_offer_destroy in data offer callback?
+  etc
+
 
 ## References and dev docs
 

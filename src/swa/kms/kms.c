@@ -1,9 +1,9 @@
 #define _POSIX_C_SOURCE 200809L
 
-#include "kms.h"
-#include "props.h"
-#include "xcursor.h"
-#include <swa/xkb.h>
+#include <swa/private/kms/kms.h>
+#include <swa/private/kms/props.h>
+#include <swa/private/kms/xcursor.h>
+#include <swa/private/xkb.h>
 #include <dlg/dlg.h>
 #include <assert.h>
 #include <errno.h>
@@ -37,11 +37,11 @@
 #include <linux/input-event-codes.h>
 
 #ifdef SWA_WITH_VK
-  #include "vulkan.h"
+  #include <swa/private/kms/vulkan.h>
 #endif
 
 #ifdef SWA_WITH_GL
-  #include <swa/egl.h>
+  #include <swa/private/egl.h>
   #include <gbm.h>
 #endif
 
