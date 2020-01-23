@@ -1248,7 +1248,7 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
 
-	free(dpy->appname);
+	free((char*) dpy->appname);
 	free(dpy);
 }
 
