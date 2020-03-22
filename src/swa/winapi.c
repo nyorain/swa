@@ -699,7 +699,7 @@ static bool register_window_class(void) {
 	wcx.cbSize = sizeof(wcx);
 	// TODO: OWNDC not needed for buffer surfaces.
 	// Not sure if it's needed for vulkan.
-	// Maybe create two seperate window classes?
+	// Maybe create two seperate window classes? do so lazily then though
 	wcx.style = CS_HREDRAW | CS_VREDRAW | CS_OWNDC;
 	wcx.lpfnWndProc = win_proc;
 	wcx.cbClsExtra = 0;
