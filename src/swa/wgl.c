@@ -1,4 +1,4 @@
-#include <swa/winapi.h>
+#include <swa/private/winapi.h>
 #include <Wingdi.h>
 #include <stdlib.h>
 #include <dlg/dlg.h>
@@ -119,14 +119,14 @@ static bool wgl_init(struct swa_display_win* dpy) {
         goto error;
     }
 
-    api->wglGetExtensionStringARB = (pfn_wglGetExtensionStringARB)(ptr);
+    api->wglGetExtensionStringARB = (pfn_wglGetExtensionStringARB)(void(*)(void))(ptr);
     const char* extensions = api->wglGetExtensionStringARB(dc);
     if(!extensions) {
         print_winapi_error("getExtensionStringARB");
         goto error;
     }
 
-    #define LOAD(x) if(!(api->x = (pfn_##x) wglGetProcAddress(#x))) { \
+    #define LOAD(x) if(!(api->x = (pfn_##x)(void(*)(void)) wglGetProcAddress(#x))) { \
         dlg_error("Could not load '#x'"); \
         goto error; \
     }
