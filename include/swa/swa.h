@@ -248,12 +248,6 @@ struct swa_window_settings {
 	const struct swa_window_listener* listener;
 };
 
-struct swa_size_event {
-	// The new size (width and height) of the window.
-	unsigned width;
-	unsigned height;
-};
-
 struct swa_key_event {
 	// The text input this key event generated.
 	// May be NULL, usually this is the case for key release events
@@ -744,6 +738,24 @@ SWA_API void* swa_data_offer_get_userdata(struct swa_data_offer*);
 // to SWA_DEFAULT_POSITION. Will otherwise memset the settings
 // to 0. Will not specify any surface to create.
 SWA_API void swa_window_settings_default(struct swa_window_settings*);
+
+// Returns the name of the given key enumeration (null-terminated).
+// For exapmle, swa_key_to_name(swa_key_tab) returns "tab".
+// Returns "<invalid>" if the key isn't known.
+SWA_API const char* swa_key_to_name(enum swa_key);
+
+// Tries to find a swa_key enumeration value for the given key name.
+// For exapmle, swa_key_from_name("w") returns swa_key_w.
+// If no matching swa_key exists, returns swa_key_none.
+SWA_API enum swa_key swa_key_from_name(const char* name);
+
+// Returns whether the key is textual, i.e. is usually textually
+// represented. Returns true for keys like swa_key_w, swa_key_k0
+// or swa_key_leftbrace while it returns false for keys like swa_key_enter,
+// swa_key_backspace, swa_key_leftctrl, swa_key_f1 or swa_key_left.
+// Whether or not a key is textual can depend on the circumstance (e.g.
+// you might want to interpret keys like enter as textual).
+SWA_API bool swa_key_is_textual(enum swa_key key);
 
 #ifdef __cplusplus
 }

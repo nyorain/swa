@@ -33,8 +33,8 @@ void swa_xkb_key(struct swa_xkb_context*, uint8_t keycode,
 	char** out_utf8, bool* canceled);
 const char* swa_xkb_key_name(struct swa_xkb_context*, enum swa_key);
 const char* swa_xkb_key_name_keymap(struct xkb_keymap*, enum swa_key);
-void swa_xkb_update_state(struct swa_xkb_context*, int mods[static 3],
-	int layouts[static 3]);
+void swa_xkb_update_state(struct swa_xkb_context*, int mods[3],
+	int layouts[3]);
 
 #ifdef __cplusplus
 }

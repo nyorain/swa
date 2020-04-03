@@ -450,3 +450,310 @@ void swa_data_offer_set_userdata(struct swa_data_offer* offer, void* data) {
 void* swa_data_offer_get_userdata(struct swa_data_offer* offer) {
 	return offer->userdata;
 }
+
+// key information
+const struct {
+	enum swa_key key;
+	const char* name;
+	bool textual;
+} key_infos[] = {
+	{swa_key_escape, "escape", false},
+
+	{swa_key_k1, "1", true},
+	{swa_key_k2, "2", true},
+	{swa_key_k3, "3", true},
+	{swa_key_k4, "4", true},
+	{swa_key_k5, "5", true},
+	{swa_key_k6, "6", true},
+	{swa_key_k7, "7", true},
+	{swa_key_k8, "8", true},
+	{swa_key_k9, "9", true},
+	{swa_key_k0, "0", true},
+	{swa_key_minus, "minus", true},
+	{swa_key_equals, "equals", true},
+	{swa_key_backspace, "backspace", false},
+	{swa_key_tab, "tab", true},
+
+	{swa_key_q, "q", true},
+	{swa_key_w, "w", true},
+	{swa_key_e, "e", true},
+	{swa_key_r, "r", true},
+	{swa_key_t, "t", true},
+	{swa_key_y, "y", true},
+	{swa_key_u, "u", true},
+	{swa_key_i, "i", true},
+	{swa_key_o, "o", true},
+	{swa_key_p, "p", true},
+	{swa_key_leftbrace, "leftbrace", true},
+	{swa_key_rightbrace, "rightbrace", true},
+	{swa_key_enter, "enter", false},
+	{swa_key_leftctrl, "leftctrl", false},
+
+	{swa_key_a, "a", true},
+	{swa_key_s, "s", true},
+	{swa_key_d, "d", true},
+	{swa_key_f, "f", true},
+	{swa_key_g, "g", true},
+	{swa_key_h, "h", true},
+	{swa_key_j, "j", true},
+	{swa_key_k, "k", true},
+	{swa_key_l, "l", true},
+	{swa_key_semicolon, "semicolon", true},
+	{swa_key_apostrophe, "apostrophe", true},
+	{swa_key_grave, "grave", true},
+	{swa_key_leftshift, "leftshift", false},
+	{swa_key_backslash, "backslash", true},
+
+	{swa_key_x, "x", true},
+	{swa_key_z, "z", true},
+	{swa_key_c, "c", true},
+	{swa_key_v, "v", true},
+	{swa_key_b, "b", true},
+	{swa_key_m, "m", true},
+	{swa_key_n, "n", true},
+	{swa_key_comma, "comma", true},
+	{swa_key_period, "period", true},
+	{swa_key_slash, "slash", true},
+	{swa_key_rightshift, "rightshift", false},
+	{swa_key_kpmultiply, "kpmultiply", true},
+	{swa_key_leftalt, "leftalt", false},
+	{swa_key_space, "space", true},
+	{swa_key_capslock, "capslock", false},
+
+	{swa_key_f1, "f1", false},
+	{swa_key_f2, "f2", false},
+	{swa_key_f3, "f3", false},
+	{swa_key_f4, "f4", false},
+	{swa_key_f5, "f5", false},
+	{swa_key_f6, "f6", false},
+	{swa_key_f7, "f7", false},
+	{swa_key_f8, "f8", false},
+	{swa_key_f9, "f9", false},
+	{swa_key_f10, "f10", false},
+	{swa_key_numlock, "numlock", false},
+	{swa_key_scrollock, "scrolllock", false},
+
+	{swa_key_kp7, "kp7", true},
+	{swa_key_kp8, "kp8", true},
+	{swa_key_kp9, "kp9", true},
+	{swa_key_kpminus, "kpminus", true},
+	{swa_key_kp4, "kp4", true},
+	{swa_key_kp5, "kp5", true},
+	{swa_key_kp6, "kp6", true},
+	{swa_key_kpplus, "kpplus", true},
+	{swa_key_kp1, "kp1", true},
+	{swa_key_kp2, "kp2", true},
+	{swa_key_kp3, "kp3", true},
+	{swa_key_kp0, "kp0", true},
+	{swa_key_kpperiod, "kpperiod", true},
+
+	{swa_key_zenkakuhankaku, "zenkakuhankaku", false},
+	{swa_key_nonushash, "nonushash", false},
+	{swa_key_f11, "f11", false},
+	{swa_key_f12, "f12", false},
+
+	{swa_key_katakana, "katakana", false},
+	{swa_key_hiragana, "hiragana", false},
+	{swa_key_henkan, "henkan", false},
+	{swa_key_katakanahiragana, "katakanahiragana", false},
+	{swa_key_muhenkan, "muhenkan", false},
+	{swa_key_kpjpcomma, "kpjpcomma", false},
+	{swa_key_kpenter, "kpenter", false},
+	{swa_key_rightctrl, "rightctrl", false},
+	{swa_key_kpdivide, "kpdivide", false},
+	{swa_key_sysrq, "sysrq", false},
+	{swa_key_rightalt, "rightalt", false},
+	{swa_key_linefeed, "linefeed", false},
+	{swa_key_home, "home", false},
+	{swa_key_up, "up", false},
+	{swa_key_pageup, "pageup", false},
+	{swa_key_left, "left", false},
+	{swa_key_right, "right", false},
+	{swa_key_end, "end", false},
+	{swa_key_down, "down", false},
+	{swa_key_pagedown, "pagedown", false},
+	{swa_key_insert, "insert", false},
+	{swa_key_del, "delete", false},
+	{swa_key_macro, "macro", false},
+	{swa_key_mute, "mute", false},
+	{swa_key_volumedown, "volumedown", false},
+	{swa_key_volumeup, "volumeup", false},
+	{swa_key_power, "power", false},
+	{swa_key_kpequals, "kpequals", false},
+	{swa_key_kpplusminus, "kpplusminus", false},
+	{swa_key_pause, "pause", false},
+	{swa_key_scale, "scale", false},
+
+	{swa_key_kpcomma, "kpcomma", true},
+	{swa_key_hangeul, "hangeul", false},
+	{swa_key_hanguel, "hanguel", false},
+	{swa_key_hanja, "hanja", false},
+	{swa_key_yen, "yen", false},
+	{swa_key_leftmeta, "leftmeta", false},
+	{swa_key_rightmeta, "rightmeta", false},
+	{swa_key_compose, "compose", false},
+
+	{swa_key_stop, "stop", false},
+	{swa_key_again, "again", false},
+	{swa_key_props, "props", false},
+	{swa_key_undo, "undo", false},
+	{swa_key_front, "front", false},
+	{swa_key_copy, "copy", false},
+	{swa_key_open, "open", false},
+	{swa_key_paste, "paste", false},
+	{swa_key_find, "find", false},
+	{swa_key_cut, "cut", false},
+	{swa_key_help, "help", false},
+	{swa_key_menu, "menu", false},
+	{swa_key_calc, "calc", false},
+	{swa_key_setup, "setup", false},
+	{swa_key_sleep, "sleep", false},
+	{swa_key_wakeup, "wakeup", false},
+	{swa_key_file, "file", false},
+	{swa_key_sendfile, "sendfile", false},
+	{swa_key_deletefile, "sendfildeletefile", false},
+	{swa_key_xfer, "xfer", false},
+	{swa_key_prog1, "prog1", false},
+	{swa_key_prog2, "prog2", false},
+	{swa_key_www, "www", false},
+	{swa_key_msdos, "msdos", false},
+	{swa_key_coffee, "coffee", false},
+	{swa_key_screenlock, "screenlock", false},
+	{swa_key_rotate_display, "rotateDisplay", false},
+	{swa_key_direction, "direction", false},
+	{swa_key_cyclewindows, "cyclewindows", false},
+	{swa_key_mail, "mail", false},
+	{swa_key_bookmarks, "bookmarks", false},
+	{swa_key_computer, "computer", false},
+	{swa_key_back, "back", false},
+	{swa_key_forward, "forward", false},
+	{swa_key_closecd, "closecd", false},
+	{swa_key_ejectcd, "ejectcd", false},
+	{swa_key_ejectclosecd, "ejectclosecd", false},
+	{swa_key_nextsong, "nextsong", false},
+	{swa_key_playpause, "playpause", false},
+	{swa_key_previoussong, "previoussong", false},
+	{swa_key_stopcd, "stopcd", false},
+	{swa_key_record, "record", false},
+	{swa_key_rewind, "rewind", false},
+	{swa_key_phone, "rewinphone", false},
+	{swa_key_iso, "iso", false},
+	{swa_key_config, "config", false},
+	{swa_key_homepage, "homepage", false},
+	{swa_key_refresh, "refresh", false},
+	{swa_key_exit, "exit", false},
+	{swa_key_move, "move", false},
+	{swa_key_edit, "edit", false},
+	{swa_key_scrollup, "scrollup", false},
+	{swa_key_scrolldown, "scrolldown", false},
+	{swa_key_kpleftparen, "kpleftparen", false},
+	{swa_key_kprightparen, "kprightparen", false},
+	{swa_key_knew, "knew", false},
+	{swa_key_redo, "redo", false},
+
+	{swa_key_f13, "f13", false},
+	{swa_key_f14, "f14", false},
+	{swa_key_f15, "f15", false},
+	{swa_key_f16, "f16", false},
+	{swa_key_f17, "f17", false},
+	{swa_key_f18, "f18", false},
+	{swa_key_f19, "f19", false},
+	{swa_key_f20, "f20", false},
+	{swa_key_f21, "f21", false},
+	{swa_key_f22, "f22", false},
+	{swa_key_f23, "f23", false},
+	{swa_key_f24, "f24", false},
+
+	{swa_key_playcd, "playcd", false},
+	{swa_key_pausecd, "pausecd", false},
+	{swa_key_prog3, "prog3", false},
+	{swa_key_prog4, "prog4", false},
+	{swa_key_dashboard, "dashboard", false},
+	{swa_key_suspend, "suspend", false},
+	{swa_key_close, "close", false},
+	{swa_key_play, "play", false},
+	{swa_key_fastforward, "fastforward", false},
+	{swa_key_bassboost, "bassboost", false},
+	{swa_key_print, "print", false},
+	{swa_key_hp, "hp", false},
+	{swa_key_camera, "camera", false},
+	{swa_key_sound, "sound", false},
+	{swa_key_question, "question", false},
+	{swa_key_email, "email", false},
+	{swa_key_chat, "chat", false},
+	{swa_key_search, "search", false},
+	{swa_key_connect, "connect", false},
+	{swa_key_finance, "finance", false},
+	{swa_key_sport, "sport", false},
+	{swa_key_shop, "shop", false},
+	{swa_key_alterase, "alterase", false},
+	{swa_key_cancel, "cancel", false},
+	{swa_key_brightnessdown, "brightnessdown", false},
+	{swa_key_brightnessup, "brightnessup", false},
+	{swa_key_media, "media", false},
+
+	{swa_key_switchvideomode, "switchvideomode", false},
+	{swa_key_kbdillumtoggle, "kbdillumtoggle", false},
+	{swa_key_kbdillumdown, "kbdillumdown", false},
+	{swa_key_kbdillumup, "kbdillumup", false},
+
+	{swa_key_send, "send", false},
+	{swa_key_reply, "reply", false},
+	{swa_key_forwardmail, "forwardmail", false},
+	{swa_key_save, "save", false},
+	{swa_key_documents, "documents", false},
+	{swa_key_battery, "battery", false},
+	{swa_key_bluetooth, "bluetooth", false},
+	{swa_key_wlan, "wlan", false},
+	{swa_key_uwb, "uwb", false},
+	{swa_key_unknown, "unknown", false},
+	{swa_key_video_next, "video_ext", false},
+	{swa_key_video_prev, "video_prev", false},
+	{swa_key_brightness_cycle, "brightness_cycle", false},
+	{swa_key_brightness_auto, "brightness_auto", false},
+	{swa_key_brightness_zero, "brightness_zero", false},
+	{swa_key_display_off, "display_off", false},
+	{swa_key_wwan, "wwan", false},
+	{swa_key_wimax, "wimax", false},
+	{swa_key_rfkill, "rfkill", false},
+	{swa_key_micmute, "micmute", false},
+};
+
+const char* swa_key_to_name(enum swa_key key) {
+	unsigned s = sizeof(key_infos) / sizeof(key_infos[0]);
+	for(unsigned i = 0u; i < s; ++i) {
+		if(key_infos[i].key == key) {
+			return key_infos[i].name;
+		}
+	}
+	return "<invalid>";
+}
+
+enum swa_key swa_key_from_name(const char* name) {
+	if(!name) {
+		return swa_key_none;
+	}
+
+	unsigned s = sizeof(key_infos) / sizeof(key_infos[0]);
+	for(unsigned i = 0u; i < s; ++i) {
+		if(!strcmp(name, key_infos[i].name)) {
+			return key_infos[i].key;
+		}
+	}
+
+	return swa_key_none;
+}
+
+bool swa_key_is_textual(enum swa_key key) {
+	if(key == swa_key_none) {
+		return false;
+	}
+
+	unsigned s = sizeof(key_infos) / sizeof(key_infos[0]);
+	for(unsigned i = 0u; i < s; ++i) {
+		if(key == key_infos[i].key) {
+			return key_infos[i].textual;
+		}
+	}
+	return false;
+}

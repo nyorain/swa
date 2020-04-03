@@ -148,8 +148,8 @@ const char* swa_xkb_key_name(struct swa_xkb_context* xkb, enum swa_key key) {
 	return swa_xkb_key_name_keymap(xkb->keymap, key);
 }
 
-void swa_xkb_update_state(struct swa_xkb_context* xkb, int mods[static 3],
-		int layouts[static 3]) {
+void swa_xkb_update_state(struct swa_xkb_context* xkb, int mods[3],
+		int layouts[3]) {
 	xkb_state_update_mask(xkb->state,
 		mods[0], mods[1], mods[2],
 		layouts[0], layouts[1], layouts[2]);

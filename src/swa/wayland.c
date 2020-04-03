@@ -482,7 +482,7 @@ static void win_destroy(struct swa_window* base) {
 	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
 	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
 	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
-	if(win->surface) wl_surface_destroy(win->surface);
+	if(win->wl_surface) wl_surface_destroy(win->wl_surface);
 
 	free(base);
 }
@@ -660,7 +660,7 @@ static void win_surface_frame(struct swa_window* base) {
 		win->frame_callback = NULL;
 	}
 
-	win->frame_callback = wl_surface_frame(win->surface);
+	win->frame_callback = wl_surface_frame(win->wl_surface);
 	wl_callback_add_listener(win->frame_callback, &win_frame_listener, win);
 }
 
@@ -873,10 +873,10 @@ static void win_apply_buffer(struct swa_window* base) {
 	}
 
 	struct swa_wl_buffer* buf = &win->buffer.buffers[win->buffer.active];
-	wl_surface_attach(win->surface, buf->buffer, 0, 0);
-	wl_surface_damage(win->surface, 0, 0, INT32_MAX, INT32_MAX);
+	wl_surface_attach(win->wl_surface, buf->buffer, 0, 0);
+	wl_surface_damage(win->wl_surface, 0, 0, INT32_MAX, INT32_MAX);
 	win_surface_frame(&win->base);
-	wl_surface_commit(win->surface);
+	wl_surface_commit(win->wl_surface);
 
 	win->buffer.active = -1;
 }
@@ -1456,10 +1456,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->width = settings->width;
 	win->height = settings->height;
 
-	win->surface = wl_compositor_create_surface(dpy->compositor);
-	wl_surface_set_user_data(win->surface, win);
+	win->wl_surface = wl_compositor_create_surface(dpy->compositor);
+	wl_surface_set_user_data(win->wl_surface, win);
 
-	win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->surface);
+	win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->wl_surface);
 	xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
 	win->xdg_toplevel = xdg_surface_get_toplevel(win->xdg_surface);
 	xdg_toplevel_add_listener(win->xdg_toplevel, &toplevel_listener, win);
@@ -1485,7 +1485,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// commit the role so we get a configure event and can start drawing
 	// also important for the decoration mode negotiation
-	wl_surface_commit(win->surface);
+	wl_surface_commit(win->wl_surface);
 
 	// when the decoration protocol is not present, client side decorations
 	// should be assumed on wayland
@@ -1540,7 +1540,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		VkWaylandSurfaceCreateInfoKHR info = {0};
 		info.sType = VK_STRUCTURE_TYPE_WAYLAND_SURFACE_CREATE_INFO_KHR;
 		info.display = win->dpy->display;
-		info.surface = win->surface;
+		info.surface = win->wl_surface;
 
 		VkInstance instance = (VkInstance) win->vk.instance;
 		VkSurfaceKHR surface;
@@ -1584,7 +1584,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			SWA_FALLBACK_WIDTH : win->width;
 		unsigned height = win->height == SWA_DEFAULT_SIZE ?
 			SWA_FALLBACK_HEIGHT : win->height;
-		win->gl.egl_window = wl_egl_window_create(win->surface, width, height);
+		win->gl.egl_window = wl_egl_window_create(win->wl_surface, width, height);
 
 		const struct swa_gl_surface_settings* gls = &settings->surface_settings.gl;
 		bool alpha = settings->transparent;

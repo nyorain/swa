@@ -164,7 +164,7 @@ struct swa_x11_cursor {
 
 static xcb_cursor_t get_cursor(struct swa_display_x11* dpy,
 		enum swa_cursor_type type) {
-	for(unsigned i = 0u; i < dpy->n_cursors; ++dpy) {
+	for(unsigned i = 0u; i < dpy->n_cursors; ++i) {
 		if(dpy->cursors[i].type == type) {
 			return dpy->cursors[i].cursor;
 		}

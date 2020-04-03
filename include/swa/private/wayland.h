@@ -124,7 +124,7 @@ struct swa_window_wl {
 	struct swa_window base;
 	struct swa_display_wl* dpy;
 
-	struct wl_surface* surface;
+	struct wl_surface* wl_surface;
 	struct xdg_surface* xdg_surface;
 	struct xdg_toplevel* xdg_toplevel;
 	struct zxdg_toplevel_decoration_v1* decoration;
