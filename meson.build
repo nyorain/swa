@@ -17,6 +17,7 @@ cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
 	# gcc/clang
 	'-Wno-unused-parameter',
+	'-Wno-unused-function',
 	'-Wno-missing-braces',
 	'-Wundef',
 	'-Wvla',

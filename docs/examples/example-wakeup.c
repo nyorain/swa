@@ -85,7 +85,7 @@ int main() {
 			int64_t ns = now.tv_nsec - wakeup_time.tv_nsec;
 			ns += (1000 * 1000 * 1000) * (now.tv_sec - wakeup_time.tv_sec);
 			dlg_assert(ns < 10 * 1000 * 1000); // 10 ms is way too much
-			dlg_info("Took %ld ns to receive wakeup", ns);
+			dlg_info("Took %ld ns to receive wakeup", (long) ns);
 			atomic_store(&wakeup, false);
 		}
 	}

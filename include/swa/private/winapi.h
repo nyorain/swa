@@ -2,7 +2,7 @@
 #define UNICODE
 
 #include <swa/swa.h>
-#include <swa/impl.h>
+#include <swa/private/impl.h>
 
 #include <windows.h>
 #include <winuser.h>

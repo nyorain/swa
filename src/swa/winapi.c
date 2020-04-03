@@ -533,34 +533,36 @@ const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 }
 
 bool display_key_pressed(struct swa_display* base, enum swa_key key) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return false;
 }
 
 const char* display_key_name(struct swa_display* base, enum swa_key key) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return NULL;
 }
 
 enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return swa_keyboard_mod_none;
 }
 
 struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return NULL;
 }
 
 bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return false;
 }
 void display_mouse_position(struct swa_display* base, int* x, int* y) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
+	*x = 0;
+	*y = 0;
 }
 struct swa_window* display_get_mouse_over(struct swa_display* base) {
-	struct swa_display_win* dpy = get_display_win(base);
+	// struct swa_display_win* dpy = get_display_win(base);
 	return NULL;
 }
 struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
