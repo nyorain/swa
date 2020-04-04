@@ -1218,7 +1218,7 @@ static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 }
 static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 	struct swa_display_x11* dpy = get_display_x11(base);
-	return &dpy->mouse.over->base;
+	return dpy->mouse.over ? &dpy->mouse.over->base : NULL;
 }
 static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_x11* dpy = get_display_x11(base);

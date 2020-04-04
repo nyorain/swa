@@ -1,2 +1,10 @@
-option('shared', type: 'boolean', value: true, description: 
-	'Whether to build swa as a shared library. Will ignore default_library')
+# How to build libswa.
+# 'auto' selects a static or dynamic library based 
+# on the default meson config.
+# This option is needed in addition to mesons
+# default_library to allow setting this per subproject.
+# On android, libswa is always built as shared module.
+option('libtype', 
+    type: 'combo', 
+    choices: ['auto', 'shared', 'static'], 
+    value : 'auto')

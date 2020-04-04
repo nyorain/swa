@@ -39,6 +39,20 @@ static struct swa_window_win* get_window_win(struct swa_window* base) {
 	LocalFree(buffer); \
 } while(0)
 
+static wchar_t* widen(const char* utf8) {
+	int count = MultiByteToWideChar(CP_UTF8, 0 , utf8, -1, NULL, 0);
+	wchar_t* wide = malloc(count * sizeof(wchar_t));
+	MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, count);
+	return wide;
+}
+
+static char* narrow(const wchar_t* wide) {
+	int count = WideCharToMultiByte(CP_UTF8, 0, wide, -1, NULL, 0, NULL, NULL);
+	char* utf8 = malloc(count * sizeof(char));
+	WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, count, NULL, NULL);
+	return utf8;
+}
+
 static const struct {
 	enum swa_edge edge;
 	unsigned int winapi_code;
@@ -53,7 +67,7 @@ static const struct {
 	{swa_edge_bottom_right, 8u},
 };
 
-unsigned int edge_to_winapi(enum swa_edge edge) {
+static unsigned int edge_to_winapi(enum swa_edge edge) {
 	unsigned len = sizeof(edge_map) / sizeof(edge_map[0]);
 	for(unsigned i = 0u; i < len; ++i) {
 		if(edge_map[i].edge == edge) {
@@ -64,7 +78,7 @@ unsigned int edge_to_winapi(enum swa_edge edge) {
 	return 0;
 }
 
-enum swa_edge winapi_to_edge(unsigned code) {
+static enum swa_edge winapi_to_edge(unsigned code) {
 	unsigned len = sizeof(edge_map) / sizeof(edge_map[0]);
 	for(unsigned i = 0u; i < len; ++i) {
 		if(edge_map[i].winapi_code == code) {
@@ -73,6 +87,169 @@ enum swa_edge winapi_to_edge(unsigned code) {
 	}
 
 	return swa_edge_none;
+}
+
+static const struct {
+	enum swa_key key;
+	unsigned vkcode;
+} key_map [] = {
+	{swa_key_none, 0x0},
+	{swa_key_a, 'A'},
+	{swa_key_b, 'B'},
+	{swa_key_c, 'C'},
+	{swa_key_d, 'D'},
+	{swa_key_e, 'E'},
+	{swa_key_f, 'F'},
+	{swa_key_g, 'G'},
+	{swa_key_h, 'H'},
+	{swa_key_i, 'I'},
+	{swa_key_j, 'J'},
+	{swa_key_k, 'K'},
+	{swa_key_l, 'L'},
+	{swa_key_m, 'M'},
+	{swa_key_n, 'N'},
+	{swa_key_o, 'O'},
+	{swa_key_p, 'P'},
+	{swa_key_q, 'Q'},
+	{swa_key_r, 'R'},
+	{swa_key_s, 'S'},
+	{swa_key_t, 'T'},
+	{swa_key_u, 'U'},
+	{swa_key_v, 'V'},
+	{swa_key_w, 'W'},
+	{swa_key_x, 'X'},
+	{swa_key_y, 'Y'},
+	{swa_key_z, 'Z'},
+	{swa_key_k0, '0'},
+	{swa_key_k1, '1'},
+	{swa_key_k2, '2'},
+	{swa_key_k3, '3'},
+	{swa_key_k4, '4'},
+	{swa_key_k5, '5'},
+	{swa_key_k6, '6'},
+	{swa_key_k7, '7'},
+	{swa_key_k8, '8'},
+	{swa_key_k9, '9'},
+	{swa_key_backspace, VK_BACK},
+	{swa_key_tab, VK_TAB},
+	{swa_key_clear, VK_CLEAR},
+	{swa_key_enter, VK_RETURN},
+	{swa_key_leftshift, VK_SHIFT},
+	{swa_key_leftctrl, VK_CONTROL},
+	{swa_key_leftalt, VK_MENU},
+	{swa_key_capslock, VK_CAPITAL},
+	{swa_key_katakana, VK_KANA},
+	{swa_key_hanguel, VK_HANGUL},
+	{swa_key_hanja, VK_HANJA},
+	{swa_key_escape, VK_ESCAPE},
+	{swa_key_space, VK_SPACE},
+	{swa_key_pageup, VK_PRIOR},
+	{swa_key_pagedown, VK_NEXT},
+	{swa_key_end, VK_END},
+	{swa_key_home, VK_HOME},
+	{swa_key_left, VK_LEFT},
+	{swa_key_right, VK_RIGHT},
+	{swa_key_up, VK_UP},
+	{swa_key_down, VK_DOWN},
+	{swa_key_select, VK_SELECT},
+	{swa_key_print, VK_PRINT},
+	{swa_key_insert, VK_INSERT},
+	{swa_key_del, VK_DELETE},
+	{swa_key_help, VK_HELP},
+	{swa_key_leftmeta, VK_LWIN},
+	{swa_key_rightmeta, VK_RWIN},
+	{swa_key_sleep, VK_SLEEP},
+	{swa_key_kp0, VK_NUMPAD0},
+	{swa_key_kp1, VK_NUMPAD1},
+	{swa_key_kp2, VK_NUMPAD2},
+	{swa_key_kp3, VK_NUMPAD3},
+	{swa_key_kp4, VK_NUMPAD4},
+	{swa_key_kp5, VK_NUMPAD5},
+	{swa_key_kp6, VK_NUMPAD6},
+	{swa_key_kp7, VK_NUMPAD7},
+	{swa_key_kp8, VK_NUMPAD8},
+	{swa_key_kp9, VK_NUMPAD9},
+	{swa_key_kpmultiply, VK_MULTIPLY},
+	{swa_key_kpplus, VK_ADD},
+	{swa_key_kpminus, VK_SUBTRACT},
+	{swa_key_kpdivide, VK_DIVIDE},
+	{swa_key_kpperiod, VK_SEPARATOR}, //XXX not sure
+	{swa_key_f1, VK_F1},
+	{swa_key_f2, VK_F2},
+	{swa_key_f3, VK_F3},
+	{swa_key_f4, VK_F4},
+	{swa_key_f5, VK_F5},
+	{swa_key_f6, VK_F6},
+	{swa_key_f7, VK_F7},
+	{swa_key_f8, VK_F8},
+	{swa_key_f9, VK_F9},
+	{swa_key_f10, VK_F10},
+	{swa_key_f11, VK_F11},
+	{swa_key_f12, VK_F12},
+	{swa_key_f13, VK_F13},
+	{swa_key_f14, VK_F14},
+	{swa_key_f15, VK_F15},
+	{swa_key_f16, VK_F16},
+	{swa_key_f17, VK_F17},
+	{swa_key_f18, VK_F18},
+	{swa_key_f19, VK_F19},
+	{swa_key_f20, VK_F20},
+	{swa_key_f21, VK_F21},
+	{swa_key_f22, VK_F22},
+	{swa_key_f23, VK_F23},
+	{swa_key_f24, VK_F24},
+	{swa_key_numlock, VK_NUMLOCK},
+	{swa_key_scrollock, VK_SCROLL},
+	{swa_key_leftshift, VK_LSHIFT},
+	{swa_key_rightshift, VK_RSHIFT},
+	{swa_key_leftctrl, VK_LCONTROL},
+	{swa_key_rightctrl, VK_RCONTROL},
+	{swa_key_leftalt, VK_LMENU},
+	{swa_key_rightalt, VK_RMENU},
+	// XXX: some browser keys after this. not sure about it
+	{swa_key_mute, VK_VOLUME_MUTE},
+	{swa_key_volumedown, VK_VOLUME_DOWN},
+	{swa_key_volumeup, VK_VOLUME_UP},
+	{swa_key_nextsong, VK_MEDIA_NEXT_TRACK},
+	{swa_key_previoussong, VK_MEDIA_PREV_TRACK},
+	{swa_key_stopcd, VK_MEDIA_STOP}, // XXX: or keycode::stop?
+	{swa_key_playpause, VK_MEDIA_PLAY_PAUSE},
+	{swa_key_mail, VK_LAUNCH_MAIL},
+
+	{swa_key_semicolon, VK_OEM_1},
+	{swa_key_slash, VK_OEM_2},
+	{swa_key_grave, VK_OEM_3},
+	{swa_key_leftbrace, VK_OEM_4},
+	{swa_key_backslash, VK_OEM_5},
+	{swa_key_rightbrace, VK_OEM_6},
+	{swa_key_apostrophe, VK_OEM_7},
+
+	// XXX: something about OEM_102. is the 102nd keycode for linux/input.h
+
+	{swa_key_play, VK_PLAY},
+	{swa_key_zoom, VK_ZOOM},
+};
+
+static enum swa_key winapi_to_key(unsigned vkcode) {
+	unsigned len = sizeof(key_map) / sizeof(key_map[0]);
+	for(unsigned i = 0u; i < len; ++i) {
+		if(key_map[i].vkcode == vkcode) {
+			return key_map[i].key;
+		}
+	}
+
+	return swa_key_none;
+}
+
+static unsigned key_to_winapi(enum swa_key key) {
+	unsigned len = sizeof(key_map) / sizeof(key_map[0]);
+	for(unsigned i = 0u; i < len; ++i) {
+		if(key_map[i].key == key) {
+			return key_map[i].vkcode;
+		}
+	}
+
+	return 0x0;
 }
 
 static const struct {
@@ -100,7 +277,7 @@ static const struct {
 	{swa_cursor_size_bottom_left, IDC_SIZENESW},
 };
 
-const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
+static const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
 	unsigned len = sizeof(cursor_map) / sizeof(cursor_map[0]);
 	for(unsigned i = 0u; i < len; ++i) {
 		if(cursor_map[i].cursor == cursor) {
@@ -429,6 +606,7 @@ static const struct swa_window_interface window_impl = {
 	.set_max_size = win_set_max_size,
 	.show = win_show,
 	.set_size = win_set_size,
+	.set_cursor = win_set_cursor,
 	.refresh = win_refresh,
 	.surface_frame = win_surface_frame,
 	.set_state = win_set_state,
@@ -447,7 +625,7 @@ static const struct swa_window_interface window_impl = {
 
 
 // display api
-void display_destroy(struct swa_display* base) {
+static void display_destroy(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
 	UnregisterClassW(window_class_name, GetModuleHandle(NULL));
 	free(dpy);
@@ -464,7 +642,7 @@ static bool dispatch_one(void) {
 	return true;
 }
 
-bool display_dispatch(struct swa_display* base, bool block) {
+static bool display_dispatch(struct swa_display* base, bool block) {
 	struct swa_display_win* dpy = get_display_win(base);
 	if(dpy->error) {
 		return false;
@@ -492,12 +670,12 @@ bool display_dispatch(struct swa_display* base, bool block) {
 	return true;
 }
 
-void display_wakeup(struct swa_display* base) {
+static void display_wakeup(struct swa_display* base) {
 	struct swa_display_win* dpy = get_display_win(base);
 	PostThreadMessage(dpy->main_thread_id, WM_USER, 0, 0);
 }
 
-enum swa_display_cap display_capabilities(struct swa_display* base) {
+static enum swa_display_cap display_capabilities(struct swa_display* base) {
 	// struct swa_display_win* dpy = get_display_win(base);
 	enum swa_display_cap caps =
 #ifdef SWA_WITH_GL
@@ -517,7 +695,7 @@ enum swa_display_cap display_capabilities(struct swa_display* base) {
 	return caps;
 }
 
-const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
+static const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 #ifdef SWA_WITH_VK
 	static const char* names[] = {
 		VK_KHR_SURFACE_EXTENSION_NAME,
@@ -532,55 +710,71 @@ const char** display_vk_extensions(struct swa_display* base, unsigned* count) {
 #endif
 }
 
-bool display_key_pressed(struct swa_display* base, enum swa_key key) {
+static bool async_pressed(unsigned vkcode) {
+	SHORT state = GetAsyncKeyState(vkcode);
+	return ((1 << 16) & state);
+}
+
+static enum swa_keyboard_mod async_keyboard_mods(void) {
+	enum swa_keyboard_mod mods = 0;
+	if(async_pressed(VK_SHIFT))	mods |= swa_keyboard_mod_shift;
+	if(async_pressed(VK_CONTROL)) mods |= swa_keyboard_mod_ctrl;
+	if(async_pressed(VK_MENU)) mods |= swa_keyboard_mod_alt;
+	if(async_pressed(VK_LWIN)) mods |= swa_keyboard_mod_super;
+	if(async_pressed(VK_CAPITAL)) mods |= swa_keyboard_mod_caps_lock;
+	if(async_pressed(VK_NUMLOCK)) mods |= swa_keyboard_mod_num_lock;
+	return mods;
+}
+
+static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
+	(void) base;
+	return async_pressed(key_to_winapi(key));
+}
+
+static const char* display_key_name(struct swa_display* base, enum swa_key key) {
+	// struct swa_display_win* dpy = get_display_win(base);
+	return NULL;
+}
+
+static enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
+	(void) base;
+	return async_keyboard_mods();
+}
+
+static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
+	// struct swa_display_win* dpy = get_display_win(base);
+	return NULL;
+}
+
+static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
 	// struct swa_display_win* dpy = get_display_win(base);
 	return false;
 }
-
-const char* display_key_name(struct swa_display* base, enum swa_key key) {
+static void display_mouse_position(struct swa_display* base, int* x, int* y) {
+	struct swa_display_win* dpy = get_display_win(base);
+	*x = dpy->mx;
+	*y = dpy->my;
+}
+static struct swa_window* display_get_mouse_over(struct swa_display* base) {
+	struct swa_display_win* dpy = get_display_win(base);
+	return dpy->mouse_over ? &dpy->mouse_over->base : NULL;
+}
+static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
 	// struct swa_display_win* dpy = get_display_win(base);
 	return NULL;
 }
-
-enum swa_keyboard_mod display_active_keyboard_mods(struct swa_display* base) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return swa_keyboard_mod_none;
-}
-
-struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return NULL;
-}
-
-bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return false;
-}
-void display_mouse_position(struct swa_display* base, int* x, int* y) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	*x = 0;
-	*y = 0;
-}
-struct swa_window* display_get_mouse_over(struct swa_display* base) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return NULL;
-}
-struct swa_data_offer* display_get_clipboard(struct swa_display* base) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return NULL;
-}
-bool display_set_clipboard(struct swa_display* base,
+static bool display_set_clipboard(struct swa_display* base,
 		struct swa_data_source* source) {
 	// struct swa_display_win* dpy = get_display_win(base);
 	return false;
 }
-bool display_start_dnd(struct swa_display* base,
+static bool display_start_dnd(struct swa_display* base,
 		struct swa_data_source* source) {
 	// struct swa_display_win* dpy = get_display_win(base);
 	return false;
 }
 
-swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
+static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
 	(void) base;
 #ifdef SWA_WITH_GL
 	return (swa_gl_proc) wglGetProcAddress(name);
@@ -588,6 +782,53 @@ swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name)
 	dlg_error("swa was built without gl");
 	return NULL;
 #endif
+}
+
+static void handle_mouse_button(struct swa_window_win* win, bool pressed, 
+		enum swa_mouse_button btn, LPARAM lparam) {
+	if(win->base.listener->mouse_button) {
+		struct swa_mouse_button_event ev = {0};
+		ev.pressed = pressed;
+		ev.button = btn;
+		ev.x = GET_X_LPARAM(lparam);
+		ev.y = GET_Y_LPARAM(lparam);
+		win->base.listener->mouse_button(&win->base, &ev);
+	}
+
+	// TODO: store pressed state in win->dpy
+}
+
+static void handle_key(struct swa_window_win* win, bool pressed, 
+		WPARAM wparam, LPARAM lparam) {
+	// extractd utf8
+	MSG msg;
+	unsigned i = 0;
+	wchar_t src[9] = {0};
+	while(PeekMessage(&msg, NULL, 0, 0, PM_NOREMOVE) && i < 8) {
+		if((msg.message != WM_CHAR) && (msg.message != WM_SYSCHAR)) {
+			break;
+		}
+
+		dlg_assert(GetMessage(&msg, NULL, 0, 0)); // remove it
+		src[i++] = msg.wParam;
+	}
+
+	char* utf8 = NULL;
+	if(i > 0) {
+		utf8 = narrow(src);
+	}
+
+	if(win->base.listener->key) {
+		struct swa_key_event ev = {0};
+		ev.pressed = pressed;
+		ev.keycode = winapi_to_key(wparam);
+		ev.repeated = pressed && (lparam & 0x40000000);
+		ev.utf8 = utf8;
+
+		win->base.listener->key(&win->base, &ev);
+	}
+
+	free(utf8);
 }
 
 static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
@@ -677,23 +918,107 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			}
 			break;
 		}
+		case WM_LBUTTONDOWN: 
+			handle_mouse_button(win, true, swa_mouse_button_left, lparam);
+			break;
+		case WM_LBUTTONUP: 
+			handle_mouse_button(win, false, swa_mouse_button_left, lparam);
+			break;
+		case WM_RBUTTONDOWN: 
+			handle_mouse_button(win, true, swa_mouse_button_right, lparam);
+			break;
+		case WM_RBUTTONUP:
+			handle_mouse_button(win, false, swa_mouse_button_right, lparam);
+			break;
+		case WM_MBUTTONDOWN:
+			handle_mouse_button(win, true, swa_mouse_button_middle, lparam);
+			break;
+		case WM_MBUTTONUP:
+			handle_mouse_button(win, false, swa_mouse_button_middle, lparam);
+			break;
+		case WM_XBUTTONDOWN:
+			handle_mouse_button(win, true, (HIWORD(wparam) == 1) ? 
+				swa_mouse_button_custom1 : 
+				swa_mouse_button_custom2, lparam);
+			break;
+		case WM_XBUTTONUP:
+			handle_mouse_button(win, false, (HIWORD(wparam) == 1) ? 
+				swa_mouse_button_custom1 : 
+				swa_mouse_button_custom2, lparam);
+			break;
+		case WM_MOUSELEAVE: {
+			if(win->base.listener->mouse_cross) {
+				struct swa_mouse_cross_event ev = {0};
+				ev.entered = false;
+				ev.x = win->dpy->mx;
+				ev.y = win->dpy->my;
+				win->base.listener->mouse_cross(&win->base, &ev);
+			}
+
+			dlg_assert(win == win->dpy->mouse_over);
+			win->dpy->mouse_over = NULL;
+			win->dpy->mx = 0;
+			win->dpy->my = 0;
+			break;
+		} case WM_MOUSEMOVE: {
+			struct swa_mouse_move_event ev = {0};
+			ev.x = GET_X_LPARAM(lparam);
+			ev.y = GET_Y_LPARAM(lparam);
+			ev.dx = ev.x - win->dpy->mx;
+			ev.dy = ev.y - win->dpy->my;
+
+			// check for implicit mouse over change
+			// windows does not send any mouse enter events, we have to detect them this way
+			if(win != win->dpy->mouse_over) {
+				if(win->base.listener->mouse_cross) {
+					struct swa_mouse_cross_event cev = {0};
+					cev.entered = true;
+					cev.x = ev.x;
+					cev.y = ev.y;
+					win->base.listener->mouse_cross(&win->base, &cev);
+				}
+
+				win->dpy->mouse_over = win;
+
+				// Request wm_mouseleave events
+				// we have to do this everytime
+				// therefore we do not send leave event here (should be generated)
+				TRACKMOUSEEVENT tm = {0};
+				tm.cbSize = sizeof(tm);
+				tm.dwFlags = TME_LEAVE;
+				tm.hwndTrack = win->handle;
+				TrackMouseEvent(&tm);
+			}
+
+			if(win->base.listener->mouse_move) {
+				win->base.listener->mouse_move(&win->base, &ev);
+			}
+
+			win->dpy->mx = ev.x;
+			win->dpy->my = ev.y;
+			break;
+		} case WM_MOUSEWHEEL: {
+			if(win->base.listener->mouse_wheel) {
+				float dy = GET_WHEEL_DELTA_WPARAM(wparam) / 120.0;
+				win->base.listener->mouse_wheel(&win->base, 0.f, dy);
+			}
+			break;
+		} case WM_MOUSEHWHEEL: {
+			if(win->base.listener->mouse_wheel) {
+				float dx = -GET_WHEEL_DELTA_WPARAM(wparam) / 120.0;
+				win->base.listener->mouse_wheel(&win->base, dx, 0.f);
+			}
+			break;
+		} case WM_KEYDOWN: {
+			handle_key(win, true, wparam, lparam);
+			break;
+		} case WM_KEYUP: {
+			handle_key(win, false, wparam, lparam);
+			break;
+		}
 	}
 
 	return DefWindowProc(hwnd, msg, wparam, lparam);
-}
-
-static wchar_t* widen(const char* utf8) {
-	int count = MultiByteToWideChar(CP_UTF8, 0 , utf8, -1, NULL, 0);
-	wchar_t* wide = malloc(count * sizeof(wchar_t));
-	MultiByteToWideChar(CP_UTF8, 0, utf8, -1, wide, count);
-	return wide;
-}
-
-static char* narrow(const wchar_t* wide) {
-	int count = WideCharToMultiByte(CP_UTF8, 0, wide, -1, NULL, 0, NULL, NULL);
-	char* utf8 = malloc(count * sizeof(char));
-	WideCharToMultiByte(CP_UTF8, 0, wide, -1, utf8, count, NULL, NULL);
-	return utf8;
 }
 
 static bool register_window_class(void) {
@@ -722,7 +1047,7 @@ static bool register_window_class(void) {
 	return true;
 }
 
-struct swa_window* display_create_window(struct swa_display* base,
+static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_win* dpy = get_display_win(base);
 	struct swa_window_win* win = calloc(1, sizeof(*win));

@@ -1416,7 +1416,7 @@ static struct swa_window* display_get_mouse_over(struct swa_display* base) {
 		return NULL;
 	}
 
-	return &dpy->mouse_over->base;
+	return dpy->mouse_over ? &dpy->mouse_over->base : NULL;
 }
 
 static struct swa_data_offer* display_get_clipboard(struct swa_display* base) {

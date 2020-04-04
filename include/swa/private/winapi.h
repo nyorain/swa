@@ -35,6 +35,8 @@ struct swa_display_win {
 	struct swa_window_win* focus;
 	struct swa_window_win* mouse_over;
 	struct wgl_api* wgl;
+
+	int mx, my; // last mouse coords
 };
 
 struct swa_win_buffer_surface {

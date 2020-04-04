@@ -11,7 +11,7 @@ project(
 	],
 )
 
-shared = get_option('shared')
+libtype = get_option('libtype')
 
 cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
@@ -52,6 +52,11 @@ dep_dlg = dependency('dlg',
 	fallback: ['dlg', 'dlg_dep'],
 	static: true
 )
+
+shared = (libtype == 'shared')
+if libtype == 'auto'
+	shared = (get_option('default_library') == 'shared')
+endif
 
 swa_deps = [dep_dlg, dep_threads]
 swa_args = []
@@ -102,6 +107,8 @@ elif host_machine.system() == 'windows'
 	if shared
 		swa_args += '-DSWA_API=__declspec(dllexport)'
 	endif
+
+	swa_args += '-D_WIN32_WINNT=0x0600'
 
 	swa_deps += cc.find_library('Dwmapi')
 	swa_deps += cc.find_library('Shlwapi')
