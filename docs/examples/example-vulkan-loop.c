@@ -6,15 +6,12 @@
 #include <time.h>
 #include <signal.h>
 
-// TODO: handle surface lost
+// TODO: handle surface lost error
 
 struct render_buffer {
 	VkCommandBuffer cb;
 	VkImageView iv;
 	VkFramebuffer fb;
-
-	// TODO: use
-	// VkFence fence;
 };
 
 struct state {
@@ -31,8 +28,6 @@ struct state {
 	VkSemaphore acquire_sem;
 	VkSemaphore render_sem;
 
-	VkFence fence;
-
 	unsigned n_bufs;
 	struct render_buffer* bufs;
 
@@ -47,6 +42,12 @@ struct state {
 		PFN_vkCreateDebugUtilsMessengerEXT createDebugUtilsMessengerEXT;
 		PFN_vkDestroyDebugUtilsMessengerEXT destroyDebugUtilsMessengerEXT;
 	} api;
+
+	bool run;
+	bool resized;
+	unsigned w;
+	unsigned h;
+	struct swa_display* dpy;
 };
 
 // fwd decls of vulkan bits
@@ -62,9 +63,57 @@ static void cleanup(struct state* state);
 
 #define vk_error(res, fmt) dlg_error(fmt ": %s (%d)", vulkan_strerror(res), res)
 
-// window callbacks
-static bool run = true;
-// struct timespec last_redraw;
+void resize(struct state* state) {
+	// make sure all previous rendering has finished since we will
+	// destroy rendering resources
+
+	vkDeviceWaitIdle(state->device);
+	destroy_render_buffers(state);
+	VkResult res;
+
+	// recreate swapchain
+	VkSurfaceCapabilitiesKHR caps;
+	res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
+		state->surface, &caps);
+	if(res != VK_SUCCESS) {
+		vk_error(res, "failed retrieve surface caps");
+		state->run = false;
+		return;
+	}
+
+	if(caps.currentExtent.width == 0xFFFFFFFFu) {
+		state->swapchain_info.imageExtent.width = state->w;
+		state->swapchain_info.imageExtent.height = state->h;
+	} else {
+		dlg_info("  fixed swapchain size: %d %d",
+			caps.currentExtent.width,
+			caps.currentExtent.height);
+		state->swapchain_info.imageExtent.width = caps.currentExtent.width;
+		state->swapchain_info.imageExtent.height = caps.currentExtent.height;
+	}
+
+	state->swapchain_info.oldSwapchain = state->swapchain;
+	res = vkCreateSwapchainKHR(state->device, &state->swapchain_info,
+		NULL, &state->swapchain);
+
+	vkDestroySwapchainKHR(state->device,
+		state->swapchain_info.oldSwapchain, NULL);
+	state->swapchain_info.oldSwapchain = VK_NULL_HANDLE;
+
+	if (res != VK_SUCCESS) {
+		vk_error(res, "Failed to create vk swapchain");
+		state->run = false;
+		return;
+	}
+
+	// recreate render buffers
+	if(!init_render_buffers(state)) {
+		state->run = false;
+		return;
+	}
+
+	state->resized = false;
+}
 
 static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	struct state* state = swa_window_get_userdata(win);
@@ -75,63 +124,20 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 			dlg_error("Failed to init swapchain");
 			return;
 		}
-	} else {
-		// make sure all previous rendering has finished since we will
-		// destroy rendering resources
-		// vkDeviceWaitIdle(state->device);
-		destroy_render_buffers(state);
 	}
 
-	// recreate swapchain
-	VkSurfaceCapabilitiesKHR caps;
-	VkResult res = vkGetPhysicalDeviceSurfaceCapabilitiesKHR(state->phdev,
-		state->surface, &caps);
-	if (res != VK_SUCCESS) {
-		vk_error(res, "failed retrieve surface caps");
-		run = false;
-		return;
-	}
-
-	if (caps.currentExtent.width == 0xFFFFFFFFu) {
-		state->swapchain_info.imageExtent.width = w;
-		state->swapchain_info.imageExtent.height = h;
-	} else {
-		dlg_info("  fixed swapchain size: %d %d", caps.currentExtent.width, caps.currentExtent.height);
-		state->swapchain_info.imageExtent.width = caps.currentExtent.width;
-		state->swapchain_info.imageExtent.height = caps.currentExtent.height;
-	}
-
-	state->swapchain_info.oldSwapchain = state->swapchain;
-	res = vkCreateSwapchainKHR(state->device, &state->swapchain_info,
-		NULL, &state->swapchain);
-
-	if(state->swapchain_info.oldSwapchain) {
-		state->swapchain_info.oldSwapchain = VK_NULL_HANDLE;
-		vkDestroySwapchainKHR(state->device,
-			state->swapchain_info.oldSwapchain, NULL);
-	}
-
-	if (res != VK_SUCCESS) {
-		vk_error(res, "Failed to create vk swapchain");
-		run = false;
-		return;
-	}
-
-	// recreate render buffers
-	if(!init_render_buffers(state)) {
-		run = false;
-		return;
-	}
+	state->resized = true;
+	state->w = w;
+	state->h = h;
 }
 
-static void window_draw(struct swa_window* win) {
+static bool window_draw(struct swa_window* win) {
 	struct state* state = swa_window_get_userdata(win);
-	dlg_info("Redrawing");
 	VkResult res;
 
 	if(!state->swapchain) {
 		dlg_warn("No swapchain!");
-		return;
+		return false;
 	}
 
 	// struct timespec now;
@@ -141,11 +147,10 @@ static void window_draw(struct swa_window* win) {
 	// dlg_info("Time between redraws: %f", ms);
 	// last_redraw = now;
 
-	// TODO: use per-buffer fences making sure the previous
-	// rendering into this buffer finished
-	// vkDeviceWaitIdle(state->device);
+	vkDeviceWaitIdle(state->device);
 
 	// acquire image
+	// we treat suboptimal as success here
 	uint32_t id;
 	while(true) {
 		res = vkAcquireNextImageKHR(state->device, state->swapchain,
@@ -153,13 +158,12 @@ static void window_draw(struct swa_window* win) {
 		if(res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
 			break;
 		} else if(res == VK_ERROR_OUT_OF_DATE_KHR) {
-			// TODO! don't pass dummy sizes
 			dlg_warn("Got out of date swapchain (acquire)");
-			window_resize(win, 0, 0);
+			return false;
 		} else {
 			vk_error(res, "vkAcquireNextImageKHR");
-			run = false;
-			return;
+			state->run = false;
+			return false;
 		}
 	}
 
@@ -176,15 +180,12 @@ static void window_draw(struct swa_window* win) {
 	si.signalSemaphoreCount = 1u;
 	si.pSignalSemaphores = &state->render_sem;
 
-	res = vkQueueSubmit(state->qs.gfx, 1, &si, state->fence);
+	res = vkQueueSubmit(state->qs.gfx, 1, &si, VK_NULL_HANDLE);
 	if(res != VK_SUCCESS) {
 		vk_error(res, "vkQueueSubmit");
-		run = false;
-		return;
+		state->run = false;
+		return false;
 	}
-
-	vkWaitForFences(state->device, 1, &state->fence, true, UINT64_MAX);
-	vkResetFences(state->device, 1, &state->fence);
 
 	// present
 	VkPresentInfoKHR present_info = {0};
@@ -197,30 +198,33 @@ static void window_draw(struct swa_window* win) {
 
 	res = vkQueuePresentKHR(state->qs.present, &present_info);
 	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
-		if(res == VK_ERROR_OUT_OF_DATE_KHR /* || res == VK_SUBOPTIMAL_KHR*/) {
+		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
 			dlg_warn("Got out of date swapchain (present)");
-			return;
+			return true;
 		}
 
 		vk_error(res, "vkQueuePresentKHR");
-		run = false;
-		return;
+		state->run = false;
+		return false;
 	}
+
+	return true;
 }
 
 static void window_close(struct swa_window* win) {
-	run = false;
+	struct state* state = swa_window_get_userdata(win);
+	state->run = false;
 }
 
 static void window_key(struct swa_window* win, const struct swa_key_event* ev) {
+	struct state* state = swa_window_get_userdata(win);
 	if(ev->pressed && ev->keycode == swa_key_escape) {
 		dlg_info("Escape pressed, exiting");
-		run = false;
+		state->run = false;
 	}
 }
 
 static const struct swa_window_listener window_listener = {
-	// .draw = window_draw,
 	.close = window_close,
 	.resize = window_resize,
 	.key = window_key,
@@ -302,9 +306,15 @@ int main() {
 	// timespec_get(&last_redraw, TIME_UTC);
 
 	// main loop
-	while(run) {
+	state.run = true;
+	state.dpy = dpy;
+	while(state.run) {
 		if(!swa_display_dispatch(dpy, false)) {
 			break;
+		}
+
+		if(state.resized) {
+			resize(&state);
 		}
 
 		window_draw(win);
@@ -353,12 +363,13 @@ static VkBool32 debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT severity,
 		// - https://github.com/KhronosGroup/Vulkan-ValidationLayers/issues/624
 		// - https://github.com/KhronosGroup/Vulkan-ValidationLayers/pull/1015
 		//   that pr introduced the behavior in the validation layers
-		"VUID-VkSwapchainCreateInfoKHR-imageExtent-01274"
+		// "VUID-VkSwapchainCreateInfoKHR-imageExtent-01274"
+		NULL,
 	};
 
-	if (debug_data->pMessageIdName) {
-		for (unsigned i = 0; i < sizeof(ignored) / sizeof(ignored[0]); ++i) {
-			if (!strcmp(debug_data->pMessageIdName, ignored[i])) {
+	if(debug_data->pMessageIdName) {
+		for(unsigned i = 0; i < sizeof(ignored) / sizeof(ignored[0]); ++i) {
+			if(ignored[i] && !strcmp(debug_data->pMessageIdName, ignored[i])) {
 				return false;
 			}
 		}
@@ -994,14 +1005,6 @@ bool init_renderer(struct state* state) {
 	cpool_info.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	cpool_info.queueFamilyIndex = gfx_qfam;
 	res = vkCreateCommandPool(dev, &cpool_info, NULL, &state->cmd_pool);
-
-	VkFenceCreateInfo fence_info = {0};
-	fence_info.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-	res = vkCreateFence(dev, &fence_info, NULL, &state->fence);
-	if(res != VK_SUCCESS) {
-		vk_error(res, "vkCreateFence");
-		return false;
-	}
 
 	// semaphore
 	VkSemaphoreCreateInfo sem_info = {0};

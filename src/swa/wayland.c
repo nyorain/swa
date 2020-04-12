@@ -1347,7 +1347,7 @@ static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 
 	unsigned idx = key / 64;
 	unsigned bit = key % 64;
-	return (dpy->key_states[idx] & (1 << bit));
+	return (dpy->key_states[idx] & (((uint64_t) 1) << bit));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
@@ -2218,9 +2218,9 @@ static void keyboard_key(void* data, struct wl_keyboard* wl_keyboard,
 	unsigned idx = key / 64;
 	unsigned bit = key % 64;
 	if(pressed) {
-		dpy->key_states[idx] |= (uint64_t)(1 << bit);
+		dpy->key_states[idx] |= ((uint64_t) 1) << bit;
 	} else {
-		dpy->key_states[idx] &= ~(uint64_t)(1 << bit);
+		dpy->key_states[idx] &= ~(((uint64_t) 1) << bit);
 	}
 
 	char* utf8 = NULL;

@@ -76,11 +76,10 @@ static void window_draw(struct swa_window* win) {
 	// dlg_info("Time between redraws: %f", ms);
 	// last_redraw = now;
 
-	// TODO: use per-buffer fences making sure the previous
-	// rendering into this buffer finished
 	vkDeviceWaitIdle(state->device);
 
 	// acquire image
+	// we treat suboptimal as success here
 	uint32_t id;
 	res = vkAcquireNextImageKHR(state->device, state->swapchain,
 		UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
@@ -189,11 +188,9 @@ static void window_resize(struct swa_window* win, unsigned w, unsigned h) {
 	res = vkCreateSwapchainKHR(state->device, &state->swapchain_info,
 		NULL, &state->swapchain);
 
-	if(state->swapchain_info.oldSwapchain) {
-		state->swapchain_info.oldSwapchain = VK_NULL_HANDLE;
-		vkDestroySwapchainKHR(state->device,
-			state->swapchain_info.oldSwapchain, NULL);
-	}
+	vkDestroySwapchainKHR(state->device,
+		state->swapchain_info.oldSwapchain, NULL);
+	state->swapchain_info.oldSwapchain = VK_NULL_HANDLE;
 
 	if (res != VK_SUCCESS) {
 		vk_error(res, "Failed to create vk swapchain");

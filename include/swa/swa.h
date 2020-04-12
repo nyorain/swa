@@ -20,7 +20,7 @@ struct swa_window_listener;
 
 typedef void (*swa_gl_proc)(void);
 
-// When this value are specified as size in swa_window_settings,
+// When this value is specified as size in swa_window_settings,
 // the system default will be used.
 // If the system has no default, will use the SWA_FALLBACK_* values.
 // The main advantage of using SWA_DEFAULT_SIZE is that swa will

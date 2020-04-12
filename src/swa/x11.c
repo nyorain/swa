@@ -955,7 +955,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		// store the key state in the local state
 		unsigned idx = key / 64;
 		unsigned bit = key % 64;
-		dpy->keyboard.key_states[idx] |= (uint64_t)(1 << bit);
+		dpy->keyboard.key_states[idx] |= ((uint64_t) 1) << bit;
 
 		char* utf8 = NULL;
 		bool canceled;
@@ -994,9 +994,16 @@ static void handle_event(struct swa_display_x11* dpy,
 			}
 		}
 
+		enum swa_key key = kev->detail - 8;
+
+		// store the key state in the local state
+		unsigned idx = key / 64;
+		unsigned bit = key % 64;
+		dpy->keyboard.key_states[idx] ^= ~(((uint64_t) 1) << bit);
+
 		if(win->base.listener->key) {
 			struct swa_key_event lev = {
-				.keycode = kev->detail,
+				.keycode = key,
 				.pressed = false,
 				.utf8 = NULL,
 				.repeated = false,
@@ -1188,7 +1195,7 @@ static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 
 	unsigned idx = key / 64;
 	unsigned bit = key % 64;
-	return (dpy->keyboard.key_states[idx] & (1 << bit));
+	return (dpy->keyboard.key_states[idx] & (((uint64_t) 1) << bit));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
@@ -1514,9 +1521,13 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_FOCUS_CHANGE;
 
 	// Setting the background pixel here may introduce flicker but may fix issues
-	// with creating opengl windows.
-	uint32_t valuemask = XCB_CW_BORDER_PIXEL | XCB_CW_EVENT_MASK | XCB_CW_COLORMAP;
-	uint32_t valuelist[] = {0, eventmask, win->colormap};
+	// with creating opengl windows. To get the default (parent) cursor
+	// on xwayland we apparently have to explicitly specify XCB_NONE as cursor.
+	uint32_t valuemask = XCB_CW_BORDER_PIXEL |
+		XCB_CW_EVENT_MASK |
+		XCB_CW_COLORMAP |
+		XCB_CW_CURSOR;
+	uint32_t valuelist[] = {0, eventmask, win->colormap, XCB_NONE};
 
 	win->window = xcb_generate_id(dpy->conn);
 	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn, win->depth,
