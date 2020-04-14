@@ -548,7 +548,7 @@ const struct {
 	{swa_key_kpperiod, "kpperiod", true},
 
 	{swa_key_zenkakuhankaku, "zenkakuhankaku", false},
-	{swa_key_nonushash, "nonushash", false},
+	{swa_key_102nd, "102nd", false},
 	{swa_key_f11, "f11", false},
 	{swa_key_f12, "f12", false},
 

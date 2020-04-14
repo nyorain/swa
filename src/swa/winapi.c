@@ -216,6 +216,12 @@ static const struct {
 	{swa_key_playpause, VK_MEDIA_PLAY_PAUSE},
 	{swa_key_mail, VK_LAUNCH_MAIL},
 
+	{swa_key_period, VK_OEM_PERIOD},
+	{swa_key_comma, VK_OEM_COMMA},
+	{swa_key_equals, VK_OEM_PLUS},
+	{swa_key_minus, VK_OEM_MINUS},
+	{swa_key_102nd, VK_OEM_102},
+
 	{swa_key_semicolon, VK_OEM_1},
 	{swa_key_slash, VK_OEM_2},
 	{swa_key_grave, VK_OEM_3},
@@ -223,8 +229,6 @@ static const struct {
 	{swa_key_backslash, VK_OEM_5},
 	{swa_key_rightbrace, VK_OEM_6},
 	{swa_key_apostrophe, VK_OEM_7},
-
-	// XXX: something about OEM_102. is the 102nd keycode for linux/input.h
 
 	{swa_key_play, VK_PLAY},
 	{swa_key_zoom, VK_ZOOM},

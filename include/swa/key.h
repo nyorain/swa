@@ -94,7 +94,7 @@ enum swa_key {
 	swa_key_kpperiod,
 
 	swa_key_zenkakuhankaku = 85,
-	swa_key_nonushash,
+	swa_key_102nd, // OEM 102/non-us hash
 	swa_key_f11,
 	swa_key_f12,
 	swa_key_ro,
