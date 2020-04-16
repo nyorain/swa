@@ -11,8 +11,6 @@ project(
 	],
 )
 
-libtype = get_option('libtype')
-
 cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
 	# gcc/clang
@@ -53,10 +51,7 @@ dep_dlg = dependency('dlg',
 	static: true
 )
 
-shared = (libtype == 'shared')
-if libtype == 'auto'
-	shared = (get_option('default_library') == 'shared')
-endif
+shared = (get_option('default_library') == 'shared')
 
 swa_deps = [dep_dlg, dep_threads]
 swa_args = []
@@ -257,27 +252,16 @@ conf_data.set('SWA_WITH_KMS', with_kms, description: 'Compiled with KMS/DRM supp
 
 subdir('include/swa')
 
-if shared
-	if with_android
-		lib_type = 'shared_module'
-	else
-		lib_type = 'shared_library'
-	endif
-else
-	lib_type = 'static_library'
-endif
-
 exe_type = 'executable'
 if with_android
 	exe_type = 'shared_library'
 endif
 
-swa_lib = build_target('swa',
+swa_lib = library('swa',
 	swa_src,
 	include_directories: swa_inc,
 	dependencies: swa_deps,
 	c_args: swa_args,
-	target_type: lib_type,
 	install: true)
 
 swa_dep = declare_dependency(
