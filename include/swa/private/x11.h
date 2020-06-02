@@ -10,9 +10,6 @@
 extern "C" {
 #endif
 
-typedef void* EGLSurface;
-typedef void* EGLContext;
-
 // xlib/xcb forward declarations
 typedef struct _XDisplay Display;
 typedef struct xcb_cursor_context_t xcb_cursor_context_t;
@@ -116,8 +113,8 @@ struct swa_x11_vk_surface {
 };
 
 struct swa_x11_gl_surface {
-	EGLSurface surface;
-	EGLContext context;
+	void* surface; // EGLSurface
+	void* context; // EGLContext
 };
 
 struct swa_window_x11 {

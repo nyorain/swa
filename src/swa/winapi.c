@@ -407,7 +407,35 @@ static void win_surface_frame(struct swa_window* base) {
 }
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
-	// struct swa_window_win* win = get_window_win(base);
+	// TODO: not finished
+	struct swa_window_win* win = get_window_win(base);
+	if(state == swa_window_state_fullscreen) {
+		long style = GetWindowLong(win->handle, GWL_STYLE);
+		long exstyle = GetWindowLong(win->handle, GWL_EXSTYLE);
+
+		MONITORINFO monitorinfo;
+		monitorinfo.cbSize = sizeof(monitorinfo);
+		GetMonitorInfo(MonitorFromWindow(win->handle, MONITOR_DEFAULTTONEAREST), &monitorinfo);
+		RECT rect = monitorinfo.rcMonitor;
+		rect.right -= rect.left;
+		rect.bottom -= rect.top;
+
+		SetWindowLong(win->handle, GWL_STYLE, (style | WS_POPUP) & ~(WS_OVERLAPPEDWINDOW));
+		SetWindowLong(win->handle, GWL_EXSTYLE, exstyle & ~(WS_EX_DLGMODALFRAME |
+			WS_EX_WINDOWEDGE | WS_EX_CLIENTEDGE | WS_EX_STATICEDGE));
+
+		// TODO
+		// the rect.bottom + 1 is needed here since some (buggy?) winapi implementations
+		// go automatically in real fullscreen mode when the window is a popup and the size
+		// the same as the monitor (observed behaviour).
+		// we do not handle/support real fullscreen mode since then
+		// the window has to take care about correct alt-tab/minimize handling
+		// which becomes easily buggy.
+		// SetWindowPos(win->handle, HWND_TOP, rect.left, rect.top, rect.right, rect.bottom + 1,
+		SetWindowPos(win->handle, NULL, rect.left, rect.top, rect.right, rect.bottom,
+			// SWP_NOOWNERZORDER |	SWP_ASYNCWINDOWPOS | SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+			SWP_FRAMECHANGED | SWP_NOZORDER | SWP_NOACTIVATE);
+	}
 }
 
 static void win_begin_move(struct swa_window* base) {
@@ -750,10 +778,22 @@ static struct swa_window* display_get_keyboard_focus(struct swa_display* base) {
 	return NULL;
 }
 
-static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
-	// struct swa_display_win* dpy = get_display_win(base);
-	return false;
+static unsigned button_to_winapi(enum swa_mouse_button button) {
+	switch(button) {
+		case swa_mouse_button_right: return VK_RBUTTON;
+		case swa_mouse_button_left: return VK_LBUTTON;
+		case swa_mouse_button_middle: return VK_MBUTTON;
+		case swa_mouse_button_custom1: return VK_XBUTTON1;
+		case swa_mouse_button_custom2: return VK_XBUTTON2;
+		default: return 0u;
+	}
 }
+
+static bool display_mouse_button_pressed(struct swa_display* base, enum swa_mouse_button button) {
+	unsigned state = GetAsyncKeyState(button_to_winapi(button));
+	return ((1 << 16) & state);
+}
+
 static void display_mouse_position(struct swa_display* base, int* x, int* y) {
 	struct swa_display_win* dpy = get_display_win(base);
 	*x = dpy->mx;

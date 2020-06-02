@@ -210,7 +210,7 @@ static xcb_cursor_t get_cursor(struct swa_display_x11* dpy,
 
 	dpy->cursors[dpy->n_cursors - 1].cursor = cursor;
 	dpy->cursors[dpy->n_cursors - 1].type = type;
-	return dpy->cursors[dpy->n_cursors - 1].cursor;
+	return cursor;
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {

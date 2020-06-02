@@ -39,9 +39,6 @@ struct swa_kms_vk_surface;
 extern "C" {
 #endif
 
-typedef void* EGLSurface;
-typedef void* EGLContext;
-
 struct swa_display_kms {
 	struct swa_display base;
 	struct pml* pml;
@@ -161,8 +158,8 @@ struct swa_kms_buffer_surface {
 };
 
 struct swa_kms_gl_surface {
-	EGLSurface surface;
-	EGLContext context;
+	void* surface; // EGLSurface
+	void* context; // EGLContext
 	struct gbm_surface* gbm_surface;
 
 	// The currently shown buffer.

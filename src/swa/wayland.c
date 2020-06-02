@@ -552,6 +552,7 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	if(type == swa_cursor_none) {
 		buffer_finish(&win->cursor.buffer);
 		win->cursor.hx = win->cursor.hy = 0;
+		win->cursor.native = NULL;
 	} else if(type == swa_cursor_image) {
 		static const enum wl_shm_format wl_fmt = WL_SHM_FORMAT_ARGB8888;
 		static const enum swa_image_format swa_fmt = swa_image_format_bgra32;

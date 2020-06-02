@@ -428,6 +428,8 @@ SWA_API void swa_display_destroy(struct swa_display*);
 // until at least one event has been dispatched.
 // Returns false if there was a critical error that means this display
 // should be destroyed (e.g. connection to display server lost).
+// It's not allowed to call this function recursively, i.e. from
+// a callback triggered from this function.
 SWA_API bool swa_display_dispatch(struct swa_display*, bool block);
 
 // Can be used to wakeup `swa_display_wait_events` from another thread.

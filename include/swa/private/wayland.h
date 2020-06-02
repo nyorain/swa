@@ -9,9 +9,6 @@
 extern "C" {
 #endif
 
-typedef void* EGLSurface;
-typedef void* EGLContext;
-
 struct swa_display_wl {
 	struct swa_display base;
 	struct wl_display* display;
@@ -110,8 +107,8 @@ struct swa_wl_buffer_surface {
 };
 
 struct swa_wl_gl_surface {
-	EGLSurface surface;
-	EGLContext context;
+	void* surface;
+	void* context;
 	struct wl_egl_window* egl_window;
 };
 
