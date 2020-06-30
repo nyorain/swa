@@ -742,7 +742,7 @@ SWA_API void* swa_data_offer_get_userdata(struct swa_data_offer*);
 SWA_API void swa_window_settings_default(struct swa_window_settings*);
 
 // Returns the name of the given key enumeration (null-terminated).
-// For exapmle, swa_key_to_name(swa_key_tab) returns "tab".
+// For example, swa_key_to_name(swa_key_tab) returns "tab".
 // Returns "<invalid>" if the key isn't known.
 SWA_API const char* swa_key_to_name(enum swa_key);
 
