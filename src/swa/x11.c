@@ -999,7 +999,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		// store the key state in the local state
 		unsigned idx = key / 64;
 		unsigned bit = key % 64;
-		dpy->keyboard.key_states[idx] ^= ~(((uint64_t) 1) << bit);
+		dpy->keyboard.key_states[idx] &= ~(((uint64_t) 1) << bit);
 
 		if(win->base.listener->key) {
 			struct swa_key_event lev = {
