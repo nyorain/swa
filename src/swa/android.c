@@ -1089,7 +1089,7 @@ static bool display_dispatch(struct swa_display* base, bool block) {
 		dpy->window->initial_events = false;
 		if(dpy->window->base.listener->resize) {
 			unsigned width = ANativeWindow_getWidth(dpy->activity->window);
-			unsigned height = ANativeWindow_getWidth(dpy->activity->window);
+			unsigned height = ANativeWindow_getHeight(dpy->activity->window);
 			dpy->window->base.listener->resize(&dpy->window->base, width, height);
 		}
 	}

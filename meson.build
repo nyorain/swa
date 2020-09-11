@@ -11,6 +11,8 @@ project(
 	],
 )
 
+examples = get_option('examples')
+
 cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
 	# gcc/clang
@@ -252,24 +254,34 @@ conf_data.set('SWA_WITH_KMS', with_kms, description: 'Compiled with KMS/DRM supp
 
 subdir('include/swa')
 
-exe_type = 'executable'
 if with_android
-	exe_type = 'shared_library'
-endif
+	swa_lib = shared_module('swa',
+		swa_src,
+		include_directories: swa_inc,
+		dependencies: swa_deps,
+		c_args: swa_args,
+		install: true)
 
-swa_lib = library('swa',
-	swa_src,
-	include_directories: swa_inc,
-	dependencies: swa_deps,
-	c_args: swa_args,
-	install: true)
+	exe_type = 'shared_library'
+else
+	swa_lib = library('swa',
+		swa_src,
+		include_directories: swa_inc,
+		dependencies: swa_deps,
+		c_args: swa_args,
+		install: true)
+
+	exe_type = 'executable'
+endif
 
 swa_dep = declare_dependency(
 	link_with: swa_lib,
 	include_directories: include_directories('include'))
 
-subdir('docs/examples')
+if examples
+	subdir('docs/examples')
+endif
 
-if with_android
+if with_android and examples
 	subdir('apk')
 endif

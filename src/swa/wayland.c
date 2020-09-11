@@ -2343,6 +2343,7 @@ static void seat_caps(void* data, struct wl_seat* seat, uint32_t caps) {
 		pml_timer_destroy(dpy->key_repeat.timer);
 		wl_keyboard_destroy(dpy->keyboard);
 		dpy->keyboard = NULL;
+		dpy->key_repeat.timer = NULL;
 	}
 
 	if((caps & WL_SEAT_CAPABILITY_POINTER) && !dpy->pointer) {
