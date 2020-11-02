@@ -13,9 +13,9 @@ ex_buffer = build_target('example-buffer',
 	target_type: exe_type,
 	dependencies: [swa_dep, dep_dlg])
 
-dep_vulkan_dis = dep_vulkan
-if not dep_vulkan.found()
-	dep_vulkan_dis = disabler()
+dep_vulkan_dis = disabler()
+if with_vk
+	dep_vulkan_dis = dep_vulkan_full
 endif
 
 ex_vulkan = build_target('example-vulkan',
@@ -28,20 +28,23 @@ ex_vulkan_loop = build_target('example-vulkan-loop',
 	target_type: exe_type,
 	dependencies: [swa_dep, dep_dlg, dep_vulkan_dis])
 
-if with_android
-	dep_gl = cc.find_library('GLESv2',
-		disabler: true,
-		required: false)
-else
-	dep_gl = dependency('gl',
-		disabler: true,
-		required: false)
+dep_gl_dis = disabler()
+if with_gl
+	if with_android
+		dep_gl_dis = cc.find_library('GLESv2',
+			disabler: true,
+			required: false)
+	else
+		dep_gl_dis = dependency('gl',
+			disabler: true,
+			required: false)
+	endif
 endif
 
 ex_gl = build_target('example-gl',
 	'example-gl.c',
 	target_type: exe_type,
-	dependencies: [swa_dep, dep_dlg, dep_gl])
+	dependencies: [swa_dep, dep_dlg, dep_gl_dis])
 
 dep_threads = dependency('threads', required: false)
 ex_wakeup = build_target('example-wakeup',

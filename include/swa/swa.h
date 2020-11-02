@@ -18,7 +18,7 @@ struct swa_data_offer;
 struct swa_data_source;
 struct swa_window_listener;
 
-typedef void (*swa_gl_proc)(void);
+typedef void (*swa_proc)(void);
 
 // When this value is specified as size in swa_window_settings,
 // the system default will be used.
@@ -204,6 +204,12 @@ struct swa_gl_surface_settings {
 // returned by swa_display_vk_extensions.
 struct swa_vk_surface_settings {
 	uintptr_t instance; // type: VkInstance
+
+	// When this is not null, is expected to be of type PFN_vkGetInstanceProcAddr
+	// and will be used instead of the symbol provided by libvulkan.
+	// When swa was built with the link-vulkan options set to false,
+	// this must be set. Usually, there is no need for setting this.
+	swa_proc get_instance_proc_addr;
 };
 
 struct swa_buffer_surface_settings {
@@ -543,7 +549,7 @@ SWA_API enum swa_api swa_display_get_default_api(struct swa_display*);
 // only be used with the current context.
 // Returns NULL on failure.
 // Only valid if the display has the 'gl' capability.
-SWA_API swa_gl_proc swa_display_get_gl_proc_addr(struct swa_display*,
+SWA_API swa_proc swa_display_get_gl_proc_addr(struct swa_display*,
 		const char* name);
 
 // Creates a new window with the specified settings.

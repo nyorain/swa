@@ -511,6 +511,7 @@ static bool win_gl_make_current(struct swa_window* base) {
 #endif
 }
 
+#ifdef SWA_WITH_GL
 static void free_fb(struct gbm_bo *bo, void *data) {
 	uint32_t id = (uintptr_t)data;
 	if(id) {
@@ -549,6 +550,7 @@ static uint32_t fb_for_bo(struct gbm_bo* bo, uint32_t drm_format) {
 	gbm_bo_set_user_data(bo, (void*)(uintptr_t)id, free_fb);
 	return id;
 }
+#endif // SWA_WITH_GL
 
 static bool pageflip(struct swa_window_kms* win, uint32_t fb_id,
 		uint64_t width, uint64_t height) {
@@ -1000,9 +1002,11 @@ static void page_flip_handler(int fd, unsigned seq,
 		win->buffer.pending = NULL;
 	} else if(win->surface_type == swa_surface_gl) {
 		dlg_assert(win->gl.pending);
+#ifdef SWA_WITH_GL
 		if(win->gl.front) {
 			gbm_surface_release_buffer(win->gl.gbm_surface, win->gl.front);
 		}
+#endif // SWA_WITH_GL
 
 		output->window->gl.front = output->window->gl.pending;
 		output->window->gl.pending = NULL;

@@ -1,6 +1,11 @@
 Notes
 =====
 
+- we can't make the main loop re-entrant since some backends simply
+  are not (and working around that limitation would be *a lot of* work). 
+  It would be a bad design choice anyways I guess. Remove all references to it. 
+  May be possible to simplify backends now.
+
 wayland:
 
 - implement gl swap interval
@@ -43,6 +48,7 @@ winapi:
 [not implemented yet at all, really]
 
 - fix redraw/refresh loop
+- fix destruction and cleanup (e.g. win_destroy, maybe display as well)
 
 android:
 - add exception catching wrapper around main call?

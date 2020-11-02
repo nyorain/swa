@@ -24,7 +24,7 @@ struct swa_display_interface {
 	bool (*start_dnd)(struct swa_display*, struct swa_data_source*);
 	struct swa_window* (*create_window)(struct swa_display*,
 		const struct swa_window_settings*);
-	swa_gl_proc (*get_gl_proc_addr)(struct swa_display*, const char*);
+	swa_proc (*get_gl_proc_addr)(struct swa_display*, const char*);
 };
 
 struct swa_window_interface {

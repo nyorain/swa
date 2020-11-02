@@ -2,8 +2,11 @@
 #include <dlg/dlg.h>
 
 #ifdef SWA_WITH_VK
+  #define VK_USE_PLATFORM_WIN32_KHR
+  #ifndef SWA_WITH_LINKED_VK
+	#define VK_NO_PROTOTYPES
+  #endif // SWA_WITH_LINKED_VK
   #include <vulkan/vulkan.h>
-  #include <vulkan/vulkan_win32.h>
 #endif
 
 #include <wingdi.h>
@@ -295,6 +298,7 @@ static const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
+	// TODO
 	free(win);
 }
 
@@ -818,17 +822,17 @@ static bool display_start_dnd(struct swa_display* base,
 	return false;
 }
 
-static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
+static swa_proc display_get_gl_proc_addr(struct swa_display* base, const char* name) {
 	(void) base;
 #ifdef SWA_WITH_GL
-	return (swa_gl_proc) wglGetProcAddress(name);
+	return (swa_proc) wglGetProcAddress(name);
 #else
 	dlg_error("swa was built without gl");
 	return NULL;
 #endif
 }
 
-static void handle_mouse_button(struct swa_window_win* win, bool pressed, 
+static void handle_mouse_button(struct swa_window_win* win, bool pressed,
 		enum swa_mouse_button btn, LPARAM lparam) {
 	if(win->base.listener->mouse_button) {
 		struct swa_mouse_button_event ev = {0};
@@ -842,7 +846,7 @@ static void handle_mouse_button(struct swa_window_win* win, bool pressed,
 	// TODO: store pressed state in win->dpy
 }
 
-static void handle_key(struct swa_window_win* win, bool pressed, 
+static void handle_key(struct swa_window_win* win, bool pressed,
 		WPARAM wparam, LPARAM lparam) {
 	// extractd utf8
 	MSG msg;
@@ -962,13 +966,13 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			}
 			break;
 		}
-		case WM_LBUTTONDOWN: 
+		case WM_LBUTTONDOWN:
 			handle_mouse_button(win, true, swa_mouse_button_left, lparam);
 			break;
-		case WM_LBUTTONUP: 
+		case WM_LBUTTONUP:
 			handle_mouse_button(win, false, swa_mouse_button_left, lparam);
 			break;
-		case WM_RBUTTONDOWN: 
+		case WM_RBUTTONDOWN:
 			handle_mouse_button(win, true, swa_mouse_button_right, lparam);
 			break;
 		case WM_RBUTTONUP:
@@ -981,13 +985,13 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			handle_mouse_button(win, false, swa_mouse_button_middle, lparam);
 			break;
 		case WM_XBUTTONDOWN:
-			handle_mouse_button(win, true, (HIWORD(wparam) == 1) ? 
-				swa_mouse_button_custom1 : 
+			handle_mouse_button(win, true, (HIWORD(wparam) == 1) ?
+				swa_mouse_button_custom1 :
 				swa_mouse_button_custom2, lparam);
 			break;
 		case WM_XBUTTONUP:
-			handle_mouse_button(win, false, (HIWORD(wparam) == 1) ? 
-				swa_mouse_button_custom1 : 
+			handle_mouse_button(win, false, (HIWORD(wparam) == 1) ?
+				swa_mouse_button_custom1 :
 				swa_mouse_button_custom2, lparam);
 			break;
 		case WM_MOUSELEAVE: {
@@ -1163,8 +1167,22 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		VkInstance instance = (VkInstance) win->vk.instance;
 		VkSurfaceKHR surface;
 
+		PFN_vkGetInstanceProcAddr fpGetProcAddr = (PFN_vkGetInstanceProcAddr)
+			settings->surface_settings.vk.get_instance_proc_addr;
+#ifdef SWA_WITH_LINKED_VK
+		if(!fpGetProcAddr) {
+			fpGetProcAddr = &vkGetInstanceProcAddr;
+		}
+#else // SWA_WITH_LINKED_VK
+		if(!fpGetProcAddr) {
+			dlg_error("No vkGetInstanceProcAddr provided, swa wasn't linked "
+				"against vulkan");
+			goto error;
+		}
+#endif // SWA_WITH_LINKED_VK
+
 		PFN_vkCreateWin32SurfaceKHR fn = (PFN_vkCreateWin32SurfaceKHR)
-			vkGetInstanceProcAddr(instance, "vkCreateWin32SurfaceKHR");
+			fpGetProcAddr(instance, "vkCreateWin32SurfaceKHR");
 		if(!fn) {
 			dlg_error("Failed to load 'vkCreateWin32SurfaceKHR' function");
 			goto error;
@@ -1177,6 +1195,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 
 		win->vk.surface = (uint64_t)surface;
+		win->vk.destroy_surface_pfn = (void*)
+			fpGetProcAddr(instance, "vkDestroySurfaceKHR");
 #else
 		dlg_error("swa was compiled without vulkan support");
 		goto error;

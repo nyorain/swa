@@ -51,6 +51,7 @@ struct swa_win_buffer_surface {
 struct swa_win_vk_surface {
 	uintptr_t instance;
 	uint64_t surface;
+	swa_proc destroy_surface_pfn;
 };
 
 struct swa_window_win {

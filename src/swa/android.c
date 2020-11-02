@@ -1165,10 +1165,10 @@ static const char** display_vk_extensions(struct swa_display* base, unsigned* co
 #endif
 }
 
-static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base,
+static swa_proc display_get_gl_proc_addr(struct swa_display* base,
 		const char* name) {
 #ifdef SWA_WITH_GL
-	return (swa_gl_proc) eglGetProcAddress(name);
+	return (swa_proc) eglGetProcAddress(name);
 #else
 	dlg_error("swa was built without gl support");
 	return NULL;

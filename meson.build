@@ -13,6 +13,13 @@ project(
 
 examples = get_option('examples')
 
+opt_with_gl = get_option('with-gl')
+opt_with_vulkan = get_option('with-vulkan')
+opt_link_vulkan = get_option('link-vulkan')
+opt_with_wayland = get_option('with-wayland')
+opt_with_x11 = get_option('with-x11')
+opt_with_kms = get_option('with-kms')
+
 cc = meson.get_compiler('c')
 args = cc.get_supported_arguments([
 	# gcc/clang
@@ -50,7 +57,6 @@ add_project_arguments(flag_dlg, language: 'c')
 dep_threads = dependency('threads', required: false)
 dep_dlg = dependency('dlg',
 	fallback: ['dlg', 'dlg_dep'],
-	static: true
 )
 
 shared = (get_option('default_library') == 'shared')
@@ -60,7 +66,13 @@ swa_args = []
 conf_data = configuration_data()
 conf_data.set('SWA_SHARED', shared, description: 'Compiled as shared library')
 
-dep_vulkan = dependency('vulkan', required: false)
+dep_vulkan_full = dependency('vulkan', required: opt_with_vulkan)
+dep_vulkan = dep_vulkan_full
+if not opt_link_vulkan
+	dep_vulkan = dep_vulkan.partial_dependency(
+		compile_args: true,
+		includes: true)
+endif
 
 swa_inc = [
 	include_directories('src'),
@@ -76,7 +88,7 @@ with_gl = false
 with_vk = dep_vulkan.found()
 
 if host_machine.system() == 'android'
-	dep_egl = cc.find_library('EGL')
+	dep_egl = cc.find_library('EGL', required: opt_with_gl)
 	dep_log = cc.find_library('log')
 	dep_android = cc.find_library('android')
 
@@ -96,7 +108,7 @@ if host_machine.system() == 'android'
 		dep_vulkan,
 	]
 elif host_machine.system() == 'windows'
-	dep_gl = dependency('gl', required: false)
+	dep_gl = dependency('gl', required: opt_with_gl)
 
 	with_win = true
 	win_gl = dep_gl.found()
@@ -123,128 +135,167 @@ else # just assume some posix/unix variant
 		default_options: ['examples=false', 'tests=false'],
 	)
 
+	# we require xkbcommon since it's needed by all backends
+	dep_xkbcommon = dependency('xkbcommon', required: true)
+
 	swa_src += files(
 		'src/swa/xkb.c',
 		'src/swa/xcursor.c',
-		'src/swa/wayland.c',
-		'src/swa/x11.c',
-		'src/swa/egl.c',
 	)
 
-	dep_xkbcommon = dependency('xkbcommon', required: true)
+	dep_egl = dependency('egl', required: opt_with_gl, version: '>=1.4')
+	with_gl = dep_egl.found()
 
-	dep_wl_client = dependency('wayland-client', required: true)
-	dep_wl_cursor = dependency('wayland-cursor', required: true)
-	dep_wl_egl = dependency('wayland-egl', required: true)
-	dep_egl = dependency('egl', required: true, version: '>=1.4')
-
-	op_enable_x11 = true
-	x11_deps = [
-		dep_xkbcommon,
-		dependency('x11', required: op_enable_x11),
-		dependency('x11-xcb', required: op_enable_x11),
-		dependency('xcursor', required: op_enable_x11),
-		dependency('xcb', required: op_enable_x11),
-		dependency('xcb-ewmh', required: op_enable_x11),
-		dependency('xcb-icccm', required: op_enable_x11),
-		dependency('xcb-shm', required: op_enable_x11),
-		dependency('xcb-present', required: op_enable_x11),
-		dependency('xcb-xinput', required: op_enable_x11),
-		dependency('xcb-xkb', required: op_enable_x11),
-		dependency('xkbcommon-x11', required: op_enable_x11),
-	]
-
-	wl_protos = dependency('wayland-protocols', version: '>=1.14', required: true)
-	wl_scanner = find_program('wayland-scanner', required: true)
-	wl_protocol_dir = wl_protos.get_pkgconfig_variable('pkgdatadir')
-
-	if dep_wl_client.version().version_compare('>=1.14.91')
-		code_type = 'private-code'
-	else
-		code_type = 'code'
+	if with_gl
+		swa_src += files('src/swa/egl.c')
 	endif
 
-	wl_scanner_code = generator(
-		wl_scanner,
-		output: '@BASENAME@-protocol.c',
-		arguments: [code_type, '@INPUT@', '@OUTPUT@'],
-	)
-
-	wl_scanner_client = generator(
-		wl_scanner,
-		output: '@BASENAME@-client-protocol.h',
-		arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
-	)
-
-	wl_protos_src = []
-	wl_protos_headers = []
-
-	wl_protocols = [
-		[wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
-		[wl_protocol_dir, 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
-	]
-
-	foreach p : wl_protocols
-		xml = join_paths(p)
-		wl_protos_src += wl_scanner_code.process(xml)
-		wl_protos_headers += wl_scanner_client.process(xml)
-	endforeach
-
-	lib_wl_protos = static_library(
-		'client_protos',
-		wl_protos_src + wl_protos_headers,
-		dependencies: [dep_wl_client]
-	) # for the include directory
-
-	dep_wl_protos = declare_dependency(
-		link_with: lib_wl_protos,
-		sources: wl_protos_headers,
-	)
-
 	swa_deps += [
-		dep_pml,
-		dep_wl_client,
-		dep_wl_cursor,
-		dep_wl_egl,
-		dep_wl_protos,
 		dep_xkbcommon,
+		dep_pml,
 		dep_vulkan,
 		dep_egl,
 	]
 
-	swa_deps += x11_deps
+	# == wayland ==
+	dep_wl_client = dependency('wayland-client', required: opt_with_wayland)
+	dep_wl_cursor = dependency('wayland-cursor', required: opt_with_wayland)
+	wl_protos = dependency('wayland-protocols', version: '>=1.14', required: opt_with_wayland)
+	wl_scanner = find_program('wayland-scanner', required: opt_with_wayland)
 
-	with_vk = dep_vulkan.found()
-	with_win = false
+	with_wl = dep_wl_client.found() and dep_wl_cursor.found() and wl_protos.found() and wl_scanner.found()
 
-	# TODO
-	with_gl = true
-	with_wl = true
-	with_x11 = true
-	with_kms = true
+	# When wayland and egl is found, wayland-egl must be found as well.
+	if with_wl
+		dep_wl_egl = dependency('wayland-egl', required: with_gl and with_wl)
+		swa_src += files(
+			'src/swa/wayland.c',
+		)
 
-	# drm backend
-	dep_drm = dependency('libdrm', version: '>=2.4.95')
-	dep_gbm = dependency('gbm', version: '>=17.1.0')
-	dep_libinput = dependency('libinput', version: '>=1.9.0')
-	dep_udev = dependency('libudev')
+		wl_protocol_dir = wl_protos.get_pkgconfig_variable('pkgdatadir')
 
-	swa_deps += [
-		dep_drm,
-		dep_gbm,
-		dep_libinput,
-		dep_udev,
+		if dep_wl_client.version().version_compare('>=1.14.91')
+			code_type = 'private-code'
+		else
+			code_type = 'code'
+		endif
+
+		wl_scanner_code = generator(
+			wl_scanner,
+			output: '@BASENAME@-protocol.c',
+			arguments: [code_type, '@INPUT@', '@OUTPUT@'],
+		)
+
+		wl_scanner_client = generator(
+			wl_scanner,
+			output: '@BASENAME@-client-protocol.h',
+			arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
+		)
+
+		wl_protos_src = []
+		wl_protos_headers = []
+
+		wl_protocols = [
+			[wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
+			[wl_protocol_dir, 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
+		]
+
+		foreach p : wl_protocols
+			xml = join_paths(p)
+			wl_protos_src += wl_scanner_code.process(xml)
+			wl_protos_headers += wl_scanner_client.process(xml)
+		endforeach
+
+		lib_wl_protos = static_library(
+			'client_protos',
+			wl_protos_src + wl_protos_headers,
+			dependencies: [dep_wl_client]
+		) # for the include directory
+
+		dep_wl_protos = declare_dependency(
+			link_with: lib_wl_protos,
+			sources: wl_protos_headers,
+		)
+
+		swa_deps += [
+			dep_wl_client,
+			dep_wl_cursor,
+			dep_wl_egl,
+			dep_wl_protos,
+		]
+	endif
+
+	# == x11 ==
+	x11_deps = [
+		dep_xkbcommon,
+		dependency('x11', required: opt_with_x11),
+		dependency('x11-xcb', required: opt_with_x11),
+		dependency('xcursor', required: opt_with_x11),
+		dependency('xcb', required: opt_with_x11),
+		dependency('xcb-ewmh', required: opt_with_x11),
+		dependency('xcb-icccm', required: opt_with_x11),
+		dependency('xcb-shm', required: opt_with_x11),
+		dependency('xcb-present', required: opt_with_x11),
+		dependency('xcb-xinput', required: opt_with_x11),
+		dependency('xcb-xkb', required: opt_with_x11),
+		dependency('xkbcommon-x11', required: opt_with_x11),
 	]
 
-	swa_src += files(
-		'src/swa/kms/kms.c',
-		'src/swa/kms/props.c',
-		'src/swa/kms/xcursor.c',
-		'src/swa/kms/vulkan.c',
-	)
+	foreach dep : x11_deps
+		if not dep.found()
+			with_x11 = false
+		endif
+	endforeach
+
+	if with_x11
+		swa_src += files(
+			'src/swa/x11.c',
+		)
+
+		swa_deps += x11_deps
+	endif
+
+
+	# kms/drm backend
+	dep_drm = dependency('libdrm', version: '>=2.4.95', required: opt_with_kms)
+	dep_gbm = dependency('gbm', version: '>=17.1.0', required: opt_with_kms)
+	dep_libinput = dependency('libinput', version: '>=1.9.0', required: opt_with_kms)
+	dep_udev = dependency('libudev', required: opt_with_kms)
+
+	with_kms = dep_drm.found() and dep_gbm.found() and dep_libinput.found() and dep_udev.found()
+	if with_kms
+		if with_vk
+			if not opt_link_vulkan
+				error('Combining kms backend and link-vulkan=false does not work')
+			endif
+
+			swa_src += files(
+				'src/swa/kms/vulkan.c'
+			)
+		endif
+
+		swa_src += files(
+			'src/swa/kms/kms.c',
+			'src/swa/kms/props.c',
+			'src/swa/kms/xcursor.c',
+		)
+
+		swa_deps += [
+			dep_drm,
+			dep_gbm,
+			dep_libinput,
+			dep_udev,
+		]
+	endif
+
+	# check that at least one backend is available
+	if not with_wl and not with_x11 and not with_kms
+		error('No backend enabled')
+	endif
 endif
 
 conf_data.set('SWA_WITH_VK', with_vk, description: 'Compiled with Vulkan support')
+conf_data.set('SWA_WITH_LINKED_VK', opt_link_vulkan, description: 'Linked to vulkan library')
 conf_data.set('SWA_WITH_ANDROID', with_android, description: 'Compiled with Android support')
 conf_data.set('SWA_WITH_GL', with_gl, description: 'Compiled with OpenGL support')
 conf_data.set('SWA_WITH_WL', with_wl, description: 'Compiled with Wayland support')

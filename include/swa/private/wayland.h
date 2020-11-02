@@ -115,6 +115,7 @@ struct swa_wl_gl_surface {
 struct swa_wl_vk_surface {
 	uintptr_t instance;
 	uint64_t surface;
+	swa_proc destroy_surface_pfn;
 };
 
 struct swa_window_wl {

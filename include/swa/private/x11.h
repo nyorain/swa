@@ -110,6 +110,7 @@ struct swa_x11_buffer_surface {
 struct swa_x11_vk_surface {
 	uintptr_t instance;
 	uint64_t surface;
+	swa_proc destroy_surface_pfn;
 };
 
 struct swa_x11_gl_surface {

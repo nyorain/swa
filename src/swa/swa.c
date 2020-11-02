@@ -335,7 +335,7 @@ bool swa_display_start_dnd(struct swa_display* dpy,
 		struct swa_data_source* source) {
 	return dpy->impl->start_dnd(dpy, source);
 }
-swa_gl_proc swa_display_get_gl_proc_addr(struct swa_display* dpy,
+swa_proc swa_display_get_gl_proc_addr(struct swa_display* dpy,
 		const char* name) {
 	return dpy->impl->get_gl_proc_addr(dpy, name);
 }

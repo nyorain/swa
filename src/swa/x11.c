@@ -21,8 +21,11 @@
 #include <xkbcommon/xkbcommon-x11.h>
 
 #ifdef SWA_WITH_VK
+  #define VK_USE_PLATFORM_XCB_KHR
+  #ifndef SWA_WITH_LINKED_VK
+	#define VK_NO_PROTOTYPES
+  #endif // SWA_WITH_LINKED_VK
   #include <vulkan/vulkan.h>
-  #include <vulkan/vulkan_xcb.h>
 #endif
 
 #ifdef SWA_WITH_GL
@@ -78,8 +81,9 @@ static void win_destroy(struct swa_window* base) {
 
 			VkInstance instance = (VkInstance) win->vk.instance;
 			VkSurfaceKHR surface = (VkSurfaceKHR) win->vk.surface;
+
 			PFN_vkDestroySurfaceKHR fn = (PFN_vkDestroySurfaceKHR)
-				vkGetInstanceProcAddr(instance, "vkDestroySurfaceKHR");
+				win->vk.destroy_surface_pfn;
 			if(fn) {
 				fn(instance, surface, NULL);
 			} else {
@@ -1408,10 +1412,10 @@ static void find_visual(struct swa_window_x11* win,
 	}
 }
 
-static swa_gl_proc display_get_gl_proc_addr(struct swa_display* base,
+static swa_proc display_get_gl_proc_addr(struct swa_display* base,
 		const char* name) {
 #ifdef SWA_WITH_GL
-	return (swa_gl_proc) eglGetProcAddress(name);
+	return (swa_proc) eglGetProcAddress(name);
 #else
 	dlg_error("swa was built without gl support");
 	return NULL;
@@ -1663,8 +1667,22 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		VkInstance instance = (VkInstance) win->vk.instance;
 		VkSurfaceKHR surface;
 
+		PFN_vkGetInstanceProcAddr fpGetProcAddr = (PFN_vkGetInstanceProcAddr)
+			settings->surface_settings.vk.get_instance_proc_addr;
+#ifdef SWA_WITH_LINKED_VK
+		if(!fpGetProcAddr) {
+			fpGetProcAddr = &vkGetInstanceProcAddr;
+		}
+#else // SWA_WITH_LINKED_VK
+		if(!fpGetProcAddr) {
+			dlg_error("No vkGetInstanceProcAddr provided, swa wasn't linked "
+				"against vulkan");
+			goto error;
+		}
+#endif // SWA_WITH_LINKED_VK
+
 		PFN_vkCreateXcbSurfaceKHR fn = (PFN_vkCreateXcbSurfaceKHR)
-			vkGetInstanceProcAddr(instance, "vkCreateXcbSurfaceKHR");
+			fpGetProcAddr(instance, "vkCreateXcbSurfaceKHR");
 		if(!fn) {
 			dlg_error("Failed to load 'vkCreateXcbSurfaceKHR' function");
 			goto error;
@@ -1677,6 +1695,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 
 		win->vk.surface = (uint64_t) surface;
+		win->vk.destroy_surface_pfn = (void*)
+			fpGetProcAddr(instance, "vkDestroySurfaceKHR");
 #else
 		dlg_error("swa was compiled without vulkan support");
 		goto err;

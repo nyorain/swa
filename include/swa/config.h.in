@@ -18,6 +18,11 @@
 // Built with vulkan support?
 #mesondefine SWA_WITH_VK
 
+// Linked against vulkan library?
+// If this is false, swa_vk_surface_settings.get_instance_proc_addr
+// must be set on window creation
+#mesondefine SWA_WITH_LINKED_VK
+
 // Built with gl (egl/wgl) support?
 #mesondefine SWA_WITH_GL
 

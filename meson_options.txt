@@ -1,1 +1,15 @@
 option('examples', type: 'boolean', value: false)
+
+option('with-gl', type: 'feature', value: 'auto')
+option('with-vulkan', type: 'feature', value: 'auto')
+
+# Only relevant when vulkan is enabled.
+# If this is true, will link to libvulkan statically and use
+# the provided vkGetInstanceProcAddr function 
+option('link-vulkan', type: 'boolean', value: 'true')
+
+option('with-x11', type: 'feature', value: 'auto')
+option('with-wayland', type: 'feature', value: 'auto')
+
+# Enable the highly experimental drm/kms backend
+option('with-kms', type: 'feature', value: 'disabled')
