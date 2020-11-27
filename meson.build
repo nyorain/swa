@@ -107,11 +107,12 @@ if host_machine.system() == 'android'
 		dep_egl,
 		dep_vulkan,
 	]
+
 elif host_machine.system() == 'windows'
 	dep_gl = dependency('gl', required: opt_with_gl)
 
 	with_win = true
-	win_gl = dep_gl.found()
+	with_gl = dep_gl.found()
 
 	if shared
 		swa_args += '-DSWA_API=__declspec(dllexport)'
@@ -124,10 +125,14 @@ elif host_machine.system() == 'windows'
 	swa_deps += cc.find_library('Gdi32')
 	swa_deps += dep_vulkan
 	swa_deps += dep_gl
-	swa_src += files(
-		'src/swa/winapi.c',
-		'src/swa/wgl.c'
-	)
+	swa_src += files('src/swa/winapi.c')
+
+	if with_gl
+		swa_src += files('src/swa/wgl.c')
+	endif
+	
+	# embrace, extend, extinguish? meh
+	swa_args += '-D_CRT_SECURE_NO_WARNINGS'
 else # just assume some posix/unix variant
 	dep_pml = dependency('pml',
 		fallback: ['pml', 'pml_dep'],

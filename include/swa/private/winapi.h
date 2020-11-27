@@ -1,5 +1,8 @@
 #pragma once
+
 #define UNICODE
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
 
 #include <swa/swa.h>
 #include <swa/private/impl.h>
@@ -15,7 +18,6 @@
 #undef far
 #undef ERROR
 #undef MemoryBarrier
-#undef UNICODE
 
 #ifdef __cplusplus
 extern "C" {

@@ -858,7 +858,7 @@ static void handle_key(struct swa_window_win* win, bool pressed,
 		}
 
 		dlg_assert(GetMessage(&msg, NULL, 0, 0)); // remove it
-		src[i++] = msg.wParam;
+		src[i++] = (wchar_t)(msg.wParam);
 	}
 
 	char* utf8 = NULL;
@@ -869,7 +869,7 @@ static void handle_key(struct swa_window_win* win, bool pressed,
 	if(win->base.listener->key) {
 		struct swa_key_event ev = {0};
 		ev.pressed = pressed;
-		ev.keycode = winapi_to_key(wparam);
+		ev.keycode = winapi_to_key((unsigned)(wparam));
 		ev.repeated = pressed && (lparam & 0x40000000);
 		ev.utf8 = utf8;
 
@@ -1047,13 +1047,13 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			break;
 		} case WM_MOUSEWHEEL: {
 			if(win->base.listener->mouse_wheel) {
-				float dy = GET_WHEEL_DELTA_WPARAM(wparam) / 120.0;
+				float dy = (float)(GET_WHEEL_DELTA_WPARAM(wparam) / 120.f);
 				win->base.listener->mouse_wheel(&win->base, 0.f, dy);
 			}
 			break;
 		} case WM_MOUSEHWHEEL: {
 			if(win->base.listener->mouse_wheel) {
-				float dx = -GET_WHEEL_DELTA_WPARAM(wparam) / 120.0;
+				float dx = (float)(-GET_WHEEL_DELTA_WPARAM(wparam) / 120.0);
 				win->base.listener->mouse_wheel(&win->base, dx, 0.f);
 			}
 			break;
@@ -1195,7 +1195,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 
 		win->vk.surface = (uint64_t)surface;
-		win->vk.destroy_surface_pfn = (void*)
+		win->vk.destroy_surface_pfn = (swa_proc)
 			fpGetProcAddr(instance, "vkDestroySurfaceKHR");
 #else
 		dlg_error("swa was compiled without vulkan support");

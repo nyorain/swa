@@ -633,6 +633,7 @@ bool init_instance(struct state* state, unsigned n_dpy_exts,
 
 	// layer reports error in api usage to debug callback
 	const char *layers[] = {
+		"VK_LAYER_fuencaliente",
 		"VK_LAYER_KHRONOS_validation",
 	};
 
