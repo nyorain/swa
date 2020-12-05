@@ -848,7 +848,8 @@ static void handle_mouse_button(struct swa_window_win* win, bool pressed,
 
 static void handle_key(struct swa_window_win* win, bool pressed,
 		WPARAM wparam, LPARAM lparam) {
-	// extractd utf8
+
+	// extract utf8
 	MSG msg;
 	unsigned i = 0;
 	wchar_t src[9] = {0};

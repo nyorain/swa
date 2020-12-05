@@ -130,7 +130,7 @@ elif host_machine.system() == 'windows'
 	if with_gl
 		swa_src += files('src/swa/wgl.c')
 	endif
-	
+
 	# embrace, extend, extinguish? meh
 	swa_args += '-D_CRT_SECURE_NO_WARNINGS'
 else # just assume some posix/unix variant
@@ -246,6 +246,7 @@ else # just assume some posix/unix variant
 		dependency('xkbcommon-x11', required: opt_with_x11),
 	]
 
+	with_x11 = true
 	foreach dep : x11_deps
 		if not dep.found()
 			with_x11 = false

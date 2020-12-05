@@ -1695,7 +1695,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 
 		win->vk.surface = (uint64_t) surface;
-		win->vk.destroy_surface_pfn = (void*)
+		win->vk.destroy_surface_pfn = (swa_proc)
 			fpGetProcAddr(instance, "vkDestroySurfaceKHR");
 #else
 		dlg_error("swa was compiled without vulkan support");
