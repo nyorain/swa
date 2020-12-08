@@ -284,7 +284,7 @@ static void win_surface_frame(struct swa_window* base) {
 				win->window, XCB_PRESENT_EVENT_MASK_COMPLETE_NOTIFY);
 		}
 
-		dlg_debug("present_notify for target %lu", win->present.target_msc);
+		// dlg_debug("present_notify for target %lu", win->present.target_msc);
 		xcb_present_notify_msc(win->dpy->conn, win->window,
 			++win->present.serial,
 			win->present.target_msc, 1, 0);
@@ -642,8 +642,8 @@ static void handle_present_event(struct swa_display_x11* dpy,
 				break;
 			}
 
-			dlg_debug("complete.msc: %lu, target_msc: %lu",
-				complete->msc, win->present.target_msc);
+			// dlg_debug("complete.msc: %lu, target_msc: %lu",
+			// 	complete->msc, win->present.target_msc);
 			if(complete->msc < win->present.target_msc) {
 				break;
 			}
@@ -1490,7 +1490,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	    }
 #else
 		dlg_error("swa was compiled without GL support");
-		goto err;
+		goto error;
 #endif
 	} else {
 		find_visual(win, settings, &visual_scanline_pad, &visual_format);

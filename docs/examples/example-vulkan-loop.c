@@ -152,19 +152,20 @@ static bool window_draw(struct swa_window* win) {
 	// acquire image
 	// we treat suboptimal as success here
 	uint32_t id;
-	while(true) {
-		res = vkAcquireNextImageKHR(state->device, state->swapchain,
-			UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
-		if(res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR) {
-			break;
-		} else if(res == VK_ERROR_OUT_OF_DATE_KHR) {
-			dlg_warn("Got out of date swapchain (acquire)");
-			return false;
-		} else {
-			vk_error(res, "vkAcquireNextImageKHR");
-			state->run = false;
-			return false;
-		}
+	res = vkAcquireNextImageKHR(state->device, state->swapchain,
+		UINT64_MAX, state->acquire_sem, VK_NULL_HANDLE, &id);
+	if(res == VK_SUBOPTIMAL_KHR) {
+		dlg_warn("vkAcquireNextImageKHR: suboptimal");
+		// success nonetheless
+	} else if(res == VK_SUCCESS) {
+		// no-op, success
+	} else if(res == VK_ERROR_OUT_OF_DATE_KHR) {
+		dlg_warn("Got out of date swapchain (acquire)");
+		return false;
+	} else {
+		vk_error(res, "vkAcquireNextImageKHR");
+		state->run = false;
+		return false;
 	}
 
 	// submit render commands
@@ -197,7 +198,9 @@ static bool window_draw(struct swa_window* win) {
 	present_info.pWaitSemaphores = &state->render_sem;
 
 	res = vkQueuePresentKHR(state->qs.present, &present_info);
-	if(res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR) {
+	if(res == VK_SUBOPTIMAL_KHR) {
+		dlg_warn("vkQueuePresentKHR: suboptimal");
+	} else if(res != VK_SUCCESS) {
 		if(res == VK_ERROR_OUT_OF_DATE_KHR) {
 			dlg_warn("Got out of date swapchain (present)");
 			return true;
@@ -854,10 +857,12 @@ bool init_renderer(struct state* state) {
 	unsigned n_exts = 1u;
 	exts[0] = VK_KHR_SWAPCHAIN_EXTENSION_NAME;
 
-	dev_ext = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
-	if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
-		exts[n_exts++] = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
-	}
+	// TODO: move this into swa and expose it. Like per-window
+	// required device extensions?
+	// dev_ext = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
+	// if(has_extension(phdev_exts, phdev_extc, dev_ext)) {
+	// 	exts[n_exts++] = VK_EXT_DISPLAY_CONTROL_EXTENSION_NAME;
+	// }
 
 	free(phdev_exts);
 

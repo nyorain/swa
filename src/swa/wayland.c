@@ -2091,13 +2091,15 @@ static void pointer_axis(void* data, struct wl_pointer* wl_pointer,
 		return;
 	}
 
-	float nvalue = wl_fixed_to_double(value) / 10.f;
+	// TODO: not sure about scaling. Document where this comes from, why it
+	// is needed!
+	float nvalue = wl_fixed_to_double(value) / 15.f;
 	float dx = 0.f;
 	float dy = 0.f;
 	if(axis == WL_POINTER_AXIS_HORIZONTAL_SCROLL) {
-		dx = nvalue;
+		dx = -nvalue;
 	} else if(axis == WL_POINTER_AXIS_VERTICAL_SCROLL) {
-		dy = nvalue;
+		dy = -nvalue;
 	} else {
 		dlg_info("Unsupported pointer axis %d", axis);
 		return;
