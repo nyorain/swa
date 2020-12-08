@@ -59,8 +59,8 @@ android:
 
 general
 
-- fixup meson for linux/unix: dynmically enable backends/parts
-  of backends
+- port surface_created, surface_destroyed handling from example-vulkan
+  to exmaple-vulkan-loop. Test on android
 - x11 & wayland backends: make sure that key_states and button_states
   are never accessed out of range, even for weird codes
 - error checking. Make sure we cleanup everything?
@@ -78,6 +78,8 @@ later/low prio
   or something
 - further gl settings: accum buffer, color buffer depth,
   robustness/reset strategy
+	- should probably specify something like: if set to 0 (or unsigned(-1)?)
+	  they will be ignored and just *any* config chosen
 - evaluate once again whether/where deferred events make sense.
   They can be useful for resizing/redrawing (i.e. don't handle
   all resize events directly but rather process all currently

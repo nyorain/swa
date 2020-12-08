@@ -179,7 +179,7 @@ bool swa_wgl_init_context(struct swa_display_win* dpy, HDC hdc,
         pfd.iPixelType = PFD_TYPE_RGBA;
         pfd.cColorBits = transparent ? 32 : 24;
         pfd.cStencilBits = (BYTE) gls->stencil;
-        pfd.cDepthBits = (BYTE) gls->stencil;
+        pfd.cDepthBits = (BYTE) gls->depth;
 
         int pf = ChoosePixelFormat(hdc, &pfd);
         SetPixelFormat(hdc, pf, &pfd);
