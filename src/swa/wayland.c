@@ -487,6 +487,11 @@ static void win_destroy(struct swa_window* base) {
 	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
 	if(win->wl_surface) wl_surface_destroy(win->wl_surface);
 
+	// Application might not call dispatch after this.
+	// We manually flush the display to make sure the display sees
+	// everything.
+	if(win->dpy) wl_display_flush(win->dpy->display);
+
 	free(base);
 }
 
