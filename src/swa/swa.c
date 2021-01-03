@@ -419,6 +419,9 @@ void swa_window_set_userdata(struct swa_window* win, void* data) {
 void* swa_window_get_userdata(struct swa_window* win) {
 	return win->userdata;
 }
+void* swa_window_native_handle(struct swa_window* win) {
+	return win->impl->native_handle(win);
+}
 
 // data offer api
 void swa_data_offer_destroy(struct swa_data_offer* offer) {

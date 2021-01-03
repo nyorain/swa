@@ -1,4 +1,5 @@
 #include <swa/private/x11.h>
+#include <swa/x11.h>
 #include <dlg/dlg.h>
 #include <string.h>
 #include <unistd.h>
@@ -133,6 +134,7 @@ static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
 	hints.min_height = h;
 	hints.flags = XCB_ICCCM_SIZE_HINT_P_MIN_SIZE;
 	xcb_icccm_set_wm_normal_hints(win->dpy->conn, win->window, &hints);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
@@ -143,6 +145,7 @@ static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
 	hints.max_height = h;
 	hints.flags = XCB_ICCCM_SIZE_HINT_P_MAX_SIZE;
 	xcb_icccm_set_wm_normal_hints(win->dpy->conn, win->window, &hints);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_show(struct swa_window* base, bool show) {
@@ -152,6 +155,8 @@ static void win_show(struct swa_window* base, bool show) {
 	} else {
 		xcb_unmap_window(win->dpy->conn, win->window);
 	}
+
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
@@ -159,6 +164,7 @@ static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
 	uint32_t data[] = {w, h};
 	xcb_configure_window(win->dpy->conn, win->window,
 		XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT, data);
+	xcb_flush(win->dpy->conn);
 }
 
 struct swa_x11_cursor {
@@ -257,10 +263,16 @@ static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
 	win->cursor = owned ? xcursor : 0;
 	xcb_change_window_attributes(win->dpy->conn, win->window,
 		XCB_CW_CURSOR, &xcursor);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_x11* win = get_window_x11(base);
+
+	if(!win->visualtype) {
+		dlg_error("Can't refresh input-only window");
+		return;
+	}
 
 	if(win->dpy->ext.xpresent && win->present.pending) {
 		win->present.redraw = true;
@@ -272,6 +284,7 @@ static void win_refresh(struct swa_window* base) {
 	ev.window = win->window;
 	xcb_send_event(win->dpy->conn, 0, win->window,
 		XCB_EVENT_MASK_EXPOSURE, (const char*)&ev);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_surface_frame(struct swa_window* base) {
@@ -288,6 +301,7 @@ static void win_surface_frame(struct swa_window* base) {
 		xcb_present_notify_msc(win->dpy->conn, win->window,
 			++win->present.serial,
 			win->present.target_msc, 1, 0);
+		xcb_flush(win->dpy->conn);
 		win->present.pending = true;
 	}
 
@@ -332,6 +346,8 @@ static void win_set_state(struct swa_window* base, enum swa_window_state state) 
 		xcb_window_t root = win->dpy->screen->root;
 		xcb_send_event(win->dpy->conn, false, root, mask, (const char*) &event);
 	}
+
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_begin_move(struct swa_window* base) {
@@ -350,6 +366,7 @@ static void win_begin_move(struct swa_window* base) {
 	xcb_ewmh_request_wm_moveresize(&win->dpy->ewmh, 0, win->window,
 		win->dpy->mouse.x, win->dpy->mouse.y, XCB_EWMH_WM_MOVERESIZE_MOVE,
 		index, XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+	xcb_flush(win->dpy->conn);
 }
 
 static xcb_ewmh_moveresize_direction_t edge_to_x11(enum swa_edge edge) {
@@ -388,11 +405,13 @@ static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 	xcb_ewmh_request_wm_moveresize(&win->dpy->ewmh, 0, win->window,
 		win->dpy->mouse.x, win->dpy->mouse.y, action,
 		index, XCB_EWMH_CLIENT_SOURCE_TYPE_NORMAL);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_set_title(struct swa_window* base, const char* title) {
 	struct swa_window_x11* win = get_window_x11(base);
 	xcb_ewmh_set_wm_name(&win->dpy->ewmh, win->window, strlen(title), title);
+	xcb_flush(win->dpy->conn);
 }
 
 static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
@@ -420,6 +439,8 @@ static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
 		xcb_ewmh_set_wm_icon(&win->dpy->ewmh, XCB_PROP_MODE_REPLACE,
 			win->window, 2, buffer);
 	}
+
+	xcb_flush(win->dpy->conn);
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {
@@ -567,6 +588,11 @@ static void win_apply_buffer(struct swa_window* base) {
 	}
 }
 
+static void* win_native_handle(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+	return (void*)(uintptr_t) win->window;
+}
+
 static const struct swa_window_interface window_impl = {
 	.destroy = win_destroy,
 	.get_capabilities = win_get_capabilities,
@@ -588,7 +614,8 @@ static const struct swa_window_interface window_impl = {
 	.gl_swap_buffers = win_gl_swap_buffers,
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
-	.apply_buffer = win_apply_buffer
+	.apply_buffer = win_apply_buffer,
+	.native_handle = win_native_handle,
 };
 
 
@@ -612,7 +639,7 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->next_event) free(dpy->next_event);
 	xcb_ewmh_connection_wipe(&dpy->ewmh);
 
-	if(dpy->conn) xcb_flush(dpy->conn);
+	if(dpy->conn) xcb_flush(dpy->conn); // no destruction needed
 	if(dpy->display) XCloseDisplay(dpy->display);
 	free(dpy);
 }
@@ -658,6 +685,7 @@ static void handle_present_event(struct swa_display_x11* dpy,
 			if(win->present.redraw) {
 				win->present.redraw = false;
 				if(win->base.listener->draw) {
+					dlg_assert(win->visualtype);
 					win->base.listener->draw(&win->base);
 				}
 			}
@@ -774,6 +802,7 @@ static void handle_event(struct swa_display_x11* dpy,
 					win->present.redraw = true;
 				} else {
 					win->present.redraw = false;
+					dlg_assert(win->visualtype);
 					win->base.listener->draw(&win->base);
 				}
 			}
@@ -894,7 +923,7 @@ static void handle_event(struct swa_display_x11* dpy,
 			return;
 		}
 
-		dlg_assert(!dpy->mouse.over);
+		// dlg_assert(!dpy->mouse.over);
 		if((win = find_window(dpy, eev->event))) {
 			dpy->mouse.over = win;
 			if(win->base.listener->mouse_cross) {
@@ -914,7 +943,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		}
 
 		if((win = find_window(dpy, eev->event))) {
-			dlg_assert(dpy->mouse.over == win);
+			// dlg_assert(dpy->mouse.over == win);
 			dpy->mouse.over = NULL;
 			if(win->base.listener->mouse_cross) {
 				struct swa_mouse_cross_event lev;
@@ -933,7 +962,7 @@ static void handle_event(struct swa_display_x11* dpy,
 			return;
 		}
 
-		dlg_assert(!dpy->keyboard.focus);
+		// dlg_assert(!dpy->keyboard.focus);
 		if((win = find_window(dpy, fev->event))) {
 			dpy->keyboard.focus = win;
 			if(win->base.listener->focus) {
@@ -974,7 +1003,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		bool canceled;
 		swa_xkb_key(&dpy->keyboard.xkb, kev->detail, &utf8, &canceled);
 
-		dlg_assert(win == dpy->keyboard.focus);
+		// dlg_assert(win == dpy->keyboard.focus);
 		if(win->base.listener->key) {
 			struct swa_key_event lev = {
 				.keycode = key,
@@ -1178,7 +1207,8 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 		// TODO: implement data exchange
 		// swa_display_cap_dnd |
 		// swa_display_cap_clipboard |
-		swa_display_cap_buffer_surface;
+		swa_display_cap_buffer_surface |
+		swa_display_cap_child_windows;
 	if(dpy->ext.xinput) caps |= swa_display_cap_touch;
 	return caps;
 }
@@ -1436,6 +1466,11 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	struct swa_display_x11* dpy = get_display_x11(base);
 	struct swa_window_x11* win = calloc(1, sizeof(*win));
 
+	if(settings->input_only && settings->surface != swa_surface_none) {
+		dlg_error("Can't create surface for input-only window");
+		return NULL;
+	}
+
 	win->base.impl = &window_impl;
 	win->base.listener = settings->listener;
 	win->dpy = dpy;
@@ -1445,11 +1480,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// link
 	win->next = dpy->window_list;
-	if(!dpy->window_list) {
-		dpy->window_list = win;
-	} else {
+	if(dpy->window_list) {
 		dpy->window_list->prev = win;
 	}
+	dpy->window_list = win;
 
 	// find visual
 	// data for later when using buffer surface
@@ -1501,17 +1535,19 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		dlg_error("swa was compiled without GL support");
 		goto error;
 #endif
-	} else {
+	} else if(!settings->input_only) {
 		find_visual(win, settings, &visual_scanline_pad, &visual_format);
 	}
 
-	if(!win->visualtype) {
-		dlg_error("Could not find valid visual");
-		return false;
-	}
+	if(!settings->input_only) {
+		if(!win->visualtype) {
+			dlg_error("Could not find valid visual");
+			return false;
+		}
 
-	dlg_debug("visualid: %d, depth: %d", win->visualtype->visual_id,
-		win->depth);
+		dlg_debug("visualid: %d, depth: %d", win->visualtype->visual_id,
+			win->depth);
+	}
 
 	unsigned x = 0;
 	unsigned y = 0;
@@ -1521,11 +1557,22 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		SWA_FALLBACK_WIDTH : settings->width;
 	win->height = settings->height == SWA_DEFAULT_SIZE ?
 		SWA_FALLBACK_HEIGHT : settings->height;
-	xcb_window_t xparent = dpy->screen->root;
 
-	win->colormap = xcb_generate_id(dpy->conn);
-	xcb_create_colormap(dpy->conn, XCB_COLORMAP_ALLOC_NONE, win->colormap,
-		dpy->screen->root, win->visualtype->visual_id);
+	unsigned window_class = XCB_WINDOW_CLASS_INPUT_OUTPUT;
+
+	xcb_window_t xparent = dpy->screen->root;
+	if(settings->parent) {
+		xparent = (xcb_window_t)(uintptr_t) settings->parent;
+	}
+
+	uint32_t vid = 0;
+	if(!settings->input_only) {
+		vid = win->visualtype->visual_id;
+		win->colormap = xcb_generate_id(dpy->conn);
+		xcb_create_colormap(dpy->conn, XCB_COLORMAP_ALLOC_NONE, win->colormap,
+			dpy->screen->root, win->visualtype->visual_id);
+	}
+
 	uint32_t eventmask =
 		XCB_EVENT_MASK_EXPOSURE | XCB_EVENT_MASK_STRUCTURE_NOTIFY |
 		XCB_EVENT_MASK_KEY_PRESS | XCB_EVENT_MASK_KEY_RELEASE |
@@ -1540,12 +1587,22 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		XCB_CW_EVENT_MASK |
 		XCB_CW_COLORMAP |
 		XCB_CW_CURSOR;
-	uint32_t valuelist[] = {0, eventmask, win->colormap, XCB_NONE};
+	uint32_t valuelist_io[] = {0, eventmask, win->colormap, XCB_NONE};
+	uint32_t valuelist_i[] = {eventmask, XCB_NONE};
+	uint32_t* valuelist = valuelist_io;
+
+	if(settings->input_only) {
+		window_class = XCB_WINDOW_CLASS_INPUT_ONLY;
+		valuemask = XCB_CW_EVENT_MASK;
+		valuelist = valuelist_i;
+		win->depth = 0u;
+		vid = dpy->screen->root_visual;
+	}
 
 	win->window = xcb_generate_id(dpy->conn);
 	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn, win->depth,
 		win->window, xparent, x, y, win->width, win->height, 0,
-		XCB_WINDOW_CLASS_INPUT_OUTPUT, win->visualtype->visual_id,
+		window_class, vid,
 		valuemask, valuelist);
 	xcb_generic_error_t* err = xcb_request_check(dpy->conn, cookie);
 	if(err) {
@@ -1739,9 +1796,25 @@ static const struct swa_display_interface display_impl = {
 	.create_window = display_create_window,
 };
 
+bool swa_display_is_x11(struct swa_display* dpy) {
+	return dpy->impl == &display_impl;
+}
+
+xcb_connection_t* swa_display_x11_connection(struct swa_display* base) {
+	struct swa_display_x11* dpy = get_display_x11(base);
+	return dpy->conn;
+}
+
+SWA_API uint32_t swa_window_x11_cursor(struct swa_window* base) {
+	struct swa_window_x11* win = get_window_x11(base);
+	return win->cursor;
+}
+
 struct swa_display* swa_display_x11_create(const char* appname) {
 	(void) appname;
 
+// #ifdef SWA_WITH_GL
+#if 1
 	// We start by opening a display since we need that for gl
 	// Neither egl nor glx support xcb. And since xlib is implemented
 	// using xcb these days, we can get the xcb connection from the
@@ -1753,15 +1826,29 @@ struct swa_display* swa_display_x11_create(const char* appname) {
 	if(!display) {
 		return NULL;
 	}
+#else
+	xcb_connection_t* conn = xcb_connect(NULL, NULL);
+	if(!conn) {
+		return NULL;
+	}
+#endif // SWA_WITH_GL
 
 	struct swa_display_x11* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
+
+	// TODO: need XGetErrorText replacment without xlib...
+// #ifdef SWA_WITH_GL_NO
+#if 1
 	dpy->display = display;
 	dpy->conn = XGetXCBConnection(display);
-	dpy->screen = xcb_setup_roots_iterator(xcb_get_setup(dpy->conn)).data;
 
 	// make sure we can retrieve events using xcb
 	XSetEventQueueOwner(dpy->display, XCBOwnsEventQueue);
+#else  // SWA_WITH_GL
+	dpy->conn = conn;
+#endif // SWA_WITH_GL
+
+	dpy->screen = xcb_setup_roots_iterator(xcb_get_setup(dpy->conn)).data;
 
 	// create dummy window used for selections and wakeup
 	dpy->dummy_window = xcb_generate_id(dpy->conn);

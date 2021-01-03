@@ -112,6 +112,12 @@ static bool check_error(struct swa_display_wl* dpy) {
 				ERROR(WL_DATA_SOURCE_ERROR_INVALID_ACTION_MASK),
 				ERROR(WL_DATA_SOURCE_ERROR_INVALID_SOURCE),
 			}},
+			{&wl_subsurface_interface, {
+				ERROR(WL_SUBSURFACE_ERROR_BAD_SURFACE),
+			}},
+			{&wl_subcompositor_interface, {
+				ERROR(WL_SUBCOMPOSITOR_ERROR_BAD_SURFACE),
+			}},
 			{&wl_data_device_interface, {
 				ERROR(WL_DATA_DEVICE_ERROR_ROLE),
 			}},
@@ -498,16 +504,19 @@ static void win_destroy(struct swa_window* base) {
 
 static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
-	enum swa_window_cap caps =
-		swa_window_cap_fullscreen |
-		swa_window_cap_minimize |
-		swa_window_cap_maximize |
-		swa_window_cap_size_limits |
-		swa_window_cap_title;
-	if(win->dpy->seat) {
+	enum swa_window_cap caps = {0};
+	if(win->xdg_toplevel) {
 		caps |=
-			swa_window_cap_begin_move |
-			swa_window_cap_begin_resize;
+			swa_window_cap_fullscreen |
+			swa_window_cap_minimize |
+			swa_window_cap_maximize |
+			swa_window_cap_size_limits |
+			swa_window_cap_title;
+		if(win->dpy->seat) {
+			caps |=
+				swa_window_cap_begin_move |
+				swa_window_cap_begin_resize;
+		}
 	}
 	if(win->dpy->cursor.theme) {
 		caps |= swa_window_cap_cursor;
@@ -517,22 +526,71 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't set min size of non-toplevel surface");
+		return;
+	}
+
 	xdg_toplevel_set_min_size(win->xdg_toplevel, w, h);
 }
 
 static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
 	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't set max size of non-toplevel surface");
+		return;
+	}
+
 	xdg_toplevel_set_max_size(win->xdg_toplevel, w, h);
 }
 
 static void win_show(struct swa_window* base, bool show) {
-	dlg_warn("window doesn't have visibility capability");
+	// NOTE: we could implement this, theoretically. The problem is that
+	// client code could always use external rendering (mainly: vulkan)
+	// to attach a new buffer. But on vulkan, we could simply destroy the
+	// vk surface when the window is hidden (or, well, at least send the
+	// event). But that might be unexpected.
+	// Or we could require for swa_window_show that it only effectively
+	// hides the window when the client does not actively draw on it
+	// afterwards (probably the saner method). For subsurfaces, we might
+	// also want to destroy the subsurface?
+
+	// TODO: just testing code.
+	struct swa_window_wl* win = get_window_wl(base);
+	// if(win->wl_subsurface) {
+		win->show = show;
+		win->redraw = show;
+		if(!show) {
+			wl_surface_attach(win->wl_surface, NULL, 0, 0);
+			wl_surface_commit(win->wl_surface);
+		} else {
+			swa_window_refresh(base);
+			wl_display_flush(win->dpy->display);
+		}
+	// } else {
+		// dlg_warn("window doesn't have visibility capability");
+	// }
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	// we might be able to implement it by just chaing width and height
+	// we might be able to implement it by just changing width and height
 	// and redrawing, resulting in a larger buffer. Not sure.
-	dlg_warn("window doesn't have resize capability");
+
+	// TODO: resize gl window!
+	// NOTE: for vulkan, we can't really control it. Application has to
+	// recreate the swapchain with the size they desire, that's pretty
+	// much it.
+
+	// TODO: just testing code.
+	struct swa_window_wl* win = get_window_wl(base);
+	if(win->wl_subsurface) {
+		win->width = w;
+		win->height = h;
+	} else {
+		dlg_warn("window doesn't have resize capability");
+	}
+
+	swa_window_refresh(base);
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
@@ -626,14 +684,14 @@ static void refresh_cb(struct pml_defer* defer) {
 	// it to potentially enable it again (e.g. when calling
 	// refresh without previous frame callback)
 	pml_defer_enable(defer, false);
-	if(win->base.listener->draw) {
+	if(win->base.listener->draw && win->show) {
 		win->base.listener->draw(&win->base);
 	}
 }
 
 static void win_refresh(struct swa_window* base) {
 	struct swa_window_wl* win = get_window_wl(base);
-	if(!win->configured || win->frame_callback) {
+	if((win->xdg_surface && !win->configured) || win->frame_callback || !win->show) {
 		win->redraw = true;
 		return;
 	}
@@ -653,7 +711,7 @@ static void win_frame_done(void* data, struct wl_callback* cb, uint32_t id) {
 
 	if(win->redraw) {
 		win->redraw = false;
-		if(win->base.listener->draw) {
+		if(win->base.listener->draw && win->show) {
 			win->base.listener->draw(&win->base);
 		}
 	}
@@ -676,6 +734,11 @@ static void win_surface_frame(struct swa_window* base) {
 
 static void win_set_state(struct swa_window* base, enum swa_window_state state) {
 	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't change change of non-toplevel window");
+		return;
+	}
+
 	switch(state) {
 		case swa_window_state_normal:
 			win->state = state;
@@ -707,12 +770,22 @@ static void win_begin_move(struct swa_window* base) {
 		return;
 	}
 
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't move non-toplevel window");
+		return;
+	}
+
 	xdg_toplevel_move(win->xdg_toplevel, win->dpy->seat, win->dpy->last_serial);
 }
 static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 	struct swa_window_wl* win = get_window_wl(base);
 	if(!win->dpy->seat) {
 		dlg_warn("Can't begin resizing window without seat");
+		return;
+	}
+
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't resize non-toplevel window");
 		return;
 	}
 
@@ -723,6 +796,11 @@ static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 }
 static void win_set_title(struct swa_window* base, const char* title) {
 	struct swa_window_wl* win = get_window_wl(base);
+	if(!win->xdg_toplevel) {
+		dlg_error("Can't change title of non-toplevel window");
+		return;
+	}
+
 	xdg_toplevel_set_title(win->xdg_toplevel, title);
 }
 
@@ -891,6 +969,11 @@ static void win_apply_buffer(struct swa_window* base) {
 	win->buffer.active = -1;
 }
 
+static void* win_native_handle(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	return win->wl_surface;
+}
+
 static const struct swa_window_interface window_impl = {
 	.destroy = win_destroy,
 	.get_capabilities = win_get_capabilities,
@@ -912,7 +995,8 @@ static const struct swa_window_interface window_impl = {
 	.gl_swap_buffers = win_gl_swap_buffers,
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
-	.apply_buffer = win_apply_buffer
+	.apply_buffer = win_apply_buffer,
+	.native_handle = win_native_handle,
 };
 
 // display api
@@ -1253,6 +1337,7 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->seat) wl_seat_destroy(dpy->seat);
 	if(dpy->data_dev_manager) wl_data_device_manager_destroy(dpy->data_dev_manager);
 	if(dpy->compositor) wl_compositor_destroy(dpy->compositor);
+	if(dpy->subcompositor) wl_subcompositor_destroy(dpy->subcompositor);
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
@@ -1324,6 +1409,7 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 	// a shot in this case. And the final result should always be determined
 	// using win_is_client_decorated anyways
 	if(dpy->decoration_manager) caps |= swa_display_cap_server_decoration;
+	if(dpy->subcompositor) caps |= swa_display_cap_child_windows;
 	return caps;
 }
 
@@ -1456,6 +1542,26 @@ static swa_proc display_get_gl_proc_addr(struct swa_display* base,
 #endif
 }
 
+static void win_handle_deferred(struct pml_defer* defer) {
+	struct swa_window_wl* win = pml_defer_get_data(defer);
+	pml_defer_destroy(defer);
+	win->defer = NULL;
+
+	if(win->defer_events & swa_wl_defer_size) {
+		win->defer_events &= ~swa_wl_defer_size;
+		if(win->base.listener->resize) {
+			win->base.listener->resize(&win->base, win->width, win->height);
+		}
+	}
+
+	if(win->defer_events & swa_wl_defer_draw) {
+		win->defer_events &= ~swa_wl_defer_draw;
+		if(win->base.listener->draw && win->show) {
+			win->base.listener->draw(&win->base);
+		}
+	}
+}
+
 static struct swa_window* display_create_window(struct swa_display* base,
 		const struct swa_window_settings* settings) {
 	struct swa_display_wl* dpy = get_display_wl(base);
@@ -1469,21 +1575,59 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->wl_surface = wl_compositor_create_surface(dpy->compositor);
 	wl_surface_set_user_data(win->wl_surface, win);
 
-	win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->wl_surface);
-	xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
-	win->xdg_toplevel = xdg_surface_get_toplevel(win->xdg_surface);
-	xdg_toplevel_add_listener(win->xdg_toplevel, &toplevel_listener, win);
+	if(settings->parent) {
+		if(!dpy->subcompositor) {
+			dlg_error("Can't create child window, no wl_subcompositor");
+			goto err;
+		}
 
-	if(settings->title) {
-		xdg_toplevel_set_title(win->xdg_toplevel, settings->title);
-	}
-	if(dpy->appname) {
-		xdg_toplevel_set_app_id(win->xdg_toplevel, dpy->appname);
-	}
+		struct wl_surface* parent = (struct wl_surface*) settings->parent;
+		win->wl_subsurface = wl_subcompositor_get_subsurface(dpy->subcompositor,
+			win->wl_surface, parent);
 
-	if(settings->state != swa_window_state_normal &&
-			settings->state != swa_window_state_none) {
-		win_set_state(&win->base, settings->state);
+		// We must set the subsurface into desync mode since that's what other
+		// platforms do and what the user expects: redrawing a subsurface
+		// should have immediate effect and not only when the parent is
+		// updated (which isn't required to happen soon).
+		wl_subsurface_set_desync(win->wl_subsurface);
+
+		win->show = !settings->hide;
+		win->defer_events = swa_wl_defer_draw;
+		if(win->width == SWA_DEFAULT_SIZE) {
+			win->width = SWA_FALLBACK_WIDTH;
+			win->defer_events |= swa_wl_defer_size;
+		}
+		if(win->height == SWA_DEFAULT_SIZE) {
+			win->height = SWA_FALLBACK_HEIGHT;
+			win->defer_events |= swa_wl_defer_size;
+		}
+
+		// struct wl_region* region = wl_compositor_create_region(dpy->compositor);
+		// wl_region_add(region, 0, 0, 1000, 1000);
+		// wl_surface_set_opaque_region(win->wl_surface, region);
+		// wl_surface_set_input_region(win->wl_surface, region);
+
+		win->defer = pml_defer_new(dpy->pml, win_handle_deferred);
+		pml_defer_set_data(win->defer, win);
+	} else {
+		win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->wl_surface);
+		xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
+		win->xdg_toplevel = xdg_surface_get_toplevel(win->xdg_surface);
+		xdg_toplevel_add_listener(win->xdg_toplevel, &toplevel_listener, win);
+
+		if(settings->title) {
+			xdg_toplevel_set_title(win->xdg_toplevel, settings->title);
+		}
+		if(dpy->appname) {
+			xdg_toplevel_set_app_id(win->xdg_toplevel, dpy->appname);
+		}
+
+		if(settings->state != swa_window_state_normal &&
+				settings->state != swa_window_state_none) {
+			win_set_state(&win->base, settings->state);
+		}
+
+		win->show = !settings->hide;
 	}
 
 	// note how we always set the cursor, even if this is cursor_default
@@ -1499,40 +1643,42 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// when the decoration protocol is not present, client side decorations
 	// should be assumed on wayland
-	win->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
-	if(dpy->decoration_manager) {
-		win->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
-			dpy->decoration_manager, win->xdg_toplevel);
-		zxdg_toplevel_decoration_v1_add_listener(win->decoration,
-			&decoration_listener, win);
+	if(!settings->parent) {
+		win->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
+		if(dpy->decoration_manager) {
+			win->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
+				dpy->decoration_manager, win->xdg_toplevel);
+			zxdg_toplevel_decoration_v1_add_listener(win->decoration,
+				&decoration_listener, win);
 
-		// set this to a special constant signaling that the actual
-		// value is not known yet. We wait for the compositors response
-		// below
-		win->decoration_mode = SWA_DECORATION_MODE_PENDING;
-		if(settings->client_decorate == swa_preference_yes) {
-			zxdg_toplevel_decoration_v1_set_mode(win->decoration,
-				ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+			// set this to a special constant signaling that the actual
+			// value is not known yet. We wait for the compositors response
+			// below
+			win->decoration_mode = SWA_DECORATION_MODE_PENDING;
+			if(settings->client_decorate == swa_preference_yes) {
+				zxdg_toplevel_decoration_v1_set_mode(win->decoration,
+					ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE);
+			} else if(settings->client_decorate == swa_preference_no) {
+				zxdg_toplevel_decoration_v1_set_mode(win->decoration,
+					ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+			}
+
+			// the compositor will notify us which decoration mode should
+			// be used for the surface. But since after window creation,
+			// the application might immediately (or at least
+			// before dispatching events) check decoration mode, we have
+			// to wait for the compositor respone here.
+			// We use a custom queue for the roundtrip to not dispatch any
+			// other events but reset the queue to the default queue afterwards.
+			wl_proxy_set_queue((struct wl_proxy*) win->decoration,
+				win->dpy->wl_queue);
+			wl_display_roundtrip_queue(win->dpy->display, win->dpy->wl_queue);
+			wl_proxy_set_queue((struct wl_proxy*) win->decoration, NULL);
+			dlg_assert(win->decoration_mode != SWA_DECORATION_MODE_PENDING);
 		} else if(settings->client_decorate == swa_preference_no) {
-			zxdg_toplevel_decoration_v1_set_mode(win->decoration,
-				ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+			dlg_warn("Can't set up server side decoration since "
+				"the compositor doesn't support the decoration protocol");
 		}
-
-		// the compositor will notify us which decoration mode should
-		// be used for the surface. But since after window creation,
-		// the application might immediately (or at least
-		// before dispatching events) check decoration mode, we have
-		// to wait for the compositor respone here.
-		// We use a custom queue for the roundtrip to not dispatch any
-		// other events but reset the queue to the default queue afterwards.
-		wl_proxy_set_queue((struct wl_proxy*) win->decoration,
-			win->dpy->wl_queue);
-		wl_display_roundtrip_queue(win->dpy->display, win->dpy->wl_queue);
-		wl_proxy_set_queue((struct wl_proxy*) win->decoration, NULL);
-		dlg_assert(win->decoration_mode != SWA_DECORATION_MODE_PENDING);
-	} else if(settings->client_decorate == swa_preference_no) {
-		dlg_warn("Can't set up server side decoration since "
-			"the compositor doesn't support the decoration protocol");
 	}
 
 	// initializing the surface after having commited the role seems fitting
@@ -1606,6 +1752,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		// But i guess if buffers are swapped before the first configure
 		// event, it's an error anyways since that will attach an buffer
 		// and commit.
+		// NOTE: for subsurfaces, we need this here though, with exactly
+		// this sizing logic.
 		unsigned width = win->width == SWA_DEFAULT_SIZE ?
 			SWA_FALLBACK_WIDTH : win->width;
 		unsigned height = win->height == SWA_DEFAULT_SIZE ?
@@ -2196,6 +2344,7 @@ static void keyboard_enter(void* data, struct wl_keyboard* wl_keyboard,
 	struct swa_display_wl* dpy = data;
 	dlg_assert(dpy->keyboard == wl_keyboard);
 	struct swa_window_wl* win = wl_surface_get_user_data(surface);
+
 	if(!win) {
 		dlg_warn("Invalid window got keyboard focus");
 		return;
@@ -2217,6 +2366,7 @@ static void keyboard_leave(void* data, struct wl_keyboard* wl_keyboard,
 		uint32_t serial, struct wl_surface* surface) {
 	struct swa_display_wl* dpy = data;
 	dlg_assert(dpy->keyboard == wl_keyboard);
+
 	struct swa_window_wl* win = wl_surface_get_user_data(surface);
 	if(!win) {
 		dlg_warn("Invalid window lost keyboard focus");
@@ -2445,6 +2595,7 @@ static void handle_global(void *data, struct wl_registry *registry,
 
 	// protocol versions understood by swa for stable protocols
 	static const unsigned v_compositor = 4u;
+	static const unsigned v_subcompositor = 1u;
 	static const unsigned v_dd_manager = 3u;
 	static const unsigned v_seat = 6u;
 	static const unsigned v_xdg_wm_base = 2u;
@@ -2454,6 +2605,11 @@ static void handle_global(void *data, struct wl_registry *registry,
 		unsigned v = min(v_compositor, version);
 		dpy->compositor = wl_registry_bind(registry, name,
 			&wl_compositor_interface, v);
+	} else if(!dpy->subcompositor &&
+			strcmp(interface, wl_subcompositor_interface.name) == 0) {
+		unsigned v = min(v_subcompositor, version);
+		dpy->subcompositor = wl_registry_bind(registry, name,
+			&wl_subcompositor_interface, v);
 	} else if(!dpy->shm && strcmp(interface, wl_shm_interface.name) == 0) {
 		dpy->shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
 	} else if(!dpy->seat && strcmp(interface, wl_seat_interface.name) == 0) {

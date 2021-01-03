@@ -55,6 +55,10 @@ if host_machine.system() != 'windows'
 		dependencies: [swa_dep, dep_threads, dep_dlg])
 endif
 
+ex_wakeup = build_target('example-child',
+	'example-child.c',
+	target_type: exe_type,
+	dependencies: [swa_dep, dep_dlg])
 
 if not with_android
 	executable('example-exchange',

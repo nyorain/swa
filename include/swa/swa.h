@@ -60,7 +60,8 @@ enum swa_display_cap {
 	swa_display_cap_clipboard = (1 << 6),
 	swa_display_cap_dnd = (1 << 7),
 	swa_display_cap_client_decoration = (1 << 8),
-	swa_display_cap_server_decoration = (1 << 9)
+	swa_display_cap_server_decoration = (1 << 9),
+	swa_display_cap_child_windows = (1 << 10),
 };
 
 // Keyboard modifier.
@@ -252,6 +253,10 @@ struct swa_window_settings {
 	// The listener object must remain valid until it is changed or the window
 	// is destroyed. Must not be NULL.
 	const struct swa_window_listener* listener;
+
+	// TODO, WIP
+	void* parent;
+	bool input_only;
 };
 
 struct swa_key_event {
@@ -282,6 +287,8 @@ struct swa_mouse_button_event {
 
 struct swa_mouse_move_event {
 	// The new mouse position in window-local coordinates.
+	// On some backends, these might be outside the window (i.e. even
+	// negative), applications should be prepared to handle that or clamp them.
 	int x, y;
 	// The delta, i.e. the current mouse position minus the last
 	// known position in window-local cordinates.
@@ -764,6 +771,9 @@ SWA_API enum swa_key swa_key_from_name(const char* name);
 // Whether or not a key is textual can depend on the circumstance (e.g.
 // you might want to interpret keys like enter as textual).
 SWA_API bool swa_key_is_textual(enum swa_key key);
+
+// TODO: WIP
+SWA_API void* swa_window_native_handle(struct swa_window* win);
 
 #ifdef __cplusplus
 }
