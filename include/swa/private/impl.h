@@ -54,6 +54,8 @@ struct swa_window_interface {
 
 	bool (*get_buffer)(struct swa_window*, struct swa_image*);
 	void (*apply_buffer)(struct swa_window*);
+
+	void* (*native_handle)(struct swa_window*);
 };
 
 struct swa_data_offer_interface {
