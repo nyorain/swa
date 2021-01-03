@@ -17,6 +17,7 @@ struct swa_display_wl {
 
 	// globals
 	struct wl_compositor* compositor;
+	struct wl_subcompositor* subcompositor;
 	struct wl_shm* shm;
 	struct wl_seat* seat;
 	struct wl_data_device_manager* data_dev_manager;
@@ -118,11 +119,22 @@ struct swa_wl_vk_surface {
 	swa_proc destroy_surface_pfn;
 };
 
+enum swa_wl_defer {
+	swa_wl_defer_draw = (1u << 0),
+	swa_wl_defer_size = (1u << 1),
+};
+
 struct swa_window_wl {
 	struct swa_window base;
 	struct swa_display_wl* dpy;
 
 	struct wl_surface* wl_surface;
+
+	struct wl_subsurface* wl_subsurface;
+	struct pml_defer* defer;
+	enum swa_wl_defer defer_events;
+	bool show;
+
 	struct xdg_surface* xdg_surface;
 	struct xdg_toplevel* xdg_toplevel;
 	struct zxdg_toplevel_decoration_v1* decoration;

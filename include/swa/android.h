@@ -2,6 +2,10 @@
 
 #include <swa/swa.h>
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct ANativeWindow ANativeWindow;
 typedef struct ANativeActivity ANativeActivity;
 
@@ -14,3 +18,7 @@ SWA_API bool swa_display_is_android(struct swa_display*);
 
 SWA_API ANativeWindow* swa_display_android_get_native_window(struct swa_display*);
 SWA_API ANativeActivity* swa_display_android_get_native_activity(struct swa_display*);
+
+#ifdef __cplusplus
+}
+#endif
