@@ -161,8 +161,6 @@ struct swa_window_x11 {
 	};
 };
 
-struct swa_display* swa_display_x11_create(const char* appname);
-
 #ifdef __cplusplus
 }
 #endif
