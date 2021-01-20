@@ -109,6 +109,10 @@ static void win_destroy(struct swa_window* base) {
 	if(win->window) xcb_destroy_window(dpy->conn, win->window);
 	if(win->cursor) xcb_free_cursor(dpy->conn, win->cursor);
 	if(win->colormap) xcb_free_colormap(dpy->conn, win->colormap);
+
+	// Application might not call dispatch after this.
+	// We manually flush the display to make sure the display sees
+	// everything.
 	xcb_flush(win->dpy->conn);
 
 	free(win);

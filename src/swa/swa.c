@@ -5,13 +5,13 @@
 #include <string.h>
 
 #ifdef SWA_WITH_WL
-  #include <swa/private/wayland.h>
+  #include <swa/wayland.h>
 #endif
 #ifdef SWA_WITH_WIN
-  #include <swa/private/winapi.h>
+  #include <swa/winapi.h>
 #endif
 #ifdef SWA_WITH_X11
-  #include <swa/private/x11.h>
+  #include <swa/x11.h>
 #endif
 #ifdef SWA_WITH_KMS
   #include <swa/private/kms/kms.h>
@@ -33,7 +33,7 @@ struct {
 	{"x11", swa_display_x11_create},
 #endif
 #ifdef SWA_WITH_WIN
-	{"winapi", swa_display_win_create},
+	{"winapi", swa_display_winapi_create},
 #endif
 #ifdef SWA_WITH_ANDROID
 	{"android", swa_display_android_create},
