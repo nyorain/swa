@@ -86,8 +86,6 @@ struct swa_data_offer_win {
 	struct swa_display_win* dpy;
 };
 
-struct swa_display* swa_display_win_create(const char* appname);
-
 // wgl utility
 bool swa_wgl_init_context(struct swa_display_win* dpy, HDC hdc,
 	const struct swa_gl_surface_settings* gls, bool transparent,

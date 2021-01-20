@@ -1,4 +1,5 @@
 #include <swa/private/winapi.h>
+#include <swa/winapi.h>
 #include <dlg/dlg.h>
 
 #ifdef SWA_WITH_VK
@@ -1134,7 +1135,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 }
 
 static bool register_window_class(void) {
-	WNDCLASSEX wcx;
+	WNDCLASSEX wcx = {0};
 	wcx.cbSize = sizeof(wcx);
 	// TODO: OWNDC not needed for buffer surfaces.
 	// Not sure if it's needed for vulkan.
@@ -1152,8 +1153,9 @@ static bool register_window_class(void) {
 	wcx.lpszClassName = window_class_name;
 
 	if(!RegisterClassExW(&wcx)) {
-		print_winapi_error("RegisterClassEx");
-		return false;
+		// print_winapi_error("RegisterClassEx");
+		// TODO: we can probably just assume it was already registered by swa itself
+		// return false;
 	}
 
 	return true;
@@ -1178,15 +1180,29 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// NOTE: in theory this is not supported when we use CS_OWNDC but in practice it's
 	// the only way and works.
-	if(settings->transparent) {
+	if(settings->transparent || settings->input_only) {
 		exstyle |= WS_EX_LAYERED;
 	}
+
+	// TODO: fix this mess for child windows!
+	int x = CW_USEDEFAULT;
+	int y = CW_USEDEFAULT;
 
 	wchar_t* titlew = settings->title ? widen(settings->title) : L"";
 	int width = settings->width == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->width;
 	int height = settings->height == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->height;
-	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style,
-		CW_USEDEFAULT, CW_USEDEFAULT, width, height, NULL, NULL, hinstance, win);
+
+	if(settings->parent) {
+		// TODO: make configurable?
+		x = 0u;
+		y = 0u;
+		// style = WS_CHILD | WS_BORDER;
+		style = WS_POPUP;
+		exstyle = WS_EX_TOPMOST;
+	}
+
+	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style, 
+		x, y, width, height, /*settings->parent*/ NULL, NULL, hinstance, NULL);
 	if(!win->handle) {
 		print_winapi_error("CreateWindowEx");
 		goto error;
@@ -1194,23 +1210,34 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	SetWindowLongPtr(win->handle, GWLP_USERDATA, (uintptr_t) win);
 	if(settings->transparent) {
-		// This will simply cause windows to respect the alpha bits in the content of the window
-		// and not actually blur anything.
-		DWM_BLURBEHIND bb = {0};
-		bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
-		bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);  // makes the window transparent
-		bb.fEnable = TRUE;
-		DwmEnableBlurBehindWindow(win->handle, &bb);
+		if(!settings->parent) {
+			// This will simply cause windows to respect the alpha bits in the content of the window
+			// and not actually blur anything.
+			DWM_BLURBEHIND bb = {0};
+			bb.dwFlags = DWM_BB_ENABLE | DWM_BB_BLURREGION;
+			bb.hRgnBlur = CreateRectRgn(0, 0, -1, -1);  // makes the window transparent
+			bb.fEnable = TRUE;
+			DwmEnableBlurBehindWindow(win->handle, &bb);
+		}
 
-		// This is not what makes the window transparent.
-		// We simply have to do this so the window contents are shown.
-		// We only have to set the layered flag to make DwmEnableBlueBehinWindow function
-		// correctly and this causes the flag to have no further effect.
-		SetLayeredWindowAttributes(win->handle, 0x1, 0, LWA_COLORKEY);
+		if(settings->input_only) {
+			SetLayeredWindowAttributes(win->handle, 0, 0, LWA_ALPHA);
+		} else {
+			// This is not what makes the window transparent.
+			// We simply have to do this so the window contents are shown.
+			// We only have to set the layered flag to make DwmEnableBlueBehinWindow function
+			// correctly and this causes the flag to have no further effect.
+			SetLayeredWindowAttributes(win->handle, 0x1, 0, LWA_COLORKEY);
+		}
 	}
 
 	win_set_cursor(&win->base, settings->cursor);
-	ShowWindowAsync(win->handle, SW_SHOWDEFAULT);
+
+	if(!settings->hide) {
+		ShowWindowAsync(win->handle, SW_SHOWDEFAULT);
+	} else {
+		ShowWindowAsync(win->handle, SW_HIDE);
+	}
 
 	// surface
 	win->surface_type = settings->surface;
@@ -1305,7 +1332,11 @@ static const struct swa_display_interface display_impl = {
 	.get_gl_proc_addr = display_get_gl_proc_addr,
 };
 
-struct swa_display* swa_display_win_create(const char* appname) {
+bool swa_display_is_winapi(struct swa_display* dpy) {
+	return dpy->impl == &display_impl;
+}
+
+struct swa_display* swa_display_winapi_create(const char* appname) {
 	(void) appname;
 
 	if(!register_window_class()) {
@@ -1315,17 +1346,17 @@ struct swa_display* swa_display_win_create(const char* appname) {
 	struct swa_display_win* dpy = calloc(1, sizeof(*dpy));
 	dpy->base.impl = &display_impl;
 	dpy->main_thread_id = GetCurrentThreadId();
+
+#ifdef SWA_WITH_GL
 	dpy->dummy_window = CreateWindowExW(WS_EX_OVERLAPPEDWINDOW, window_class_name,
 		L"swa dummy window", WS_CLIPSIBLINGS | WS_CLIPCHILDREN, 0, 0, 1, 1,
 		NULL, NULL, GetModuleHandleW(NULL), NULL);
 	if(!dpy->dummy_window) {
 		print_winapi_error("CreateWindowEx dummy window");
-		goto error;
+		display_destroy(&dpy->base);
+		return NULL;
 	}
+#endif // SWA_WITH_GL
 
 	return &dpy->base;
-
-error:
-	display_destroy(&dpy->base);
-	return NULL;
 }
