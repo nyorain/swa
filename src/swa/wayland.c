@@ -228,21 +228,21 @@ static int create_pool_file(size_t size, char** name) {
 	int fd = mkstemp(*name);
 	if(fd < 0) {
 		dlg_error("mkstemp: %s (%d)", strerror(errno), errno);
-		free(name);
+		free(*name);
 		return -1;
 	}
 
 	if(!add_fd_flags(fd, FD_CLOEXEC)) {
 		dlg_error("set_cloexec: %s (%d)", strerror(errno), errno);
 		close(fd);
-		free(name);
+		free(*name);
 		return -1;
 	}
 
 	if(ftruncate(fd, size) < 0) {
 		dlg_error("ftruncate: %s (%d)", strerror(errno), errno);
 		close(fd);
-		free(name);
+		free(*name);
 		return -1;
 	}
 

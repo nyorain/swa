@@ -1444,8 +1444,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// find visual
 	// data for later when using buffer surface
-	unsigned visual_scanline_pad;
-	enum swa_image_format visual_format;
+	unsigned visual_scanline_pad = 0;
+	enum swa_image_format visual_format = swa_image_format_none;
 
 #ifdef SWA_WITH_GL
 	EGLConfig egl_config = {0};
