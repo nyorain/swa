@@ -2685,8 +2685,18 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 }
 
 // wayland api
-bool swa_display_is_wayland(struct swa_display* dpy) {
+bool swa_display_is_wl(struct swa_display* dpy) {
 	return dpy->impl == &display_impl;
+}
+
+struct wl_display* swa_display_wl_get_display(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return dpy->display;
+}
+
+struct wl_seat* swa_display_wl_get_seat(struct swa_display* base) {
+	struct swa_display_wl* dpy = get_display_wl(base);
+	return dpy->seat;
 }
 
 struct swa_display* swa_display_wl_create(const char* appname) {

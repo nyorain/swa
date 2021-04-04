@@ -847,8 +847,9 @@ static void handle_event(struct swa_display_x11* dpy,
 	} case XCB_MOTION_NOTIFY: {
 		xcb_motion_notify_event_t* motion = (xcb_motion_notify_event_t*) ev;
 		if((win = find_window(dpy, motion->event))) {
-			// This might not be the case when we have an implicit grab and
-			// the pointer has left the window
+			// NOTE: x11 generates leave events even when e.g. an implicit
+			// grab by button press is still active so this isn't always
+			// true.
 			// dlg_assert(win == dpy->mouse.over);
 			if(win->base.listener->mouse_move) {
 				struct swa_mouse_move_event lev;
@@ -865,7 +866,10 @@ static void handle_event(struct swa_display_x11* dpy,
 	} case XCB_BUTTON_PRESS: {
 		xcb_button_press_event_t* bev = (xcb_button_press_event_t*) ev;
 		if((win = find_window(dpy, bev->event))) {
-			dlg_assert(win == dpy->mouse.over);
+			// NOTE: x11 generates leave events even when e.g. an implicit
+			// grab by button press is still active so this isn't always
+			// true.
+			// dlg_assert(win == dpy->mouse.over);
 			float sx = 0.f;
 			float sy = 0.f;
 			enum swa_mouse_button button = x11_to_button_and_wheel(bev->detail,
@@ -892,10 +896,10 @@ static void handle_event(struct swa_display_x11* dpy,
 	} case XCB_BUTTON_RELEASE: {
 		xcb_button_release_event_t* bev = (xcb_button_release_event_t*) ev;
 		if((win = find_window(dpy, bev->event))) {
-			// This might happen when button is pressed, mouse leaves and
-			// then releases the button.
+			// NOTE: x11 generates leave events even when e.g. an implicit
+			// grab by button press is still active so this isn't always
+			// true.
 			// dlg_assert(dpy->mouse.over == win);
-
 			float sx = 0.f;
 			float sy = 0.f;
 			enum swa_mouse_button button = x11_to_button_and_wheel(bev->detail,
