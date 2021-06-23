@@ -784,6 +784,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		const xcb_generic_event_t* ev) {
 	unsigned type = ev->response_type & ~0x80;
 	struct swa_window_x11* win;
+	dpy->curr_event = ev;
 
 	switch(type) {
 	case XCB_EXPOSE: {
@@ -922,7 +923,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		xcb_enter_notify_event_t* eev = (xcb_enter_notify_event_t*) ev;
 		if(eev->mode == XCB_NOTIFY_MODE_GRAB ||
 				eev->mode == XCB_NOTIFY_MODE_UNGRAB) {
-			return;
+			break;
 		}
 
 		// dlg_assert(!dpy->mouse.over);
@@ -941,7 +942,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		xcb_leave_notify_event_t* eev = (xcb_leave_notify_event_t*) ev;
 		if(eev->mode == XCB_NOTIFY_MODE_GRAB ||
 				eev->mode == XCB_NOTIFY_MODE_UNGRAB) {
-			return;
+			break;
 		}
 
 		if((win = find_window(dpy, eev->event))) {
@@ -961,7 +962,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		xcb_focus_in_event_t* fev = (xcb_focus_in_event_t*) ev;
 		if(fev->mode == XCB_NOTIFY_MODE_GRAB ||
 				fev->mode == XCB_NOTIFY_MODE_UNGRAB) {
-			return;
+			break;
 		}
 
 		// dlg_assert(!dpy->keyboard.focus);
@@ -976,7 +977,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		xcb_focus_out_event_t* fev = (xcb_focus_out_event_t*) ev;
 		if(fev->mode == XCB_NOTIFY_MODE_GRAB ||
 				fev->mode == XCB_NOTIFY_MODE_UNGRAB) {
-			return;
+			break;
 		}
 
 		if((win = find_window(dpy, fev->event))) {
@@ -1112,6 +1113,8 @@ static void handle_event(struct swa_display_x11* dpy,
 			}
 		}
 	}
+
+	dpy->curr_event = NULL;
 }
 
 static bool check_error(struct swa_display_x11* dpy) {
@@ -1812,6 +1815,11 @@ SWA_API uint32_t swa_window_x11_cursor(struct swa_window* base) {
 	return win->cursor;
 }
 
+SWA_API const void* swa_display_x11_current_event(struct swa_display* base) {
+	struct swa_display_x11* dpy = get_display_x11(base);
+	return dpy->curr_event;
+}
+
 struct swa_display* swa_display_x11_create(const char* appname) {
 	(void) appname;
 
@@ -1822,7 +1830,7 @@ struct swa_display* swa_display_x11_create(const char* appname) {
 	// using xcb these days, we can get the xcb connection from the
 	// xlib display but not the other way around.
 	// We need multi threading since we implement display wakeup
-	// using an event.
+	// using an event sent from another thread.
 	XInitThreads();
 	Display* display = XOpenDisplay(NULL);
 	if(!display) {
