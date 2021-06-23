@@ -1,6 +1,6 @@
 #pragma once
 
-// Modeles after linux keycodes
+// Modeled after linux keycodes
 enum swa_key {
 	swa_key_none = 0,
 	swa_key_escape,
