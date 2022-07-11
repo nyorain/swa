@@ -237,7 +237,7 @@ static const struct {
 	{swa_key_zoom, VK_ZOOM},
 };
 
-static enum swa_key winapi_to_key(unsigned vkcode) {
+enum swa_key swa_winapi_to_key(unsigned vkcode) {
 	unsigned len = sizeof(key_map) / sizeof(key_map[0]);
 	for(unsigned i = 0u; i < len; ++i) {
 		if(key_map[i].vkcode == vkcode) {
@@ -248,7 +248,7 @@ static enum swa_key winapi_to_key(unsigned vkcode) {
 	return swa_key_none;
 }
 
-static unsigned key_to_winapi(enum swa_key key) {
+unsigned swa_key_to_winapi(enum swa_key key) {
 	unsigned len = sizeof(key_map) / sizeof(key_map[0]);
 	for(unsigned i = 0u; i < len; ++i) {
 		if(key_map[i].key == key) {
@@ -764,7 +764,7 @@ static enum swa_keyboard_mod async_keyboard_mods(void) {
 
 static bool display_key_pressed(struct swa_display* base, enum swa_key key) {
 	(void) base;
-	return async_pressed(key_to_winapi(key));
+	return async_pressed(swa_key_to_winapi(key));
 }
 
 static const char* display_key_name(struct swa_display* base, enum swa_key key) {
@@ -870,7 +870,7 @@ static void handle_key(struct swa_window_win* win, bool pressed,
 	if(win->base.listener->key) {
 		struct swa_key_event ev = {0};
 		ev.pressed = pressed;
-		ev.keycode = winapi_to_key((unsigned)(wparam));
+		ev.keycode = swa_winapi_to_key((unsigned)(wparam));
 		ev.repeated = pressed && (lparam & 0x40000000);
 		ev.utf8 = utf8;
 
