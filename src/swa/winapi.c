@@ -298,7 +298,29 @@ static const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
 // window api
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
-	// TODO
+
+	if(win->surface_type == swa_surface_vk) {
+		if(win->vk.surface) {
+			dlg_assert(win->vk.instance);
+			dlg_assert(win->vk.destroy_surface_pfn);
+			if(win->vk.destroy_surface_pfn) {
+				VkInstance ini = (VkInstance) win->vk.instance;
+				VkSurfaceKHR surf = (VkSurfaceKHR) win->vk.surface;
+				PFN_vkDestroySurfaceKHR pfDestroySurface = 
+					(PFN_vkDestroySurfaceKHR) win->vk.destroy_surface_pfn;
+				pfDestroySurface(ini, surf, NULL);
+			}
+		}
+	}
+
+	if(win->cursor.handle && win->cursor.owned) {
+		DestroyCursor(win->cursor.handle);
+	}
+
+	if(win->handle) {
+		DestroyWindow(win->handle);
+	}
+
 	free(win);
 }
 
