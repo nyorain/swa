@@ -1,0 +1,163 @@
+name: C/C++ CI
+
+on:
+  push:
+    branches: [ master ]
+    paths:
+      - "**.c"
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**.inl"
+      - "**meson.build"
+      - "**ci.yml"
+  pull_request:
+    branches: [ master ]
+    paths:
+      - "**.c"
+      - "**.cpp"
+      - "**.h"
+      - "**.hpp"
+      - "**.inl"
+      - "*meson.build"
+
+jobs:
+  linux-gcc:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - run: pip install meson ninja
+    - run: sudo apt-get -y update
+    - name: Install deps
+      run: sudo apt-get -y -f install valgrind libvulkan-dev libvulkan1 vulkan-tools
+        libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
+        libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
+        libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
+    - run: meson setup build/ --backend=ninja -Dexamples=true
+      env:
+        CC: gcc
+    - run: meson compile -C build
+
+  linux-gcc-release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - run: pip install meson ninja
+    - run: sudo apt-get -y update
+    - name: Install deps
+      run: sudo apt-get -y -f install valgrind libvulkan-dev libvulkan1 vulkan-tools
+        libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
+        libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
+        libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
+    - run: meson setup build/ --backend=ninja -Dexamples=true
+      env:
+        CC: gcc
+    - run: meson compile -C build
+
+  linux-clang:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - name: Set up Clang
+      uses: egor-tensin/setup-clang@v1
+      with:
+        version: latest
+    - run: pip install meson ninja
+    - run: sudo apt-get -y update
+    - name: Install deps
+      run: sudo apt-get -y -f install valgrind libvulkan-dev libvulkan1 vulkan-tools
+        libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
+        libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
+        libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
+    - run: meson setup build/ --backend=ninja -Dexamples=true
+    - run: meson compile -C build
+
+  linux-clang-release:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - name: Set up Clang
+      uses: egor-tensin/setup-clang@v1
+      with:
+        version: latest
+    - run: pip install meson ninja
+    - run: sudo apt-get -y update
+    - name: Install deps
+      run: sudo apt-get -y -f install valgrind libvulkan-dev libvulkan1 vulkan-tools
+        libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
+        libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
+        libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
+    - run: meson setup build/ --backend=ninja -Dexamples=true
+    - run: meson compile -C build
+
+  # See https://dvdhrm.github.io/2021/04/21/meson-msvc-github-actions/
+  windows-ninja:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - run: pip install ninja
+    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
+    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - name: Prepare MSVC
+      uses: bus1/cabuild/action/msdevshell@v1
+      with:
+        architecture: x64
+    - run: meson setup build/ --backend=ninja -Dexamples=true
+    - run: meson compile -C build/ -v
+
+  windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - run: pip install ninja
+    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
+    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - name: Prepare MSVC
+      uses: bus1/cabuild/action/msdevshell@v1
+      with:
+        architecture: x64
+    - run: meson setup build/ -Dexamples=true
+    - run: meson compile -C build/ -v
+
+  windows-release:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - run: pip install ninja
+    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
+    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - name: Prepare MSVC
+      uses: bus1/cabuild/action/msdevshell@v1
+      with:
+        architecture: x64
+    - run: meson setup build/ -Dexamples=true
+    - run: meson compile -C build/ -v
+    - name: Upload binaries
+      uses: actions/upload-artifact@v3
+      with:
+        name: Windows Binaries
+        path: |
+          build/swa.dll  
+          build/swa.lib  
+          build/swa.pdb  
