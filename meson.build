@@ -35,6 +35,7 @@ args = cc.get_supported_arguments([
 	'/wd4100', # unreferenced formal parameter
 	'/wd4189', # local variable unused
 	'/wd4090', # wrong const double pointer warnings
+	'/wd5105', # needed to fix an issue in winbase.h on a specific windows version (wtf microsoft)
 
 	# c99 & c11 compat
 	'/wd4132', # const object should be initialized (for fwd decl)
