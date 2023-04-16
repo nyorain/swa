@@ -50,7 +50,7 @@ add_project_arguments(args, language: 'c')
 
 swa_src = files('src/swa/swa.c')
 
-source_root = '/'.join(meson.source_root().split('\\'))
+source_root = '/'.join(meson.global_source_root().split('\\'))
 flag_dlg = '-DDLG_BASE_PATH="' + source_root + '/"'
 add_project_arguments(flag_dlg, language: 'c')
 
