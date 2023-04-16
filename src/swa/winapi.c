@@ -299,6 +299,7 @@ static const wchar_t* cursor_to_winapi(enum swa_cursor_type cursor) {
 static void win_destroy(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
 
+#ifdef SWA_WITH_VK
 	if(win->surface_type == swa_surface_vk) {
 		if(win->vk.surface) {
 			dlg_assert(win->vk.instance);
@@ -312,9 +313,14 @@ static void win_destroy(struct swa_window* base) {
 			}
 		}
 	}
+#endif // SWA_WITH_VK
 
 	if(win->cursor.handle && win->cursor.owned) {
 		DestroyCursor(win->cursor.handle);
+	}
+
+	if(win->icon) {
+		DestroyIcon(win->icon);
 	}
 
 	if(win->handle) {
@@ -476,9 +482,44 @@ static void win_begin_resize(struct swa_window* base, enum swa_edge edges) {
 }
 
 static void win_set_title(struct swa_window* base, const char* title) {
+	struct swa_window_win* win = get_window_win(base);
+	const wchar_t* wide_title = widen(title);
+	SetWindowText(win->handle, wide_title);
+	free(wide_title);
 }
 
 static void win_set_icon(struct swa_window* base, const struct swa_image* img) {
+	struct swa_window_win* win = get_window_win(base);
+
+	// unset any previous icon
+	if(win->icon) {
+		PostMessage(win->handle, WM_SETICON, ICON_BIG, (LPARAM) NULL);
+		PostMessage(win->handle, WM_SETICON, ICON_SMALL, (LPARAM) NULL);
+		DestroyIcon(win->icon);
+		win->icon = NULL;
+	}
+
+	if(!img->data) {
+		return;
+	}
+
+	// TODO PERF: only do if needed, i.e. format/stride differ
+	const struct swa_image converted = swa_convert_image_new(img, swa_image_format_argb32, img->width * 4);
+
+	// TODO: premultiply alpha
+	// TODO: separate/downscaled version for ICON_SMALL?
+
+	HINSTANCE hinstance = GetModuleHandle(NULL);
+	win->icon = CreateIcon(hinstance, converted.width, converted.height, 1, 32, NULL, converted.data);
+	if(!win->icon) {
+		print_winapi_error("CreateIcon");
+		return;
+	}
+
+	free(converted.data);
+
+	PostMessage(win->handle, WM_SETICON, ICON_BIG, (LPARAM) win->icon);
+	PostMessage(win->handle, WM_SETICON, ICON_SMALL, (LPARAM) win->icon);
 }
 
 static bool win_is_client_decorated(struct swa_window* base) {

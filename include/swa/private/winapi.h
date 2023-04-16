@@ -77,6 +77,8 @@ struct swa_window_win {
 		bool owned;
 		bool set;
 	} cursor;
+
+	HICON icon;
 };
 
 struct swa_data_offer_win {
