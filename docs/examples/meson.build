@@ -46,11 +46,14 @@ ex_gl = build_target('example-gl',
 	target_type: exe_type,
 	dependencies: [swa_dep, dep_dlg, dep_gl_dis])
 
-dep_threads = dependency('threads', required: false)
-ex_wakeup = build_target('example-wakeup',
-	'example-wakeup.c',
-	target_type: exe_type,
-	dependencies: [swa_dep, dep_threads, dep_dlg])
+# threading example not supported on windows atm due to msvc bullshit mainly
+if host_machine.system() != 'windows'
+	dep_threads = dependency('threads', required: false)
+	ex_wakeup = build_target('example-wakeup',
+		'example-wakeup.c',
+		target_type: exe_type,
+		dependencies: [swa_dep, dep_threads, dep_dlg])
+endif
 
 
 if not with_android
