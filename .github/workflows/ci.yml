@@ -55,7 +55,7 @@ jobs:
         libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
         libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
         libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
-    - run: meson setup build/ --backend=ninja -Dexamples=true
+    - run: meson setup build/ --backend=ninja -Dexamples=true -Dbuildtype=release
       env:
         CC: gcc
     - run: meson compile -C build
@@ -99,7 +99,7 @@ jobs:
         libxkbcommon-dev libwayland-dev libxcb1-dev wayland-protocols libxcb-ewmh-dev
         libxcb-icccm4-dev libxcb-shm0-dev libxcb-present-dev libxcb-xinput-dev libxcb-xkb-dev
         libxkbcommon-x11-dev libx11-dev libx11-xcb-dev
-    - run: meson setup build/ --backend=ninja -Dexamples=true
+    - run: meson setup build/ --backend=ninja -Dexamples=true -Dbuildtype=release
     - run: meson compile -C build
 
   # See https://dvdhrm.github.io/2021/04/21/meson-msvc-github-actions/
@@ -151,7 +151,7 @@ jobs:
       uses: bus1/cabuild/action/msdevshell@v1
       with:
         architecture: x64
-    - run: meson setup build/ -Dexamples=true
+    - run: meson setup build/ -Dexamples=true -Dbuildtype=release
     - run: meson compile -C build/ -v
     - name: Upload binaries
       uses: actions/upload-artifact@v3
