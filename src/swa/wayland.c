@@ -1238,7 +1238,6 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->wakeup_pipe_w) close(dpy->wakeup_pipe_w);
 	if(dpy->io_source) pml_io_destroy(dpy->io_source);
 	if(dpy->touch_points) free(dpy->touch_points);
-	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
 	if(dpy->key_repeat.timer) pml_timer_destroy(dpy->key_repeat.timer);
 	if(dpy->cursor.timer) pml_timer_destroy(dpy->cursor.timer);
 	if(dpy->cursor.frame_callback) wl_callback_destroy(dpy->cursor.frame_callback);
@@ -1257,6 +1256,7 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
+	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
 
 	free((char*) dpy->appname);
 	free(dpy);

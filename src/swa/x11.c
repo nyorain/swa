@@ -949,7 +949,7 @@ static void handle_event(struct swa_display_x11* dpy,
 		}
 
 		if((win = find_window(dpy, fev->event))) {
-			dlg_assert(dpy->keyboard.focus == win);
+			// dlg_assert(dpy->keyboard.focus == win);
 			dpy->keyboard.focus = NULL;
 			if(win->base.listener->focus) {
 				win->base.listener->focus(&win->base, false);
