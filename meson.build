@@ -3,7 +3,7 @@ project(
 	'c',
 	version: '0.1.0',
 	license: 'MIT',
-	meson_version: '>=0.51.0',
+	meson_version: '>=0.58.0',
 	default_options: [
 		'c_std=c11',
 		'warning_level=3',
@@ -178,7 +178,7 @@ else # just assume some posix/unix variant
 			'src/swa/wayland.c',
 		)
 
-		wl_protocol_dir = wl_protos.get_pkgconfig_variable('pkgdatadir')
+		wl_protocol_dir = wl_protos.get_variable(pkgconfig: 'pkgdatadir')
 
 		if dep_wl_client.version().version_compare('>=1.14.91')
 			code_type = 'private-code'
