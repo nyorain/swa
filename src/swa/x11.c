@@ -23,6 +23,7 @@
 
 #ifdef SWA_WITH_VK
   #define VK_USE_PLATFORM_XCB_KHR
+  #define VK_USE_PLATFORM_XLIB_KHR
   #ifndef SWA_WITH_LINKED_VK
 	#define VK_NO_PROTOTYPES
   #endif // SWA_WITH_LINKED_VK
@@ -1606,6 +1607,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		vid = dpy->screen->root_visual;
 	}
 
+	dlg_trace("create_window_checked");
 	win->window = xcb_generate_id(dpy->conn);
 	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn, win->depth,
 		win->window, xparent, x, y, win->width, win->height, 0,
@@ -1616,6 +1618,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		handle_error(dpy, err, "xcb_create_window");
 		goto error;
 	}
+
+	dlg_trace("window %d", win->window);
 
 	// set properties
 	if(settings->state != swa_window_state_none &&
@@ -1732,14 +1736,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			goto error;
 		}
 
-		VkXcbSurfaceCreateInfoKHR info = {0};
-		info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
-		info.connection = win->dpy->conn;
-		info.window = win->window;
-
 		VkInstance instance = (VkInstance) win->vk.instance;
 		VkSurfaceKHR surface;
-
 		PFN_vkGetInstanceProcAddr fpGetProcAddr = (PFN_vkGetInstanceProcAddr)
 			settings->surface_settings.vk.get_instance_proc_addr;
 #ifdef SWA_WITH_LINKED_VK
@@ -1754,17 +1752,47 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 #endif // SWA_WITH_LINKED_VK
 
-		PFN_vkCreateXcbSurfaceKHR fn = (PFN_vkCreateXcbSurfaceKHR)
-			fpGetProcAddr(instance, "vkCreateXcbSurfaceKHR");
-		if(!fn) {
-			dlg_error("Failed to load 'vkCreateXcbSurfaceKHR' function");
-			goto error;
-		}
+		if(settings->prefer_xlib) {
+			dlg_trace("create xlib vk surface");
+			VkXlibSurfaceCreateInfoKHR info = {0};
+			info.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
+			info.dpy = win->dpy->display;
+			info.window = win->window;
 
-		VkResult res = fn(instance, &info, NULL, &surface);
-		if(res != VK_SUCCESS) {
-			dlg_error("Failed to create vulkan surface: %d", res);
-			goto error;
+			PFN_vkCreateXlibSurfaceKHR fn = (PFN_vkCreateXlibSurfaceKHR)
+				fpGetProcAddr(instance, "vkCreateXlibSurfaceKHR");
+			if(!fn) {
+				dlg_error("Failed to load 'vkCreateXlibSurfaceKHR' function");
+				goto error;
+			}
+
+			dlg_trace("xlib vk surface call");
+			VkResult res = fn(instance, &info, NULL, &surface);
+			dlg_trace("xlib vk surface res: %d", res);
+			if(res != VK_SUCCESS) {
+				dlg_error("Failed to create xlib vulkan surface: %d", res);
+				goto error;
+			}
+		} else {
+			dlg_trace("create xcb vk surface");
+
+			VkXcbSurfaceCreateInfoKHR info = {0};
+			info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
+			info.connection = win->dpy->conn;
+			info.window = win->window;
+
+			PFN_vkCreateXcbSurfaceKHR fn = (PFN_vkCreateXcbSurfaceKHR)
+				fpGetProcAddr(instance, "vkCreateXcbSurfaceKHR");
+			if(!fn) {
+				dlg_error("Failed to load 'vkCreateXcbSurfaceKHR' function");
+				goto error;
+			}
+
+			VkResult res = fn(instance, &info, NULL, &surface);
+			if(res != VK_SUCCESS) {
+				dlg_error("Failed to create xcb vulkan surface: %d", res);
+				goto error;
+			}
 		}
 
 		win->vk.surface = (uint64_t) surface;
@@ -1776,6 +1804,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 #endif
 	}
 
+	dlg_trace("window creation success");
 	return &win->base;
 
 error:

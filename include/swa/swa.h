@@ -257,6 +257,7 @@ struct swa_window_settings {
 	// TODO, WIP
 	void* parent;
 	bool input_only;
+	bool prefer_xlib; // for x11 only
 };
 
 struct swa_key_event {
