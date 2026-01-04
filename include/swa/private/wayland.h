@@ -22,7 +22,10 @@ struct swa_display_wl {
 	struct wl_seat* seat;
 	struct wl_data_device_manager* data_dev_manager;
 	struct xdg_wm_base* xdg_wm_base;
+	struct zwlr_layer_shell_v1* wlr_layer_shell;
 	struct zxdg_decoration_manager_v1* decoration_manager;
+	struct zxdg_exporter_v2* xdg_exporter;
+	struct zxdg_importer_v2* xdg_importer;
 
 	struct wl_keyboard* keyboard;
 	struct wl_pointer* pointer;
@@ -137,6 +140,7 @@ struct swa_window_wl {
 
 	struct xdg_surface* xdg_surface;
 	struct xdg_toplevel* xdg_toplevel;
+	struct zwlr_layer_surface_v1* wlr_layer_surface;
 	struct zxdg_toplevel_decoration_v1* decoration;
 	struct wl_callback* frame_callback;
 	// whether the window received at least one toplevel configure event

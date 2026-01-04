@@ -172,6 +172,15 @@ enum swa_api {
 	swa_api_gles,
 };
 
+enum swa_ext_type {
+	swa_ext_type_wlr_layer,
+};
+
+struct swa_ext_struct {
+	unsigned ext_type; // swa_ext
+	void* next;
+};
+
 // Defines a cursor.
 // hx, hy define the cursor hotspot in local coordinates.
 // The hotspot and image members are only relevant
@@ -258,6 +267,8 @@ struct swa_window_settings {
 	void* parent;
 	bool input_only;
 	bool prefer_xlib; // for x11 only
+
+	struct swa_ext_struct* ext;
 };
 
 struct swa_key_event {

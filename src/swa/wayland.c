@@ -10,6 +10,8 @@
 #include <wayland-client-protocol.h>
 #include "xdg-shell-client-protocol.h"
 #include "xdg-decoration-unstable-v1-client-protocol.h"
+#include "xdg-foreign-unstable-v2-client-protocol.h"
+#include "wlr-layer-shell-unstable-v1-client-protocol.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -42,6 +44,7 @@ static const struct swa_data_offer_interface data_offer_impl;
 
 static const struct xdg_toplevel_listener toplevel_listener;
 static const struct xdg_surface_listener xdg_surface_listener;
+static const struct zwlr_layer_surface_v1_listener wlr_layer_surface_listener;
 static const struct zxdg_toplevel_decoration_v1_listener decoration_listener;
 static const struct wl_callback_listener cursor_frame_listener;
 
@@ -492,6 +495,7 @@ static void win_destroy(struct swa_window* base) {
 	if(win->decoration) zxdg_toplevel_decoration_v1_destroy(win->decoration);
 	if(win->xdg_toplevel) xdg_toplevel_destroy(win->xdg_toplevel);
 	if(win->xdg_surface) xdg_surface_destroy(win->xdg_surface);
+	if(win->wlr_layer_surface) zwlr_layer_surface_v1_destroy(win->wlr_layer_surface);
 	if(win->wl_surface) wl_surface_destroy(win->wl_surface);
 
 	// Application might not call dispatch after this.
@@ -1338,6 +1342,9 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->data_dev_manager) wl_data_device_manager_destroy(dpy->data_dev_manager);
 	if(dpy->compositor) wl_compositor_destroy(dpy->compositor);
 	if(dpy->subcompositor) wl_subcompositor_destroy(dpy->subcompositor);
+	if(dpy->wlr_layer_shell) zwlr_layer_shell_v1_destroy(dpy->wlr_layer_shell);
+	if(dpy->xdg_importer) zxdg_importer_v2_destroy(dpy->xdg_importer);
+	if(dpy->xdg_exporter) zxdg_exporter_v2_destroy(dpy->xdg_exporter);
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
@@ -1575,6 +1582,19 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	win->wl_surface = wl_compositor_create_surface(dpy->compositor);
 	wl_surface_set_user_data(win->wl_surface, win);
 
+	const struct swa_ext_wlr_layer* ext_layer = NULL;
+	for (struct swa_ext_struct* ext = settings->ext; ext; ext = ext->next) {
+		if (ext->ext_type == swa_ext_type_wlr_layer) {
+			ext_layer = (const struct swa_ext_wlr_layer*) ext;
+		}
+	}
+
+	dlg_assert(!settings->parent || !ext_layer);
+
+	if (ext_layer && !dpy->wlr_layer_shell) {
+		dlg_warn("wlr_layer_shell not supported by compositor");
+	}
+
 	if(settings->parent) {
 		if(!dpy->subcompositor) {
 			dlg_error("Can't create child window, no wl_subcompositor");
@@ -1591,7 +1611,6 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		// updated (which isn't required to happen soon).
 		wl_subsurface_set_desync(win->wl_subsurface);
 
-		win->show = !settings->hide;
 		win->defer_events = swa_wl_defer_draw;
 		if(win->width == SWA_DEFAULT_SIZE) {
 			win->width = SWA_FALLBACK_WIDTH;
@@ -1609,6 +1628,43 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 		win->defer = pml_defer_new(dpy->pml, win_handle_deferred);
 		pml_defer_set_data(win->defer, win);
+	} else if (ext_layer && dpy->wlr_layer_shell) {
+		win->wlr_layer_surface = zwlr_layer_shell_v1_get_layer_surface(
+			dpy->wlr_layer_shell, win->wl_surface, ext_layer->output,
+			ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY, ext_layer->layer_namespace);
+		zwlr_layer_surface_v1_add_listener(win->wlr_layer_surface,
+			&wlr_layer_surface_listener, win);
+
+		if(win->width == SWA_DEFAULT_SIZE) {
+			win->width = SWA_FALLBACK_WIDTH;
+			win->defer_events |= swa_wl_defer_size;
+		}
+		if(win->height == SWA_DEFAULT_SIZE) {
+			win->height = SWA_FALLBACK_HEIGHT;
+			win->defer_events |= swa_wl_defer_size;
+		}
+
+		if (ext_layer->anchors != 0xFFFFFFFFu) {
+			zwlr_layer_surface_v1_set_anchor(win->wlr_layer_surface,
+				ext_layer->anchors);
+		}
+
+		unsigned width = win->width;
+		unsigned height = win->height;
+
+		if ((ext_layer->anchors & ZWLR_LAYER_SURFACE_V1_ANCHOR_LEFT) &&
+			(ext_layer->anchors & ZWLR_LAYER_SURFACE_V1_ANCHOR_RIGHT)) {
+			width = 0;
+		}
+
+		if ((ext_layer->anchors & ZWLR_LAYER_SURFACE_V1_ANCHOR_TOP) &&
+			(ext_layer->anchors & ZWLR_LAYER_SURFACE_V1_ANCHOR_BOTTOM)) {
+			height = 0;
+		}
+
+		zwlr_layer_surface_v1_set_size(win->wlr_layer_surface, width, height);
+		zwlr_layer_surface_v1_set_keyboard_interactivity(win->wlr_layer_surface,
+			ext_layer->keyboard_interactivity);
 	} else {
 		win->xdg_surface = xdg_wm_base_get_xdg_surface(dpy->xdg_wm_base, win->wl_surface);
 		xdg_surface_add_listener(win->xdg_surface, &xdg_surface_listener, win);
@@ -1626,9 +1682,9 @@ static struct swa_window* display_create_window(struct swa_display* base,
 				settings->state != swa_window_state_none) {
 			win_set_state(&win->base, settings->state);
 		}
-
-		win->show = !settings->hide;
 	}
+
+	win->show = !settings->hide;
 
 	// note how we always set the cursor, even if this is cursor_default
 	// this is needed since when the pointer enters this surface we
@@ -1645,7 +1701,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	// should be assumed on wayland
 	if(!settings->parent) {
 		win->decoration_mode = ZXDG_TOPLEVEL_DECORATION_V1_MODE_CLIENT_SIDE;
-		if(dpy->decoration_manager) {
+		if(dpy->decoration_manager && win->xdg_toplevel) {
 			win->decoration = zxdg_decoration_manager_v1_get_toplevel_decoration(
 				dpy->decoration_manager, win->xdg_toplevel);
 			zxdg_toplevel_decoration_v1_add_listener(win->decoration,
@@ -1919,6 +1975,66 @@ static const struct xdg_surface_listener xdg_surface_listener = {
 	.configure = xdg_surface_configure
 };
 
+static void wlr_layer_surface_configure(void *data,
+	  struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1,
+	  uint32_t serial,
+	  uint32_t width,
+	  uint32_t height) {
+	struct swa_window_wl* win = data;
+	zwlr_layer_surface_v1_ack_configure(win->wlr_layer_surface, serial);
+
+	// width or height being 0 means we should decide them ourselves
+	// (mainly for the first configure event).
+	if(width == 0) {
+		width = (win->width == SWA_DEFAULT_SIZE) ?
+			SWA_FALLBACK_WIDTH : win->width;
+	}
+	if(height == 0) {
+		height = (win->height == SWA_DEFAULT_SIZE) ?
+			SWA_FALLBACK_HEIGHT : win->height;
+	}
+
+	bool resized = (win->width != (uint32_t)width) ||
+		(win->height != (uint32_t)height);
+	win->width = width;
+	win->height = height;
+
+	if(resized) {
+		if(win->surface_type == swa_surface_gl) {
+#ifdef SWA_WITH_GL
+			dlg_assert(win->gl.egl_window);
+			wl_egl_window_resize(win->gl.egl_window, width, height, 0, 0);
+#else // SWA_WITH_GL
+			dlg_fatal("unreachable, swa was built without gl");
+#endif // SWA_WITH_GL
+		}
+
+		if(win->base.listener->resize) {
+			win->base.listener->resize(&win->base, win->width, win->height);
+		}
+	}
+
+	// refresh the window if the size changed or if it was never
+	// drawn since this is the first configure event
+	bool refresh = resized || !win->configured;
+	win->configured = true;
+	if(refresh) {
+		win_refresh(&win->base);
+	}
+}
+
+static void wlr_layer_surface_closed(void *data,
+		struct zwlr_layer_surface_v1 *zwlr_layer_surface_v1) {
+	struct swa_window_wl* win = data;
+	if(win->base.listener->close) {
+		win->base.listener->close(&win->base);
+	}
+}
+
+static const struct zwlr_layer_surface_v1_listener wlr_layer_surface_listener = {
+	.configure = wlr_layer_surface_configure,
+	.closed = wlr_layer_surface_closed,
+};
 
 static void log_handler(const char* format, va_list vlist) {
 	va_list vlistcopy;
@@ -2631,6 +2747,18 @@ static void handle_global(void *data, struct wl_registry *registry,
 			strcmp(interface, zxdg_decoration_manager_v1_interface.name) == 0) {
 		dpy->decoration_manager = wl_registry_bind(registry, name,
 			&zxdg_decoration_manager_v1_interface, 1);
+	} else if(!dpy->wlr_layer_shell &&
+			strcmp(interface, zwlr_layer_shell_v1_interface.name) == 0) {
+		dpy->wlr_layer_shell = wl_registry_bind(registry, name,
+			&zwlr_layer_shell_v1_interface, 1);
+	} else if(!dpy->xdg_exporter &&
+			strcmp(interface, zxdg_exporter_v2_interface.name) == 0) {
+		dpy->xdg_exporter = wl_registry_bind(registry, name,
+			&zxdg_exporter_v2_interface, 1);
+	} else if(!dpy->xdg_importer &&
+			strcmp(interface, zxdg_importer_v2_interface.name) == 0) {
+		dpy->xdg_importer = wl_registry_bind(registry, name,
+			&zxdg_importer_v2_interface, 1);
 	}
 }
 
