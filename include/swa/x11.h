@@ -8,6 +8,20 @@ extern "C" {
 
 typedef struct xcb_connection_t xcb_connection_t;
 
+struct swa_ext_x11_window_settings {
+	unsigned ext_type; // swa_ext
+	struct swa_ext_struct* next;
+
+	// If true: use the vulkan xlib extension for surface creation
+	// instead of xcb (default). Only relevant if only that extension
+	// is supported/enabled for some reason.
+	bool vk_use_xlib;
+
+	// Create the window as input-only window, not able to show anything.
+	// Must use swa_surface_none.
+	bool input_only;
+};
+
 // Creates an x11 display implementation.
 SWA_API struct swa_display* swa_display_x11_create(const char* appname);
 SWA_API xcb_connection_t* swa_display_x11_connection(struct swa_display* dpy);

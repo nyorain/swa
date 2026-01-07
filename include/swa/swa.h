@@ -174,6 +174,7 @@ enum swa_api {
 
 enum swa_ext_type {
 	swa_ext_type_wlr_layer,
+	swa_ext_type_x11_window_settings,
 };
 
 struct swa_ext_struct {
@@ -263,10 +264,8 @@ struct swa_window_settings {
 	// is destroyed. Must not be NULL.
 	const struct swa_window_listener* listener;
 
-	// TODO, WIP
+	// If not NULL, use that native window handle as window parent.
 	void* parent;
-	bool input_only;
-	bool prefer_xlib; // for x11 only
 
 	struct swa_ext_struct* ext;
 };

@@ -1585,6 +1585,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	const struct swa_ext_wlr_layer* ext_layer = NULL;
 	for (struct swa_ext_struct* ext = settings->ext; ext; ext = ext->next) {
 		if (ext->ext_type == swa_ext_type_wlr_layer) {
+			dlg_assert(!ext_layer); // duplicate?
 			ext_layer = (const struct swa_ext_wlr_layer*) ext;
 		}
 	}

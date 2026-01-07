@@ -1474,7 +1474,16 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	struct swa_display_x11* dpy = get_display_x11(base);
 	struct swa_window_x11* win = calloc(1, sizeof(*win));
 
-	if(settings->input_only && settings->surface != swa_surface_none) {
+	const struct swa_ext_x11_window_settings* x11_settings = NULL;
+	for (struct swa_ext_struct* ext = settings->ext; ext; ext = ext->next) {
+		if (ext->ext_type == swa_ext_type_x11_window_settings) {
+			dlg_assert(!x11_settings); // duplicate?
+			x11_settings = (const struct swa_ext_x11_window_settings*) ext;
+		}
+	}
+
+	const bool input_only = x11_settings && x11_settings->input_only;
+	if(input_only && settings->surface != swa_surface_none) {
 		dlg_error("Can't create surface for input-only window");
 		return NULL;
 	}
@@ -1543,11 +1552,11 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		dlg_error("swa was compiled without GL support");
 		goto error;
 #endif
-	} else if(!settings->input_only) {
+	} else if(!input_only) {
 		find_visual(win, settings, &visual_scanline_pad, &visual_format);
 	}
 
-	if(!settings->input_only) {
+	if(!input_only) {
 		if(!win->visualtype) {
 			dlg_error("Could not find valid visual");
 			return false;
@@ -1574,7 +1583,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	}
 
 	uint32_t vid = 0;
-	if(!settings->input_only) {
+	if(!input_only) {
 		vid = win->visualtype->visual_id;
 		win->colormap = xcb_generate_id(dpy->conn);
 		xcb_create_colormap(dpy->conn, XCB_COLORMAP_ALLOC_NONE, win->colormap,
@@ -1599,7 +1608,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 	uint32_t valuelist_i[] = {eventmask, XCB_NONE};
 	uint32_t* valuelist = valuelist_io;
 
-	if(settings->input_only) {
+	if(input_only) {
 		window_class = XCB_WINDOW_CLASS_INPUT_ONLY;
 		valuemask = XCB_CW_EVENT_MASK;
 		valuelist = valuelist_i;
@@ -1607,7 +1616,6 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		vid = dpy->screen->root_visual;
 	}
 
-	dlg_trace("create_window_checked");
 	win->window = xcb_generate_id(dpy->conn);
 	xcb_void_cookie_t cookie = xcb_create_window_checked(dpy->conn, win->depth,
 		win->window, xparent, x, y, win->width, win->height, 0,
@@ -1618,8 +1626,6 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		handle_error(dpy, err, "xcb_create_window");
 		goto error;
 	}
-
-	dlg_trace("window %d", win->window);
 
 	// set properties
 	if(settings->state != swa_window_state_none &&
@@ -1752,8 +1758,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		}
 #endif // SWA_WITH_LINKED_VK
 
-		if(settings->prefer_xlib) {
-			dlg_trace("create xlib vk surface");
+		if(x11_settings && x11_settings->vk_use_xlib) {
 			VkXlibSurfaceCreateInfoKHR info = {0};
 			info.sType = VK_STRUCTURE_TYPE_XLIB_SURFACE_CREATE_INFO_KHR;
 			info.dpy = win->dpy->display;
@@ -1766,16 +1771,12 @@ static struct swa_window* display_create_window(struct swa_display* base,
 				goto error;
 			}
 
-			dlg_trace("xlib vk surface call");
 			VkResult res = fn(instance, &info, NULL, &surface);
-			dlg_trace("xlib vk surface res: %d", res);
 			if(res != VK_SUCCESS) {
 				dlg_error("Failed to create xlib vulkan surface: %d", res);
 				goto error;
 			}
 		} else {
-			dlg_trace("create xcb vk surface");
-
 			VkXcbSurfaceCreateInfoKHR info = {0};
 			info.sType = VK_STRUCTURE_TYPE_XCB_SURFACE_CREATE_INFO_KHR;
 			info.connection = win->dpy->conn;
@@ -1804,7 +1805,6 @@ static struct swa_window* display_create_window(struct swa_display* base,
 #endif
 	}
 
-	dlg_trace("window creation success");
 	return &win->base;
 
 error:
