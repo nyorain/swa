@@ -119,7 +119,7 @@ static const struct swa_window_listener window_listener = {
 	.mouse_cross = mouse_cross,
 };
 
-int main() {
+int main(void) {
 	struct swa_display* dpy = swa_display_autocreate("swa example-buffer");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
@@ -159,7 +159,6 @@ int main() {
 	settings.height = 100;
 	settings.hide = !initial_show;
 	settings.surface = swa_surface_none;
-	settings.input_only = true;
 	struct swa_window* child = swa_display_create_window(dpy, &settings);
 	if(!child) {
 		dlg_fatal("Failed to create child");

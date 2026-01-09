@@ -104,7 +104,7 @@ static const struct swa_window_listener window_listener = {
 	.focus = window_focus,
 };
 
-int main() {
+int main(void) {
 	struct swa_display* dpy = swa_display_autocreate("swa-input");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");

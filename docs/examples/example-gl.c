@@ -71,7 +71,7 @@ static const struct swa_window_listener window_listener = {
 	.surface_created = window_surface_created
 };
 
-int main() {
+int main(void) {
 	struct swa_display* dpy = swa_display_autocreate("swa example-gl");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");
