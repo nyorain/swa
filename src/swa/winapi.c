@@ -308,7 +308,7 @@ static void win_destroy(struct swa_window* base) {
 			if(win->vk.destroy_surface_pfn) {
 				VkInstance ini = (VkInstance) win->vk.instance;
 				VkSurfaceKHR surf = (VkSurfaceKHR) win->vk.surface;
-				PFN_vkDestroySurfaceKHR pfDestroySurface = 
+				PFN_vkDestroySurfaceKHR pfDestroySurface =
 					(PFN_vkDestroySurfaceKHR) win->vk.destroy_surface_pfn;
 				pfDestroySurface(ini, surf, NULL);
 			}
@@ -1180,7 +1180,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 
 	// NOTE: in theory this is not supported when we use CS_OWNDC but in practice it's
 	// the only way and works.
-	if(settings->transparent || settings->input_only) {
+	const bool input_only = false;
+	if(settings->transparent || input_only) {
 		exstyle |= WS_EX_LAYERED;
 	}
 
@@ -1201,7 +1202,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		exstyle = WS_EX_TOPMOST;
 	}
 
-	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style, 
+	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style,
 		x, y, width, height, /*settings->parent*/ NULL, NULL, hinstance, NULL);
 	if(!win->handle) {
 		print_winapi_error("CreateWindowEx");
@@ -1220,7 +1221,7 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			DwmEnableBlurBehindWindow(win->handle, &bb);
 		}
 
-		if(settings->input_only) {
+		if(input_only) {
 			SetLayeredWindowAttributes(win->handle, 0, 0, LWA_ALPHA);
 		} else {
 			// This is not what makes the window transparent.
