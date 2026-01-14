@@ -869,7 +869,7 @@ bool init_renderer(struct state* state) {
 	// queue infos
 	uint32_t qfam_count;
 	vkGetPhysicalDeviceQueueFamilyProperties(state->phdev, &qfam_count, NULL);
-	VkQueueFamilyProperties *qprops = calloc(sizeof(*qprops), qfam_count);
+	VkQueueFamilyProperties *qprops = calloc(qfam_count, sizeof(*qprops));
 	vkGetPhysicalDeviceQueueFamilyProperties(state->phdev, &qfam_count, qprops);
 
 	uint32_t gfx_qfam = 0xFFFFFFFFu; // graphics queue family

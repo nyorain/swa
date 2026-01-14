@@ -1566,8 +1566,8 @@ static struct swa_window* display_create_window(struct swa_display* base,
 			win->depth);
 	}
 
-	unsigned x = 0;
-	unsigned y = 0;
+	int x = settings->pos_x == SWA_DEFAULT_POS ? 0 : settings->pos_x;
+	int y = settings->pos_y == SWA_DEFAULT_POS ? 0 : settings->pos_y;
 
 	// there is no concept for default size on x11
 	win->width = settings->width == SWA_DEFAULT_SIZE ?
@@ -1878,7 +1878,7 @@ struct swa_display* swa_display_x11_create(const char* appname) {
 	dpy->base.impl = &display_impl;
 
 	// TODO: need XGetErrorText replacment without xlib...
-// #ifdef SWA_WITH_GL_NO
+// #ifdef SWA_WITH_GL
 #if 1
 	dpy->display = display;
 	dpy->conn = XGetXCBConnection(display);

@@ -78,6 +78,7 @@ void swa_window_settings_default(struct swa_window_settings* settings) {
 	settings->title = "Default Window Title (swa)";
 	settings->state = swa_window_state_normal;
 	settings->width = settings->height = SWA_DEFAULT_SIZE;
+	settings->pos_x = settings->pos_y = SWA_DEFAULT_POS;
 }
 
 unsigned swa_image_format_size(enum swa_image_format fmt) {

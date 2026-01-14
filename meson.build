@@ -208,6 +208,7 @@ else # just assume some posix/unix variant
 	with_x11 = true
 	foreach dep : x11_deps
 		if not dep.found()
+			warning('Disabling X11 support, not all dependencies were found')
 			with_x11 = false
 		endif
 	endforeach

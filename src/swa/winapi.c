@@ -699,6 +699,11 @@ cleanup:
 	win->buffer.wdc = NULL;
 }
 
+static void* win_native_handle(struct swa_window* base) {
+	struct swa_window_win* win = get_window_win(base);
+	return win->handle;
+}
+
 static const struct swa_window_interface window_impl = {
 	.destroy = win_destroy,
 	.get_capabilities = win_get_capabilities,
@@ -720,9 +725,9 @@ static const struct swa_window_interface window_impl = {
 	.gl_swap_buffers = win_gl_swap_buffers,
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
-	.apply_buffer = win_apply_buffer
+	.apply_buffer = win_apply_buffer,
+	.native_handle = win_native_handle,
 };
-
 
 // display api
 static void display_destroy(struct swa_display* base) {
@@ -791,7 +796,8 @@ static enum swa_display_cap display_capabilities(struct swa_display* base) {
 		// TODO: implement data exchange
 		// swa_display_cap_dnd |
 		// swa_display_cap_clipboard |
-		swa_display_cap_buffer_surface;
+		swa_display_cap_buffer_surface |
+		swa_display_cap_child_windows;
 	return caps;
 }
 
@@ -1154,7 +1160,10 @@ static bool register_window_class(void) {
 
 	if(!RegisterClassExW(&wcx)) {
 		// print_winapi_error("RegisterClassEx");
-		// TODO: we can probably just assume it was already registered by swa itself
+		// TODO: it might have failed because the window class was previously
+		//   registered by swa.
+		//   Check for something like GetLastError() == ERROR_ALREADY_EXISTS?
+		//    whatever is returned in that case. return false otherwise.
 		// return false;
 	}
 
@@ -1185,25 +1194,24 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		exstyle |= WS_EX_LAYERED;
 	}
 
-	// TODO: fix this mess for child windows!
-	int x = CW_USEDEFAULT;
-	int y = CW_USEDEFAULT;
+	int x = settings->pos_x == SWA_DEFAULT_POS ? CW_USEDEFAULT : settings->pos_x;
+	int y = settings->pos_y == SWA_DEFAULT_POS ? CW_USEDEFAULT : settings->pos_y;
 
 	wchar_t* titlew = settings->title ? widen(settings->title) : L"";
 	int width = settings->width == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->width;
 	int height = settings->height == SWA_DEFAULT_SIZE ? CW_USEDEFAULT : settings->height;
 
 	if(settings->parent) {
-		// TODO: make configurable?
-		x = 0u;
-		y = 0u;
+		x = settings->pos_x == SWA_DEFAULT_POS ? 0 : x;
+		y = settings->pos_y == SWA_DEFAULT_POS ? 0 : y;
+		// TODO: make exact style configurable?
 		// style = WS_CHILD | WS_BORDER;
 		style = WS_POPUP;
 		exstyle = WS_EX_TOPMOST;
 	}
 
 	win->handle = CreateWindowEx(exstyle, window_class_name, titlew, style,
-		x, y, width, height, /*settings->parent*/ NULL, NULL, hinstance, NULL);
+		x, y, width, height, settings->parent, NULL, hinstance, NULL);
 	if(!win->handle) {
 		print_winapi_error("CreateWindowEx");
 		goto error;

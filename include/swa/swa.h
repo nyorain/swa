@@ -31,9 +31,11 @@ typedef void (*swa_proc)(void);
 // the initial resize handling on platforms where the window can't
 // be created with the requested size.
 #define SWA_DEFAULT_SIZE 0
+#define SWA_DEFAULT_POS 0x7FFFFFFFu
 
 #define SWA_FALLBACK_WIDTH 800
 #define SWA_FALLBACK_HEIGHT 500
+#define SWA_FALLBACK_POS 0
 
 // Describes the kind of render surface created for a window.
 enum swa_surface_type {
@@ -266,6 +268,7 @@ struct swa_window_settings {
 
 	// If not NULL, use that native window handle as window parent.
 	void* parent;
+	int pos_x, pos_y;
 
 	struct swa_ext_struct* ext;
 };
@@ -708,6 +711,10 @@ SWA_API bool swa_window_get_buffer(struct swa_window*, struct swa_image*);
 // call to `get_buffer`.
 SWA_API void swa_window_apply_buffer(struct swa_window*);
 
+// Returns a backend-specific window handle for the given window.
+// Can be used as parent to create child windows or in a platform-specific manner.
+SWA_API void* swa_window_native_handle(struct swa_window* win);
+
 // data offers
 typedef void (*swa_formats_handler)(struct swa_data_offer*,
 	const char** formats, unsigned n_formats);
@@ -782,9 +789,6 @@ SWA_API enum swa_key swa_key_from_name(const char* name);
 // Whether or not a key is textual can depend on the circumstance (e.g.
 // you might want to interpret keys like enter as textual).
 SWA_API bool swa_key_is_textual(enum swa_key key);
-
-// TODO: WIP
-SWA_API void* swa_window_native_handle(struct swa_window* win);
 
 #ifdef __cplusplus
 }

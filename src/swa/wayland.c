@@ -549,6 +549,8 @@ static void win_set_max_size(struct swa_window* base, unsigned w, unsigned h) {
 }
 
 static void win_show(struct swa_window* base, bool show) {
+	dlg_warn("window doesn't have visibility capability");
+
 	// NOTE: we could implement this, theoretically. The problem is that
 	// client code could always use external rendering (mainly: vulkan)
 	// to attach a new buffer. But on vulkan, we could simply destroy the
@@ -559,42 +561,32 @@ static void win_show(struct swa_window* base, bool show) {
 	// afterwards (probably the saner method). For subsurfaces, we might
 	// also want to destroy the subsurface?
 
-	// TODO: just testing code.
+	// could look something like this
+	/*
 	struct swa_window_wl* win = get_window_wl(base);
-	// if(win->wl_subsurface) {
-		win->show = show;
-		win->redraw = show;
-		if(!show) {
-			wl_surface_attach(win->wl_surface, NULL, 0, 0);
-			wl_surface_commit(win->wl_surface);
-		} else {
-			swa_window_refresh(base);
-			wl_display_flush(win->dpy->display);
-		}
-	// } else {
-		// dlg_warn("window doesn't have visibility capability");
-	// }
+	win->show = show;
+	win->redraw = show;
+	if(!show) {
+		wl_surface_attach(win->wl_surface, NULL, 0, 0);
+		wl_surface_commit(win->wl_surface);
+	} else {
+		swa_window_refresh(base);
+		wl_display_flush(win->dpy->display);
+	}
+	*/
 }
 
 static void win_set_size(struct swa_window* base, unsigned w, unsigned h) {
-	// we might be able to implement it by just changing width and height
-	// and redrawing, resulting in a larger buffer. Not sure.
+	// we might be able to implement it by just changing internal
+	// width and height and redrawing, resulting in a larger buffer.
+	// Not sure if this works for xdg-toplevel.
+	// For GL: Manually resize
+	// For Vulkan: application has to handle it
 
-	// TODO: resize gl window!
-	// NOTE: for vulkan, we can't really control it. Application has to
-	// recreate the swapchain with the size they desire, that's pretty
-	// much it.
-
-	// TODO: just testing code.
-	struct swa_window_wl* win = get_window_wl(base);
-	if(win->wl_subsurface) {
-		win->width = w;
-		win->height = h;
-	} else {
-		dlg_warn("window doesn't have resize capability");
-	}
-
-	swa_window_refresh(base);
+	// struct swa_window_wl* win = get_window_wl(base);
+	// win->width = w;
+	// win->height = h;
+	// swa_window_refresh(base);
 }
 
 static void win_set_cursor(struct swa_window* base, struct swa_cursor cursor) {
@@ -1611,6 +1603,10 @@ static struct swa_window* display_create_window(struct swa_display* base,
 		// should have immediate effect and not only when the parent is
 		// updated (which isn't required to happen soon).
 		wl_subsurface_set_desync(win->wl_subsurface);
+
+		int x = settings->pos_x == SWA_DEFAULT_POS ? 0 : settings->pos_x;
+		int y = settings->pos_y == SWA_DEFAULT_POS ? 0 : settings->pos_y;
+		wl_subsurface_set_position(win->wl_subsurface, x, y);
 
 		win->defer_events = swa_wl_defer_draw;
 		if(win->width == SWA_DEFAULT_SIZE) {
