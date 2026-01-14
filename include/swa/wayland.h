@@ -9,6 +9,19 @@ extern "C" {
 struct wl_display;
 struct wl_surface;
 struct wl_seat;
+struct wl_surface;
+struct wl_output;
+
+struct swa_ext_wlr_layer {
+	unsigned ext_type; // swa_ext
+	struct swa_ext_struct* next;
+
+	struct wl_output* output; // can be null
+	const char* layer_namespace;
+	unsigned anchors; // zwlr_layer_surface_v1_anchor
+	unsigned keyboard_interactivity; // zwlr_layer_surface_v1_keyboard_interactivity
+	unsigned layer; // zwlr_layer_shell_v1_layer
+};
 
 // Creates a wayland display implementation.
 SWA_API struct swa_display* swa_display_wl_create(const char* appname);

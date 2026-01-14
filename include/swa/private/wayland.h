@@ -17,11 +17,15 @@ struct swa_display_wl {
 
 	// globals
 	struct wl_compositor* compositor;
+	struct wl_subcompositor* subcompositor;
 	struct wl_shm* shm;
 	struct wl_seat* seat;
 	struct wl_data_device_manager* data_dev_manager;
 	struct xdg_wm_base* xdg_wm_base;
+	struct zwlr_layer_shell_v1* wlr_layer_shell;
 	struct zxdg_decoration_manager_v1* decoration_manager;
+	struct zxdg_exporter_v2* xdg_exporter;
+	struct zxdg_importer_v2* xdg_importer;
 
 	struct wl_keyboard* keyboard;
 	struct wl_pointer* pointer;
@@ -118,13 +122,25 @@ struct swa_wl_vk_surface {
 	swa_proc destroy_surface_pfn;
 };
 
+enum swa_wl_defer {
+	swa_wl_defer_draw = (1u << 0),
+	swa_wl_defer_size = (1u << 1),
+};
+
 struct swa_window_wl {
 	struct swa_window base;
 	struct swa_display_wl* dpy;
 
 	struct wl_surface* wl_surface;
+
+	struct wl_subsurface* wl_subsurface;
+	struct pml_defer* defer;
+	enum swa_wl_defer defer_events;
+	bool show;
+
 	struct xdg_surface* xdg_surface;
 	struct xdg_toplevel* xdg_toplevel;
+	struct zwlr_layer_surface_v1* wlr_layer_surface;
 	struct zxdg_toplevel_decoration_v1* decoration;
 	struct wl_callback* frame_callback;
 	// whether the window received at least one toplevel configure event
@@ -185,9 +201,6 @@ struct swa_data_offer_wl {
 		struct pml_io* io;
 	} data;
 };
-
-// public api
-struct swa_display* swa_display_wl_create(const char* appname);
 
 #ifdef __cplusplus
 }

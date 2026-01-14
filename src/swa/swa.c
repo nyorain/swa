@@ -5,13 +5,13 @@
 #include <string.h>
 
 #ifdef SWA_WITH_WL
-  #include <swa/private/wayland.h>
+  #include <swa/wayland.h>
 #endif
 #ifdef SWA_WITH_WIN
-  #include <swa/private/winapi.h>
+  #include <swa/winapi.h>
 #endif
 #ifdef SWA_WITH_X11
-  #include <swa/private/x11.h>
+  #include <swa/x11.h>
 #endif
 #ifdef SWA_WITH_KMS
   #include <swa/private/kms/kms.h>
@@ -33,7 +33,7 @@ struct {
 	{"x11", swa_display_x11_create},
 #endif
 #ifdef SWA_WITH_WIN
-	{"winapi", swa_display_win_create},
+	{"winapi", swa_display_winapi_create},
 #endif
 #ifdef SWA_WITH_ANDROID
 	{"android", swa_display_android_create},
@@ -78,6 +78,7 @@ void swa_window_settings_default(struct swa_window_settings* settings) {
 	settings->title = "Default Window Title (swa)";
 	settings->state = swa_window_state_normal;
 	settings->width = settings->height = SWA_DEFAULT_SIZE;
+	settings->pos_x = settings->pos_y = SWA_DEFAULT_POS;
 }
 
 unsigned swa_image_format_size(enum swa_image_format fmt) {
@@ -418,6 +419,9 @@ void swa_window_set_userdata(struct swa_window* win, void* data) {
 }
 void* swa_window_get_userdata(struct swa_window* win) {
 	return win->userdata;
+}
+void* swa_window_native_handle(struct swa_window* win) {
+	return win->impl->native_handle(win);
 }
 
 // data offer api

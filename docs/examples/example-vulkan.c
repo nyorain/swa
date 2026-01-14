@@ -256,7 +256,7 @@ static const struct swa_window_listener window_listener = {
 // would be to postpone swapchain creation until we get the first
 // size event. Note that this size event is only guaranteed if we
 // used SWA_DEFAULT_SIZE.
-int main() {
+int main(void) {
 	int ret = EXIT_SUCCESS;
 	struct swa_display* dpy = swa_display_autocreate("swa example-vulkan");
 	if(!dpy) {
@@ -867,7 +867,7 @@ bool init_renderer(struct state* state) {
 	// queue infos
 	uint32_t qfam_count;
 	vkGetPhysicalDeviceQueueFamilyProperties(state->phdev, &qfam_count, NULL);
-	VkQueueFamilyProperties *qprops = calloc(sizeof(*qprops), qfam_count);
+	VkQueueFamilyProperties *qprops = calloc(qfam_count, sizeof(*qprops));
 	vkGetPhysicalDeviceQueueFamilyProperties(state->phdev, &qfam_count, qprops);
 
 	uint32_t gfx_qfam = 0xFFFFFFFFu; // graphics queue family

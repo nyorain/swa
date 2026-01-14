@@ -70,7 +70,7 @@ static const struct swa_window_listener window_listener = {
 	.close = window_close,
 };
 
-int main() {
+int main(void) {
 	struct swa_display* dpy = swa_display_autocreate("swa example-exchange");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");

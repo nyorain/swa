@@ -3,7 +3,7 @@ project(
 	'c',
 	version: '0.1.0',
 	license: 'MIT',
-	meson_version: '>=0.58.0',
+	meson_version: '>=0.62.0',
 	default_options: [
 		'c_std=c11',
 		'warning_level=3',
@@ -166,10 +166,9 @@ else # just assume some posix/unix variant
 	# == wayland ==
 	dep_wl_client = dependency('wayland-client', required: opt_with_wayland)
 	dep_wl_cursor = dependency('wayland-cursor', required: opt_with_wayland)
-	wl_protos = dependency('wayland-protocols', version: '>=1.14', required: opt_with_wayland)
-	wl_scanner = find_program('wayland-scanner', required: opt_with_wayland)
+	wl_mod = import('wayland')
 
-	with_wl = dep_wl_client.found() and dep_wl_cursor.found() and wl_protos.found() and wl_scanner.found()
+	with_wl = dep_wl_client.found() and dep_wl_cursor.found()
 
 	# When wayland and egl is found, wayland-egl must be found as well.
 	if with_wl
@@ -178,56 +177,15 @@ else # just assume some posix/unix variant
 			'src/swa/wayland.c',
 		)
 
-		wl_protocol_dir = wl_protos.get_variable(pkgconfig: 'pkgdatadir')
-
-		if dep_wl_client.version().version_compare('>=1.14.91')
-			code_type = 'private-code'
-		else
-			code_type = 'code'
-		endif
-
-		wl_scanner_code = generator(
-			wl_scanner,
-			output: '@BASENAME@-protocol.c',
-			arguments: [code_type, '@INPUT@', '@OUTPUT@'],
-		)
-
-		wl_scanner_client = generator(
-			wl_scanner,
-			output: '@BASENAME@-client-protocol.h',
-			arguments: ['client-header', '@INPUT@', '@OUTPUT@'],
-		)
-
-		wl_protos_src = []
-		wl_protos_headers = []
-
-		wl_protocols = [
-			[wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
-			[wl_protocol_dir, 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
-		]
-
-		foreach p : wl_protocols
-			xml = join_paths(p)
-			wl_protos_src += wl_scanner_code.process(xml)
-			wl_protos_headers += wl_scanner_client.process(xml)
-		endforeach
-
-		lib_wl_protos = static_library(
-			'client_protos',
-			wl_protos_src + wl_protos_headers,
-			dependencies: [dep_wl_client]
-		) # for the include directory
-
-		dep_wl_protos = declare_dependency(
-			link_with: lib_wl_protos,
-			sources: wl_protos_headers,
-		)
+		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-shell'))
+		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-decoration', state: 'unstable', version: 1))
+		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-foreign', state: 'unstable', version: 2))
+		swa_src += wl_mod.scan_xml(files('src/wl-protocols/wlr-layer-shell-unstable-v1.xml'))
 
 		swa_deps += [
 			dep_wl_client,
 			dep_wl_cursor,
 			dep_wl_egl,
-			dep_wl_protos,
 		]
 	endif
 
@@ -250,6 +208,7 @@ else # just assume some posix/unix variant
 	with_x11 = true
 	foreach dep : x11_deps
 		if not dep.found()
+			warning('Disabling X11 support, not all dependencies were found')
 			with_x11 = false
 		endif
 	endforeach
@@ -325,6 +284,7 @@ else
 	swa_lib = library('swa',
 		swa_src,
 		include_directories: swa_inc,
+		gnu_symbol_visibility: 'hidden',
 		dependencies: swa_deps,
 		c_args: swa_args,
 		install: true)

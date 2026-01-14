@@ -31,9 +31,11 @@ typedef void (*swa_proc)(void);
 // the initial resize handling on platforms where the window can't
 // be created with the requested size.
 #define SWA_DEFAULT_SIZE 0
+#define SWA_DEFAULT_POS 0x7FFFFFFFu
 
 #define SWA_FALLBACK_WIDTH 800
 #define SWA_FALLBACK_HEIGHT 500
+#define SWA_FALLBACK_POS 0
 
 // Describes the kind of render surface created for a window.
 enum swa_surface_type {
@@ -60,7 +62,8 @@ enum swa_display_cap {
 	swa_display_cap_clipboard = (1 << 6),
 	swa_display_cap_dnd = (1 << 7),
 	swa_display_cap_client_decoration = (1 << 8),
-	swa_display_cap_server_decoration = (1 << 9)
+	swa_display_cap_server_decoration = (1 << 9),
+	swa_display_cap_child_windows = (1 << 10),
 };
 
 // Keyboard modifier.
@@ -171,6 +174,16 @@ enum swa_api {
 	swa_api_gles,
 };
 
+enum swa_ext_type {
+	swa_ext_type_wlr_layer,
+	swa_ext_type_x11_window_settings,
+};
+
+struct swa_ext_struct {
+	unsigned ext_type; // swa_ext
+	void* next;
+};
+
 // Defines a cursor.
 // hx, hy define the cursor hotspot in local coordinates.
 // The hotspot and image members are only relevant
@@ -252,6 +265,12 @@ struct swa_window_settings {
 	// The listener object must remain valid until it is changed or the window
 	// is destroyed. Must not be NULL.
 	const struct swa_window_listener* listener;
+
+	// If not NULL, use that native window handle as window parent.
+	void* parent;
+	int pos_x, pos_y;
+
+	struct swa_ext_struct* ext;
 };
 
 struct swa_key_event {
@@ -282,6 +301,8 @@ struct swa_mouse_button_event {
 
 struct swa_mouse_move_event {
 	// The new mouse position in window-local coordinates.
+	// On some backends, these might be outside the window (i.e. even
+	// negative), applications should be prepared to handle that or clamp them.
 	int x, y;
 	// The delta, i.e. the current mouse position minus the last
 	// known position in window-local cordinates.
@@ -689,6 +710,10 @@ SWA_API bool swa_window_get_buffer(struct swa_window*, struct swa_image*);
 // For each call of `apply_buffer`, there must have been a previous
 // call to `get_buffer`.
 SWA_API void swa_window_apply_buffer(struct swa_window*);
+
+// Returns a backend-specific window handle for the given window.
+// Can be used as parent to create child windows or in a platform-specific manner.
+SWA_API void* swa_window_native_handle(struct swa_window* win);
 
 // data offers
 typedef void (*swa_formats_handler)(struct swa_data_offer*,

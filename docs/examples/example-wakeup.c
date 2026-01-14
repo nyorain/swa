@@ -49,7 +49,7 @@ static void* wakeup_thread(void* data) {
 	return NULL;
 }
 
-int main() {
+int main(void) {
 	struct swa_display* dpy = swa_display_autocreate("swa example-wakeup");
 	if(!dpy) {
 		dlg_fatal("No swa backend available");

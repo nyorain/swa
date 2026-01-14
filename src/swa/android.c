@@ -663,6 +663,11 @@ static void win_apply_buffer(struct swa_window* base) {
 	win->buffer.active = false;
 }
 
+static void* win_native_handle(struct swa_window* base) {
+	struct swa_window_android* win = get_window_android(base);
+	return win->dpy->activity->window;
+}
+
 static const struct swa_window_interface window_impl = {
 	.destroy = win_destroy,
 	.get_capabilities = win_get_capabilities,
@@ -684,7 +689,8 @@ static const struct swa_window_interface window_impl = {
 	.gl_swap_buffers = win_gl_swap_buffers,
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
-	.apply_buffer = win_apply_buffer
+	.apply_buffer = win_apply_buffer,
+	.native_handle = win_native_handle,
 };
 
 // display api

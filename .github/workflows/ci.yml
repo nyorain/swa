@@ -111,8 +111,7 @@ jobs:
       with:
         python-version: '3.x'
     - run: pip install ninja
-    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
-    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - run: pip install meson
     - name: Prepare MSVC
       uses: bus1/cabuild/action/msdevshell@v1
       with:
@@ -128,8 +127,7 @@ jobs:
       with:
         python-version: '3.x'
     - run: pip install ninja
-    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
-    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - run: pip install meson
     - name: Prepare MSVC
       uses: bus1/cabuild/action/msdevshell@v1
       with:
@@ -145,8 +143,7 @@ jobs:
       with:
         python-version: '3.x'
     - run: pip install ninja
-    # TODO, tmp workaround: See https://github.com/mesonbuild/meson/pull/9918
-    - run: pip install git+https://github.com/frida/meson.git@f7f25b19a8d71cebf8e2934733eb041eb6862eee
+    - run: pip install meson
     - name: Prepare MSVC
       uses: bus1/cabuild/action/msdevshell@v1
       with:
@@ -154,10 +151,10 @@ jobs:
     - run: meson setup build/ -Dexamples=true -Dbuildtype=release
     - run: meson compile -C build/ -v
     - name: Upload binaries
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: Windows Binaries
         path: |
-          build/swa.dll  
-          build/swa.lib  
-          build/swa.pdb  
+          build/swa.dll
+          build/swa.lib
+          build/swa.pdb

@@ -23,6 +23,7 @@ struct swa_display_x11 {
 	xcb_ewmh_connection_t ewmh;
 	xcb_screen_t* screen;
 	enum swa_window_cap ewmh_caps;
+	const xcb_generic_event_t* curr_event; // only for public api
 	xcb_generic_event_t* next_event;
 
 	xcb_window_t dummy_window;
@@ -160,8 +161,6 @@ struct swa_window_x11 {
 		struct swa_x11_gl_surface gl;
 	};
 };
-
-struct swa_display* swa_display_x11_create(const char* appname);
 
 #ifdef __cplusplus
 }
