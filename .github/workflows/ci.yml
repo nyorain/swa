@@ -2,7 +2,7 @@ name: C/C++ CI
 
 on:
   push:
-    branches: [ master, vil ]
+    branches: [ main ]
     paths:
       - "**.c"
       - "**.cpp"
@@ -12,7 +12,7 @@ on:
       - "**meson.build"
       - "**ci.yml"
   pull_request:
-    branches: [ master, vil ]
+    branches: [ main ]
     paths:
       - "**.c"
       - "**.cpp"
@@ -155,6 +155,6 @@ jobs:
       with:
         name: Windows Binaries
         path: |
-          build/swa.dll
-          build/swa.lib
-          build/swa.pdb
+          build/swa.dll  
+          build/swa.lib  
+          build/swa.pdb  
