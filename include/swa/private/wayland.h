@@ -26,11 +26,14 @@ struct swa_display_wl {
 	struct zxdg_decoration_manager_v1* decoration_manager;
 	struct zxdg_exporter_v2* xdg_exporter;
 	struct zxdg_importer_v2* xdg_importer;
+	struct zwp_pointer_constraints_v1* pointer_constraints;
+	struct zwp_relative_pointer_manager_v1* relative_pointer_manager;
 
 	struct wl_keyboard* keyboard;
 	struct wl_pointer* pointer;
 	struct wl_touch* touch;
 	struct wl_data_device* data_dev;
+	struct zwp_relative_pointer_v1* relative_pointer;
 
 	struct pml* pml;
 	bool error;
@@ -142,6 +145,9 @@ struct swa_window_wl {
 	struct xdg_toplevel* xdg_toplevel;
 	struct zwlr_layer_surface_v1* wlr_layer_surface;
 	struct zxdg_toplevel_decoration_v1* decoration;
+	struct zwp_locked_pointer_v1* locked_pointer;
+	bool pointer_locked;
+
 	struct wl_callback* frame_callback;
 	// whether the window received at least one toplevel configure event
 	// if this is true, the width and height are just the values this

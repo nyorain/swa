@@ -180,6 +180,8 @@ else # just assume some posix/unix variant
 		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-shell'))
 		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-decoration', state: 'unstable', version: 1))
 		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('xdg-foreign', state: 'unstable', version: 2))
+		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('pointer-constraints', state: 'unstable', version: 1))
+		swa_src += wl_mod.scan_xml(wl_mod.find_protocol('relative-pointer', state: 'unstable', version: 1))
 		swa_src += wl_mod.scan_xml(files('src/wl-protocols/wlr-layer-shell-unstable-v1.xml'))
 
 		swa_deps += [
