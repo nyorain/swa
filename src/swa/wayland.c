@@ -12,6 +12,8 @@
 #include "xdg-decoration-unstable-v1-client-protocol.h"
 #include "xdg-foreign-unstable-v2-client-protocol.h"
 #include "wlr-layer-shell-unstable-v1-client-protocol.h"
+#include "pointer-constraints-unstable-v1-client-protocol.h"
+#include "relative-pointer-unstable-v1-client-protocol.h"
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
@@ -995,6 +997,63 @@ static const struct swa_window_interface window_impl = {
 	.native_handle = win_native_handle,
 };
 
+// exts
+static void locked_pointer_locked(void *data,
+		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
+	struct swa_window_wl* win = data;
+	dlg_assert(win->locked_pointer);
+	win->pointer_locked = true;
+}
+
+static void locked_pointer_unlocked(void *data,
+		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
+	struct swa_window_wl* win = data;
+	dlg_assert(win->locked_pointer);
+	win->pointer_locked = false;
+}
+
+static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = {
+	.locked = locked_pointer_locked,
+	.unlocked = locked_pointer_unlocked,
+};
+
+void swa_window_wl_lock_pointer(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if (!win->dpy->pointer_constraints) {
+		dlg_warn("pointer constraints protocol not available");
+		return;
+	}
+
+	if (win->locked_pointer) {
+		dlg_error("pointer already locked");
+		return;
+	}
+
+	dlg_assert(!win->pointer_locked);
+
+	win->locked_pointer = zwp_pointer_constraints_v1_lock_pointer(win->dpy->pointer_constraints,
+		win->wl_surface, win->dpy->pointer, NULL, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+	zwp_locked_pointer_v1_add_listener(win->locked_pointer,
+		&locked_pointer_listener, win);
+}
+
+void swa_window_wl_unlock_pointer(struct swa_window* base) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if (!win->dpy->pointer_constraints) {
+		dlg_warn("pointer constraints protocol not available");
+		return;
+	}
+
+	if (!win->locked_pointer) {
+		dlg_error("pointer was not locked");
+		return;
+	}
+
+	zwp_locked_pointer_v1_destroy(win->locked_pointer);
+	win->locked_pointer = NULL;
+	win->pointer_locked = false;
+}
+
 // display api
 static void xdg_wm_base_ping(void *data, struct xdg_wm_base* wm_base,
 		uint32_t serial) {
@@ -1337,6 +1396,8 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->wlr_layer_shell) zwlr_layer_shell_v1_destroy(dpy->wlr_layer_shell);
 	if(dpy->xdg_importer) zxdg_importer_v2_destroy(dpy->xdg_importer);
 	if(dpy->xdg_exporter) zxdg_exporter_v2_destroy(dpy->xdg_exporter);
+	if(dpy->pointer_constraints) zwp_pointer_constraints_v1_destroy(dpy->pointer_constraints);
+	if(dpy->relative_pointer_manager) zwp_relative_pointer_manager_v1_destroy(dpy->relative_pointer_manager);
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
@@ -2756,6 +2817,14 @@ static void handle_global(void *data, struct wl_registry *registry,
 			strcmp(interface, zxdg_importer_v2_interface.name) == 0) {
 		dpy->xdg_importer = wl_registry_bind(registry, name,
 			&zxdg_importer_v2_interface, 1);
+	} else if(!dpy->pointer_constraints &&
+			strcmp(interface, zwp_pointer_constraints_v1_interface.name) == 0) {
+		dpy->pointer_constraints = wl_registry_bind(registry, name,
+			&zwp_pointer_constraints_v1_interface, 1);
+	} else if(!dpy->pointer_constraints &&
+			strcmp(interface, zwp_relative_pointer_manager_v1_interface.name) == 0) {
+		dpy->relative_pointer_manager = wl_registry_bind(registry, name,
+			&zwp_relative_pointer_manager_v1_interface, 1);
 	}
 }
 
@@ -2808,6 +2877,39 @@ static void clear_wakeup(struct pml_io* io, unsigned revents) {
 		dlg_warn("Reading from wakeup pipe failed: %s", strerror(errno));
 	}
 }
+
+static void pointer_relative_motion(void *data,
+			struct zwp_relative_pointer_v1 *zwp_relative_pointer_v1,
+			uint32_t utime_hi, uint32_t utime_lo,
+			wl_fixed_t dx, wl_fixed_t dy,
+			wl_fixed_t dx_unaccel, wl_fixed_t dy_unaccel) {
+	struct swa_display_wl* dpy = data;
+	dlg_assert(dpy->relative_pointer == zwp_relative_pointer_v1);
+	if(!dpy->mouse_over) {
+		return;
+	}
+
+	if (!dpy->mouse_over->pointer_locked || !dpy->mouse_over->locked_pointer) {
+		return;
+	}
+
+	int ddx = wl_fixed_to_int(dx);
+	int ddy = wl_fixed_to_int(dy);
+	const struct swa_window_listener* listener = dpy->mouse_over->base.listener;
+	if(listener && listener->mouse_move) {
+		struct swa_mouse_move_event ev = {
+			.x = dpy->mouse_x,
+			.y = dpy->mouse_y,
+			.dx = ddx,
+			.dy = ddy,
+		};
+		listener->mouse_move(&dpy->mouse_over->base, &ev);
+	}
+}
+
+static const struct zwp_relative_pointer_v1_listener relative_pointer_listener  = {
+	.relative_motion = pointer_relative_motion
+};
 
 // wayland api
 bool swa_display_is_wl(struct swa_display* dpy) {
@@ -2875,6 +2977,13 @@ struct swa_display* swa_display_wl_create(const char* appname) {
 	//    There is currently no instance where this information is
 	//    needed immediately.
 	// wl_display_roundtrip(dpy->display);
+
+	if (dpy->relative_pointer_manager && dpy->pointer) {
+		dpy->relative_pointer = zwp_relative_pointer_manager_v1_get_relative_pointer(
+			dpy->relative_pointer_manager, dpy->pointer);
+		zwp_relative_pointer_v1_add_listener(dpy->relative_pointer,
+			&relative_pointer_listener, dpy);
+	}
 
 	// required wayland interfaces
 	// only add interfaces without which swa can't really function at all
