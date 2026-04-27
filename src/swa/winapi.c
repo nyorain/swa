@@ -342,7 +342,8 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 		swa_window_cap_begin_move |
 		swa_window_cap_begin_resize |
 		swa_window_cap_title |
-		swa_window_cap_visibility;
+		swa_window_cap_visibility |
+		swa_window_cap_lock_pointer;
 }
 
 static void win_set_min_size(struct swa_window* base, unsigned w, unsigned h) {
@@ -699,6 +700,48 @@ cleanup:
 	win->buffer.wdc = NULL;
 }
 
+static void win_lock_pointer(struct swa_window* base, bool locked) {
+	struct swa_window_win* win = get_window_win(base);
+
+	if (locked) {
+		if (win->locked_pointer) {
+			dlg_error("pointer already locked");
+			return;
+		}
+
+		RECT clipRect;
+		if (!GetClientRect(win->handle, &clipRect)) {
+			print_winapi_error("GetClientRect");
+			return;
+		}
+		
+		// ClipCursor needs screen coords
+		bool res = true;
+		if (!ClientToScreen(win->handle, (POINT*) &clipRect.left) ||
+				!ClientToScreen(win->handle, (POINT*) &clipRect.right)) {
+			print_winapi_error("ClientToScreen");
+			return;
+		}
+		if (!ClipCursor(&clipRect)) {
+			print_winapi_error("ClipCursor");
+			return;
+		}
+
+		const RAWINPUTDEVICE id = { 0x01, 0x02, 0, win->handle };
+		if (RegisterRawInputDevices(&id, 1, sizeof(id))) {
+			win->locked_pointer = true;
+		} else {
+			print_winapi_error("RegisterRawInputDevices");
+			ClipCursor(NULL);
+		}
+	} else if (!locked && win->locked_pointer) {
+		win->locked_pointer = false;
+		const RAWINPUTDEVICE id = { 0x01, 0x02, RIDEV_REMOVE, NULL };
+		RegisterRawInputDevices(&id, 1, sizeof(id));
+		ClipCursor(NULL);
+	}
+}
+
 static void* win_native_handle(struct swa_window* base) {
 	struct swa_window_win* win = get_window_win(base);
 	return win->handle;
@@ -726,6 +769,7 @@ static const struct swa_window_interface window_impl = {
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
 	.apply_buffer = win_apply_buffer,
+	.lock_pointer = win_lock_pointer,
 	.native_handle = win_native_handle,
 };
 
@@ -1036,8 +1080,7 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 				return 1;
 			}
 			break;
-		}
-		case WM_LBUTTONDOWN:
+		} case WM_LBUTTONDOWN:
 			handle_mouse_button(win, true, swa_mouse_button_left, lparam);
 			break;
 		case WM_LBUTTONUP:
@@ -1080,6 +1123,10 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 			win->dpy->my = 0;
 			break;
 		} case WM_MOUSEMOVE: {
+			if (win->locked_pointer) { // for locked pointers, we process it via WM_INPUT below
+				break;
+			}
+
 			struct swa_mouse_move_event ev = {0};
 			ev.x = GET_X_LPARAM(lparam);
 			ev.y = GET_Y_LPARAM(lparam);
@@ -1115,6 +1162,30 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 
 			win->dpy->mx = ev.x;
 			win->dpy->my = ev.y;
+			break;
+		} case WM_INPUT: { // for locked mouse
+			if (!win->locked_pointer) {
+				dlg_warn("unexpected raw input");
+				break;
+			}
+
+			unsigned size = sizeof(RAWINPUT);
+			static RAWINPUT raw[sizeof(RAWINPUT)];
+			GetRawInputData((HRAWINPUT) lparam, RID_INPUT, raw, &size, sizeof(RAWINPUTHEADER));
+					
+			if (raw->header.dwType != RIM_TYPEMOUSE || (raw->data.mouse.lLastX == 0 && raw->data.mouse.lLastY == 0)) { 
+				break;
+			}
+
+			dlg_assert(win == win->dpy->mouse_over);
+
+			struct swa_mouse_move_event ev = {0};
+			ev.dx = raw->data.mouse.lLastX;
+			ev.dy = raw->data.mouse.lLastY;
+
+			if(win->base.listener->mouse_move) {
+				win->base.listener->mouse_move(&win->base, &ev);
+			}
 			break;
 		} case WM_MOUSEWHEEL: {
 			if(win->base.listener->mouse_wheel) {

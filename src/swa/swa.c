@@ -390,6 +390,11 @@ void swa_window_set_title(struct swa_window* win, const char* title) {
 void swa_window_set_icon(struct swa_window* win, const struct swa_image* image) {
 	win->impl->set_icon(win, image);
 }
+void swa_window_lock_pointer(struct swa_window* win, bool locked) {
+	if (win->impl->lock_pointer) {
+		win->impl->lock_pointer(win, locked);
+	}
+}
 bool swa_window_is_client_decorated(struct swa_window* win) {
 	return win->impl->is_client_decorated(win);
 }

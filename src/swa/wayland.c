@@ -527,6 +527,9 @@ static enum swa_window_cap win_get_capabilities(struct swa_window* base) {
 	if(win->dpy->cursor.theme) {
 		caps |= swa_window_cap_cursor;
 	}
+	if(win->dpy->pointer_constraints && win->dpy->relative_pointer) {
+		caps |= swa_window_cap_lock_pointer;
+	}
 	return caps;
 }
 
@@ -972,6 +975,57 @@ static void* win_native_handle(struct swa_window* base) {
 	return win->wl_surface;
 }
 
+// pointer-lock
+static void locked_pointer_locked(void *data,
+		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
+	struct swa_window_wl* win = data;
+	dlg_assert(win->locked_pointer);
+	win->pointer_locked = true;
+}
+
+static void locked_pointer_unlocked(void *data,
+		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
+	struct swa_window_wl* win = data;
+	dlg_assert(win->locked_pointer);
+	win->pointer_locked = false;
+}
+
+static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = {
+	.locked = locked_pointer_locked,
+	.unlocked = locked_pointer_unlocked,
+};
+
+void win_lock_pointer(struct swa_window* base, bool locked) {
+	struct swa_window_wl* win = get_window_wl(base);
+	if (!win->dpy->pointer_constraints) {
+		dlg_warn("pointer constraints protocol not available");
+		return;
+	}
+
+	if (locked) {
+		if (win->locked_pointer) {
+			dlg_error("pointer already locked");
+			return;
+		}
+
+		dlg_assert(!win->pointer_locked);
+
+		win->locked_pointer = zwp_pointer_constraints_v1_lock_pointer(win->dpy->pointer_constraints,
+			win->wl_surface, win->dpy->pointer, NULL, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
+		zwp_locked_pointer_v1_add_listener(win->locked_pointer,
+			&locked_pointer_listener, win);
+	} else {
+		if (!win->locked_pointer) {
+			dlg_error("pointer was not locked");
+			return;
+		}
+
+		zwp_locked_pointer_v1_destroy(win->locked_pointer);
+		win->locked_pointer = NULL;
+		win->pointer_locked = false;
+	}
+}
+
 static const struct swa_window_interface window_impl = {
 	.destroy = win_destroy,
 	.get_capabilities = win_get_capabilities,
@@ -994,65 +1048,9 @@ static const struct swa_window_interface window_impl = {
 	.gl_set_swap_interval = win_gl_set_swap_interval,
 	.get_buffer = win_get_buffer,
 	.apply_buffer = win_apply_buffer,
+	.lock_pointer = win_lock_pointer,
 	.native_handle = win_native_handle,
 };
-
-// exts
-static void locked_pointer_locked(void *data,
-		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
-	struct swa_window_wl* win = data;
-	dlg_assert(win->locked_pointer);
-	win->pointer_locked = true;
-}
-
-static void locked_pointer_unlocked(void *data,
-		   struct zwp_locked_pointer_v1 *zwp_locked_pointer_v1) {
-	struct swa_window_wl* win = data;
-	dlg_assert(win->locked_pointer);
-	win->pointer_locked = false;
-}
-
-static const struct zwp_locked_pointer_v1_listener locked_pointer_listener = {
-	.locked = locked_pointer_locked,
-	.unlocked = locked_pointer_unlocked,
-};
-
-void swa_window_wl_lock_pointer(struct swa_window* base) {
-	struct swa_window_wl* win = get_window_wl(base);
-	if (!win->dpy->pointer_constraints) {
-		dlg_warn("pointer constraints protocol not available");
-		return;
-	}
-
-	if (win->locked_pointer) {
-		dlg_error("pointer already locked");
-		return;
-	}
-
-	dlg_assert(!win->pointer_locked);
-
-	win->locked_pointer = zwp_pointer_constraints_v1_lock_pointer(win->dpy->pointer_constraints,
-		win->wl_surface, win->dpy->pointer, NULL, ZWP_POINTER_CONSTRAINTS_V1_LIFETIME_PERSISTENT);
-	zwp_locked_pointer_v1_add_listener(win->locked_pointer,
-		&locked_pointer_listener, win);
-}
-
-void swa_window_wl_unlock_pointer(struct swa_window* base) {
-	struct swa_window_wl* win = get_window_wl(base);
-	if (!win->dpy->pointer_constraints) {
-		dlg_warn("pointer constraints protocol not available");
-		return;
-	}
-
-	if (!win->locked_pointer) {
-		dlg_error("pointer was not locked");
-		return;
-	}
-
-	zwp_locked_pointer_v1_destroy(win->locked_pointer);
-	win->locked_pointer = NULL;
-	win->pointer_locked = false;
-}
 
 // display api
 static void xdg_wm_base_ping(void *data, struct xdg_wm_base* wm_base,

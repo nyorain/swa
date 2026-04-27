@@ -38,9 +38,6 @@ SWA_API bool swa_display_is_wl(struct swa_display* dpy);
 SWA_API struct wl_display* swa_display_wl_get_display(struct swa_display* dpy);
 SWA_API struct wl_seat* swa_display_wl_get_seat(struct swa_display* dpy);
 
-SWA_API void swa_window_wl_lock_pointer(struct swa_window* win);
-SWA_API void swa_window_wl_unlock_pointer(struct swa_window* win);
-
 #ifdef __cplusplus
 }
 #endif

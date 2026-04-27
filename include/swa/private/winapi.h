@@ -79,6 +79,7 @@ struct swa_window_win {
 	} cursor;
 
 	HICON icon;
+	bool locked_pointer;
 };
 
 struct swa_data_offer_win {

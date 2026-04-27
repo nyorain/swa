@@ -95,6 +95,7 @@ enum swa_window_cap {
 	swa_window_cap_begin_move = (1L << 9),
 	swa_window_cap_begin_resize = (1L << 10),
 	swa_window_cap_visibility = (1L << 11),
+	swa_window_cap_lock_pointer = (1L << 12),
 };
 
 // Represents the current state of a window.
@@ -663,6 +664,10 @@ SWA_API void swa_window_set_title(struct swa_window*, const char* utf8);
 // Can pass NULL to unset the icon.
 // Only valid if the window has the 'icon' capability.
 SWA_API void swa_window_set_icon(struct swa_window*, const struct swa_image* image);
+
+// Locks the pointer over the window. Will still generate relative motion events.
+// Only valid if the window has the 'lock_pointer' capability.
+SWA_API void swa_window_lock_pointer(struct swa_window* win, bool locked);
 
 // Returns whether the window should be decorated by the user.
 // This can either be the case because the backend uses client-side decorations
