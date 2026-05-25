@@ -1043,6 +1043,11 @@ static LRESULT CALLBACK win_proc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lpar
 		} case WM_SYSCOMMAND: {
 			enum swa_window_state state = swa_window_state_none;
 
+			// alt button
+			if(wparam == SC_KEYMENU) {
+				return 0;
+			}
+
 			if(wparam == SC_MAXIMIZE) {
 				state = swa_window_state_maximized;
 			} else if(wparam == SC_MINIMIZE) {
