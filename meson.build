@@ -195,16 +195,20 @@ else # just assume some posix/unix variant
 	x11_deps = [
 		dep_xkbcommon,
 		dependency('x11', required: opt_with_x11),
-		dependency('x11-xcb', required: opt_with_x11),
-		dependency('xcursor', required: opt_with_x11),
 		dependency('xcb', required: opt_with_x11),
-		dependency('xcb-ewmh', required: opt_with_x11),
-		dependency('xcb-icccm', required: opt_with_x11),
-		dependency('xcb-shm', required: opt_with_x11),
-		dependency('xcb-present', required: opt_with_x11),
-		dependency('xcb-xinput', required: opt_with_x11),
-		dependency('xcb-xkb', required: opt_with_x11),
 		dependency('xkbcommon-x11', required: opt_with_x11),
+		dependency('xcursor', required: opt_with_x11), # static?
+		# we prefer static builds for these since they are mostly wrappers
+		# around the real system interfaces and ship statically on debian.
+		# When shipping binaries, does not require the user to have
+		# these installed.
+		dependency('x11-xcb', required: opt_with_x11, static: true),
+		dependency('xcb-ewmh', required: opt_with_x11, static: true),
+		dependency('xcb-icccm', required: opt_with_x11, static: true),
+		dependency('xcb-shm', required: opt_with_x11, static: true),
+		dependency('xcb-present', required: opt_with_x11, static: true),
+		dependency('xcb-xinput', required: opt_with_x11, static: true),
+		dependency('xcb-xkb', required: opt_with_x11, static: true),
 	]
 
 	with_x11 = true
