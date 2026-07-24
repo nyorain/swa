@@ -1,5 +1,4 @@
 build/
-subprojects/*/
 .clang_complete
 .vscode/
 .clangd/

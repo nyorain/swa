@@ -1,0 +1,6 @@
+[submodule "subprojects/pml"]
+	path = subprojects/pml
+	url = https://github.com/nyorain/pml
+[submodule "subprojects/dlg"]
+	path = subprojects/dlg
+	url = https://github.com/nyorain/dlg
