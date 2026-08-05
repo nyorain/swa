@@ -1397,9 +1397,9 @@ static void display_destroy(struct swa_display* base) {
 	if(dpy->pointer_constraints) zwp_pointer_constraints_v1_destroy(dpy->pointer_constraints);
 	if(dpy->relative_pointer_manager) zwp_relative_pointer_manager_v1_destroy(dpy->relative_pointer_manager);
 	if(dpy->registry) wl_registry_destroy(dpy->registry);
+	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
 	if(dpy->display) wl_display_disconnect(dpy->display);
 	if(dpy->pml) pml_destroy(dpy->pml);
-	if(dpy->wl_queue) wl_event_queue_destroy(dpy->wl_queue);
 
 	free((char*) dpy->appname);
 	free(dpy);
